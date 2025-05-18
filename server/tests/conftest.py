@@ -4,33 +4,37 @@ import tempfile
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.utils.faiss_manager import FaissManager
+from app.utils.faiss_manager import FaissManager, _faiss_manager_instance, get_faiss_manager
+from app.utils import auth
 
 
 @pytest.fixture(scope="session")
 def test_data_dir():
     """Create a temporary directory for test data"""
     with tempfile.TemporaryDirectory() as temp_dir:
+        print(f"Created temporary directory for tests: {temp_dir}")
+        # Make sure the directory exists
+        os.makedirs(temp_dir, exist_ok=True)
         yield temp_dir
 
 
-@pytest.fixture(scope="function")
-def faiss_manager(test_data_dir):
-    """Create a FAISS manager for testing"""
-    # Override the data directory for testing
-    os.environ["FAISS_DATA_DIR"] = test_data_dir
+@pytest.fixture(scope="function", autouse=True)
+def reset_faiss_manager_singleton(test_data_dir):
+    """Reset the FaissManager singleton for each test to use test_data_dir"""
+    global _faiss_manager_instance
 
-    # Create a fresh manager for each test
-    manager = FaissManager(data_dir=test_data_dir)
+    # Set the environment variable for the data dir
+    os.environ["FAISS_DATA_DIR"] = test_data_dir
+    print(f"Set FAISS_DATA_DIR to: {test_data_dir}")
+
+    # Reset the singleton
+    _faiss_manager_instance = None
+
+    # Get a fresh instance for the test
+    manager = get_faiss_manager()
+    print(f"Reset FaissManager singleton with data_dir: {manager.data_dir}")
 
     yield manager
-
-
-@pytest.fixture(scope="function")
-def api_client():
-    """Create a test client for the FastAPI app"""
-    with TestClient(app) as client:
-        yield client
 
 
 @pytest.fixture(scope="function")
@@ -46,12 +50,13 @@ def test_api_key():
 
 
 @pytest.fixture(scope="function", autouse=True)
-def override_auth_dependencies(monkeypatch, test_tenant):
+def override_auth_dependencies(monkeypatch, test_tenant, test_api_key):
     """Override auth dependencies for testing"""
-    # Import the auth module
-    from app.utils import auth
+    # Add our test API key to the API_KEYS dictionary
+    auth.API_KEYS[test_api_key] = test_tenant
+    print(f"Added test API key {test_api_key} for tenant {test_tenant}")
 
-    # Mock the get_tenant_id dependency
+    # Mock the get_tenant_id dependency to avoid API key validation
     async def mock_get_tenant_id():
         return test_tenant
 
@@ -67,3 +72,10 @@ def override_auth_dependencies(monkeypatch, test_tenant):
     # Apply the monkeypatches
     monkeypatch.setattr(auth, "get_tenant_id", mock_get_tenant_id)
     monkeypatch.setattr(auth, "validate_tenant_access", mock_validate_tenant_access)
+
+
+@pytest.fixture(scope="function")
+def api_client(test_api_key):
+    """Create a test client for the FastAPI app with authentication headers"""
+    with TestClient(app, headers={"X-API-Key": test_api_key}) as client:
+        yield client

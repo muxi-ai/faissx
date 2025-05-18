@@ -15,7 +15,9 @@ class TestVectorAPI:
         }
         response = api_client.post("/v1/index", json=index_data)
         assert response.status_code == status.HTTP_201_CREATED
-        return response.json()["id"]
+        index_id = response.json()["id"]
+        print(f"Created test index with ID: {index_id}")
+        return index_id
 
     def test_add_vectors(self, api_client, test_tenant):
         """Test adding vectors to an index"""
@@ -40,6 +42,9 @@ class TestVectorAPI:
 
         # Add vectors
         response = api_client.post(f"/v1/index/{index_id}/vectors", json=vectors_data)
+        print(f"Add vectors response status: {response.status_code}")
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"Error response: {response.json()}")
 
         # Check response
         assert response.status_code == status.HTTP_201_CREATED
@@ -63,8 +68,11 @@ class TestVectorAPI:
             "k": 2
         }
 
-        # Search
-        response = api_client.get(f"/v1/index/{index_id}/search", json=search_data)
+        # Search - use POST for search instead of GET since we need to send a JSON body
+        response = api_client.post(f"/v1/index/{index_id}/search", json=search_data)
+        print(f"Search response status: {response.status_code}")
+        if response.status_code != status.HTTP_200_OK:
+            print(f"Error response: {response.json()}")
 
         # Check response
         assert response.status_code == status.HTTP_200_OK
@@ -85,6 +93,9 @@ class TestVectorAPI:
 
         # Delete one vector
         response = api_client.delete(f"/v1/index/{index_id}/vectors/vec1")
+        print(f"Delete vector response status: {response.status_code}")
+        if response.status_code != status.HTTP_204_NO_CONTENT:
+            print(f"Error response: {response.text}")
 
         # Check response
         assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -94,7 +105,9 @@ class TestVectorAPI:
             "vector": [1.0, 0.0, 0.0, 0.0],  # Exactly vec1
             "k": 1
         }
-        search_response = api_client.get(f"/v1/index/{index_id}/search", json=search_data)
+
+        # Use POST for search instead of GET since we need to send a JSON body
+        search_response = api_client.post(f"/v1/index/{index_id}/search", json=search_data)
 
         # Should still return a valid result, but not vec1
         assert search_response.status_code == status.HTTP_200_OK
@@ -120,6 +133,9 @@ class TestVectorAPI:
 
         # Try to add vectors to a nonexistent index
         response = api_client.post("/v1/index/nonexistent-index/vectors", json=vectors_data)
+        print(f"Add to nonexistent index response status: {response.status_code}")
+        if response.status_code != status.HTTP_404_NOT_FOUND:
+            print(f"Error response: {response.json()}")
 
         # Check response - should be not found
         assert response.status_code == status.HTTP_404_NOT_FOUND

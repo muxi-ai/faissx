@@ -12,6 +12,20 @@ IndexID = str
 TenantID = str
 VectorID = str
 
+# Global singleton instance
+_faiss_manager_instance = None
+
+
+def get_faiss_manager():
+    """Get the singleton FaissManager instance"""
+    global _faiss_manager_instance
+
+    if _faiss_manager_instance is None:
+        data_dir = os.environ.get("FAISS_DATA_DIR", "./data")
+        _faiss_manager_instance = FaissManager(data_dir=data_dir)
+
+    return _faiss_manager_instance
+
 
 class FaissManager:
     """
@@ -197,14 +211,14 @@ class FaissManager:
             return True
 
     def add_vectors(self, tenant_id: TenantID, index_id: IndexID,
-                   vectors: List[Dict[str, Any]]) -> List[bool]:
+                   vectors: List[Any]) -> List[bool]:
         """
         Add vectors to an index.
 
         Args:
             tenant_id: Tenant ID
             index_id: Index ID
-            vectors: List of vectors with id, values, and metadata
+            vectors: List of vectors (either dicts or Pydantic Vector objects)
 
         Returns:
             success_list: List of booleans indicating success for each vector
@@ -222,9 +236,15 @@ class FaissManager:
             vectors_to_add = []
 
             for vector in vectors:
-                vector_id = vector["id"]
-                vector_values = vector["values"]
-                vector_metadata = vector.get("metadata", {})
+                # Handle both dict and Pydantic model formats
+                if hasattr(vector, "id"):  # Pydantic model
+                    vector_id = vector.id
+                    vector_values = vector.values
+                    vector_metadata = vector.metadata
+                else:  # Dictionary
+                    vector_id = vector["id"]
+                    vector_values = vector["values"]
+                    vector_metadata = vector.get("metadata", {})
 
                 # Validate vector dimension
                 if len(vector_values) != dimension:

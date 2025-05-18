@@ -1,18 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.models.schemas import IndexCreate, IndexInfo
 from app.utils.auth import get_tenant_id, validate_tenant_access
-from app.utils.faiss_manager import FaissManager
+from app.utils.faiss_manager import get_faiss_manager
 import os
 
 router = APIRouter()
 
-# Initialize FAISS manager with data directory from environment variable
-DATA_DIR = os.environ.get("FAISS_DATA_DIR", "./data")
-faiss_manager = FaissManager(data_dir=DATA_DIR)
+# Get the singleton FAISS manager
+faiss_manager = get_faiss_manager()
 
 
 @router.post("", response_model=IndexInfo, status_code=status.HTTP_201_CREATED)
-async def create_index(index_data: IndexCreate, tenant_id: str = Depends(get_tenant_id)):
+async def create_index(
+    index_data: IndexCreate, tenant_id: str = Depends(get_tenant_id)
+):
     """
     Create a new FAISS index.
     """
@@ -24,7 +25,7 @@ async def create_index(index_data: IndexCreate, tenant_id: str = Depends(get_ten
         tenant_id=tenant_id,
         name=index_data.name,
         dimension=index_data.dimension,
-        index_type=index_data.index_type
+        index_type=index_data.index_type,
     )
 
     # Return index info
@@ -32,7 +33,7 @@ async def create_index(index_data: IndexCreate, tenant_id: str = Depends(get_ten
     if not index_info:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Index created but info not found"
+            detail="Index created but info not found",
         )
 
     return index_info
@@ -47,8 +48,7 @@ async def get_index(index_id: str, tenant_id: str = Depends(get_tenant_id)):
     index_info = faiss_manager.get_index_info(tenant_id, index_id)
     if not index_info:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Index not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Index not found"
         )
 
     # Validate tenant access
@@ -66,8 +66,7 @@ async def delete_index(index_id: str, tenant_id: str = Depends(get_tenant_id)):
     index_info = faiss_manager.get_index_info(tenant_id, index_id)
     if not index_info:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Index not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Index not found"
         )
 
     # Validate tenant access
@@ -78,7 +77,7 @@ async def delete_index(index_id: str, tenant_id: str = Depends(get_tenant_id)):
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete index"
+            detail="Failed to delete index",
         )
 
     return None

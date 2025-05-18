@@ -24,11 +24,14 @@ app.include_router(index.router, prefix="/v1/index", tags=["Index Management"])
 app.include_router(vectors.router, tags=["Vector Operations"])
 app.include_router(admin.router, prefix="/v1", tags=["Administration"])
 
+
 @app.get("/", tags=["Root"])
 async def read_root():
     """Root endpoint to check if the service is running"""
     return {"status": "ok", "message": "FAISS Proxy is running"}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

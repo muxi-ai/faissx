@@ -147,7 +147,7 @@ class FaissProxyClient:
         """
         data = {"vector": vector, "k": k, "filter": filter_metadata}
 
-        return self._make_request("GET", f"/v1/index/{index_id}/search", data)
+        return self._make_request("POST", f"/v1/index/{index_id}/search", data)
 
     def delete_vector(self, index_id: str, vector_id: str) -> None:
         """

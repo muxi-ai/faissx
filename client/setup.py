@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="faiss_proxy",
+    name="faiss-proxy-client",
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
         "requests>=2.25.0",
-        "numpy>=1.19.0",
+        "numpy>=1.20.0",
     ],
     description="Drop-in replacement for FAISS with remote execution capabilities",
     author="Ran Aroussi",

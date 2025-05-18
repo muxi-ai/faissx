@@ -65,12 +65,15 @@ class TestIndexFlatL2:
         # Check that client methods were called correctly
         mock_client.add_vectors.assert_called_once()
         args, kwargs = mock_client.add_vectors.call_args
-        assert args[0] == "test-index-id"
-        assert "vectors" in kwargs[0]
-        assert len(kwargs[0]["vectors"]) == 2
+        assert args[0] == "test-index-id"  # First arg is index_id
+
+        # Second arg is the vectors dict
+        vectors_dict = args[1]
+        assert "vectors" in vectors_dict
+        assert len(vectors_dict["vectors"]) == 2
 
         # Check vector values
-        vector_values = [v["values"] for v in kwargs[0]["vectors"]]
+        vector_values = [v["values"] for v in vectors_dict["vectors"]]
         assert [1.0, 0.0, 0.0] in vector_values
         assert [0.0, 1.0, 0.0] in vector_values
 

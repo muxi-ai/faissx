@@ -8,15 +8,14 @@ router = APIRouter()
 # Store server start time
 START_TIME = time.time()
 
+
 @router.get("/health", tags=["Administration"])
 async def health_check():
     """
     Health check endpoint for monitoring.
     """
-    return {
-        "status": "ok",
-        "uptime": time.time() - START_TIME
-    }
+    return {"status": "ok", "uptime": time.time() - START_TIME}
+
 
 @router.get("/metrics", tags=["Administration"])
 async def metrics(_: str = Depends(get_tenant_id)):
@@ -27,7 +26,7 @@ async def metrics(_: str = Depends(get_tenant_id)):
     # Get basic system metrics
     cpu_percent = psutil.cpu_percent(interval=0.1)
     memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
+    disk = psutil.disk_usage("/")
 
     return {
         "system": {
@@ -39,5 +38,5 @@ async def metrics(_: str = Depends(get_tenant_id)):
             "disk_used_gb": disk.used / (1024 * 1024 * 1024),
             "disk_total_gb": disk.total / (1024 * 1024 * 1024),
         },
-        "uptime": time.time() - START_TIME
+        "uptime": time.time() - START_TIME,
     }
