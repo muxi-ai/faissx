@@ -260,4 +260,6 @@ faiss-proxy/
 
 ## Conclusion
 
-FAISS Proxy provides a simple, general-purpose remote vector database service with a drop-in replacement client library. This enables seamless migration from local FAISS to a distributed deployment, making it ideal for scaling applications like MUXI that require consistent vector operations across multiple instances.
+FAISS Proxy provides a simple, general-purpose remote vector database service with a drop-in replacement client library. This enables seamless migration from local FAISS to a distributed deployment, making it ideal for scaling applications that require consistent vector operations across multiple instances.
+
+
