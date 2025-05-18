@@ -63,10 +63,6 @@ pip install -e .
 
 See [client/README.md](client/README.md) for detailed instructions on using the client library.
 
-## Integration with MUXI
-
-FAISS Proxy is designed to work seamlessly with MUXI. See [client/README.md](client/README.md) for instructions on integrating with MUXI.
-
 ## License
 
-MIT
+Apache License 2.0
