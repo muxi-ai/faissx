@@ -56,23 +56,6 @@ export FAISS_PROXY_API_KEY="your-api-key"
 export FAISS_PROXY_TENANT_ID="your-tenant-id"
 ```
 
-## Integration with MUXI
-
-To use FAISS Proxy with MUXI, simply update the MUXI configuration:
-
-```yaml
-memory:
-    buffer:
-      max_size: 10
-      buffer_multiplier: 10
-      faiss_proxy: true  # Enable FAISS Proxy integration
-      faiss_proxy_url: "http://faiss-service:8000"  # FAISS Proxy URL
-      faiss_proxy_api_key: "${FAISS_PROXY_API_KEY}"  # API key
-      faiss_proxy_tenant_id: "${FAISS_PROXY_TENANT_ID}"  # Tenant ID
-```
-
-The MUXI BufferMemory implementation will automatically use FAISS Proxy instead of local FAISS when this configuration is present.
-
 ## Supported FAISS Features
 
 Currently supported FAISS features:

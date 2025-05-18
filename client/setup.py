@@ -9,9 +9,9 @@ setup(
         "numpy>=1.19.0",
     ],
     description="Drop-in replacement for FAISS with remote execution capabilities",
-    author="MUXI Team",
-    author_email="info@muxi.com",
-    url="https://github.com/muxi/faiss-proxy",
+    author="Ran Aroussi",
+    author_email="ran@aroussi.com",
+    url="https://github.com/muxi-ai/faiss-proxy",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
