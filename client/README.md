@@ -1,81 +1,235 @@
-# FAISSx Client
+# FAISSx Client Library
 
-This directory contains the FAISSx client implementation and utilities.
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
+A true drop-in replacement for FAISS with optional remote execution capabilities.
 
 ## Overview
 
-The FAISSx client provides a drop-in replacement for FAISS that connects to a FAISSx server via ZeroMQ. This allows you to use FAISS in a client-server architecture where the server manages the indices and performs the vector operations.
+The FAISSx client provides:
 
-## Features
+1. **True drop-in replacement** for FAISS - simply change your import statement
+2. **Dual execution modes**:
+   - Local mode: Uses local FAISS library (default)
+   - Remote mode: Uses a FAISSx server via ZeroMQ (activated by calling `configure()`)
+3. **Identical API** to the original FAISS library
+4. **High-performance binary protocol** for efficient remote vector operations
 
-- Drop-in replacement for FAISS IndexFlatL2
-- ZeroMQ-based communication for high performance
-- Support for authentication
-- Simple API for creating indices, adding vectors, and searching
+## Installation
+
+```bash
+# Install from PyPI
+pip install faissx
+
+# For development
+git clone https://github.com/muxi-ai/faissx.git
+cd faissx
+pip install -e .
+```
 
 ## Usage
 
+### Local Mode (Default)
+
+By default, the client uses your local FAISS installation with no configuration needed:
+
 ```python
+# Just change the import - everything else stays the same
 from faissx import client as faiss
+import numpy as np
 
-# Configure the client
-faiss.configure(
-    server="tcp://localhost:45678",  # ZeroMQ server address
-    api_key="your-api-key",          # Optional API key for authentication
-    tenant_id="your-tenant-id"       # Optional tenant ID for multi-tenant isolation
-)
-
-# Use it like regular FAISS
-index = faiss.IndexFlatL2(128)
+# Do FAISS stuff...
+dimension = 128
+index = faiss.IndexFlatL2(dimension)
+vectors = np.random.random((100, dimension)).astype('float32')
 index.add(vectors)
-distances, indices = index.search(query_vectors, k=10)
+D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
 ```
 
-## Environment Variables
+### Remote Mode
+
+To use a remote FAISSx server, add a call to `configure()` before creating any indices:
+
+```python
+from faissx import client as faiss
+import numpy as np
+
+# Connect to a remote FAISSx server
+faiss.configure(
+    server="tcp://localhost:45678",  # ZeroMQ server address
+    api_key="test-key-1",            # API key for authentication
+    tenant_id="tenant-1"             # Tenant ID for multi-tenant isolation
+)
+
+# After configure(), all operations use the remote server
+dimension = 128
+index = faiss.IndexFlatL2(dimension)
+vectors = np.random.random((100, dimension)).astype('float32')
+index.add(vectors)
+D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
+```
+
+**Important**: When `configure()` is called, the client will always use the remote server for all operations. If the server connection fails, operations will fail - there is no automatic fallback to local mode.
+
+## Configuration
+
+### Environment Variables
 
 You can configure the client using environment variables:
 
 - `FAISSX_SERVER`: ZeroMQ server address (default: `tcp://localhost:45678`)
 - `FAISSX_API_KEY`: API key for authentication
 - `FAISSX_TENANT_ID`: Tenant ID for multi-tenant isolation
-- `FAISSX_FALLBACK_TO_LOCAL`: Whether to fall back to local FAISS if the server is unavailable (default: `1`)
 
-## Examples
+### Programmatic Configuration
 
-See the `simple_client.py` script for a complete example of using the FAISSx client.
+```python
+from faissx import client as faiss
 
-## Testing
-
-To run the client tests:
-
-```bash
-./run_tests.sh
-```
-
-Make sure the FAISSx server is running before running the tests.
-
-## Installation
-
-```bash
-pip install faissx
+# Configure the client programmatically
+faiss.configure(
+    server="tcp://your-server:45678",
+    api_key="your-api-key",
+    tenant_id="your-tenant-id"
+)
 ```
 
 ## Supported FAISS Features
 
-Currently supported FAISS features:
+The FAISSx client currently supports:
 
-- IndexFlatL2 (more index types coming soon)
-- Basic vector add operations
-- Vector search operations
+| Feature | Status | Notes |
+|---------|--------|-------|
+| IndexFlatL2 | ✅ | Fully supported |
+| Vector Addition | ✅ | Identical to FAISS |
+| Vector Search | ✅ | Identical to FAISS |
+| Index Reset | ✅ | Clears the index |
+| Other Index Types | 🔄 | Coming soon |
 
-## Limitations
+## API Reference
 
-Current limitations:
+### Main Functions
 
-- Not all FAISS index types are supported yet
-- Some advanced FAISS operations may not be available
-- No GPU support yet (coming in future releases)
+#### `configure(server=None, api_key=None, tenant_id=None)`
+
+Configures the client to use a remote FAISSx server.
+
+- **server**: ZeroMQ server address (e.g., "tcp://localhost:45678")
+- **api_key**: API key for authentication
+- **tenant_id**: Tenant ID for multi-tenant isolation
+
+### IndexFlatL2 Class
+
+```python
+class IndexFlatL2:
+    def __init__(self, d: int):
+        """
+        Initialize the index with specified dimension.
+
+        Args:
+            d (int): Vector dimension for the index
+        """
+
+    def add(self, x: np.ndarray) -> None:
+        """
+        Add vectors to the index.
+
+        Args:
+            x (np.ndarray): Vectors to add, shape (n, d)
+        """
+
+    def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Search for k nearest neighbors for each query vector.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            k (int): Number of nearest neighbors to return
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]:
+                - Distances array of shape (n, k)
+                - Indices array of shape (n, k)
+        """
+
+    def reset(self) -> None:
+        """
+        Reset the index to its initial state.
+        """
+```
+
+## Performance Considerations
+
+When using the remote mode:
+
+1. **Data Transfer**: Large vector operations involve transferring data over the network. The ZeroMQ protocol minimizes overhead but network latency applies.
+
+2. **Connection Handling**: The client maintains a persistent connection to the server for efficient operations.
+
+3. **Serialization**: Vectors are serialized using msgpack for efficient binary transfer.
+
+## Advanced Usage
+
+### Error Handling
+
+```python
+from faissx import client as faiss
+
+try:
+    faiss.configure(server="tcp://non-existent-server:45678")
+    index = faiss.IndexFlatL2(128)
+except RuntimeError as e:
+    print(f"Connection error: {e}")
+    # Handle the error or fall back to local FAISS
+    import faiss as local_faiss
+    index = local_faiss.IndexFlatL2(128)
+```
+
+### Working with Existing FAISS Code
+
+Since FAISSx is a drop-in replacement, you can easily switch between local FAISS and remote FAISSx by changing imports:
+
+```python
+# Original code using local FAISS
+import faiss
+index = faiss.IndexFlatL2(128)
+
+# Switch to FAISSx (local mode)
+from faissx import client as faiss
+index = faiss.IndexFlatL2(128)
+
+# Switch to FAISSx (remote mode)
+from faissx import client as faiss
+faiss.configure(server="tcp://localhost:45678")
+index = faiss.IndexFlatL2(128)
+```
+
+## Examples
+
+Check out the example scripts in the repository:
+
+- [Simple Client](../examples/simple_client.py): Basic usage of the client
+- [Remote Search Example](../examples/remote_search.py): Using remote search operations
+
+## Troubleshooting
+
+### Connection Issues
+
+If you're having trouble connecting to the server:
+
+1. Ensure the server is running: `nc -z localhost 45678`
+2. Check your firewall settings
+3. Verify you've provided the correct API key and tenant ID if authentication is enabled
+
+### Vector Dimension Mismatch
+
+If you get dimension mismatch errors, ensure:
+
+1. Your index was created with the correct dimension
+2. All vectors have the same dimension as the index
+3. All vectors are properly converted to float32 type
 
 ## License
 
-MIT
+FAISSx is licensed under the [Apache 2.0 license](./LICENSE).

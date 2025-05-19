@@ -1,27 +1,55 @@
 # FAISSx (FAISS Extended)
 
-> High-performance vector database proxy built with FAISS and ZeroMQ.
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+&nbsp;
+[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-## Run FAISS as a service for multi-server deployments
+### A high-performance vector database proxy built with FAISS and ZeroMQ, providing a drop-in replacement for FAISS with scalable, distributed vector operations.
 
-## Overview
+---
 
-FAISSx provides a lightweight, efficient interface to create, manage, and search vector indices using Facebook AI Similarity Search (FAISS). It uses ZeroMQ for high-performance binary communication, making it significantly faster than HTTP-based alternatives.
+> [!TIP]
+> #### Support this project by starring this repo on GitHub!
+>
+> More stars → more visibility → more contributors → better features → more robust tool for everyone 🎉
+>
+> <a href="https://github.com/muxi-ai/faissx" target="_blank"><img src="https://img.shields.io/github/stars/muxi-ai/faissx.svg?style=social&label=Star&maxAge=60" alt="Star this repo"></a>
+>
+> Thank you for your support! 🙏
 
-## Features
+---
 
-- Zero-copy binary messaging protocol with ZeroMQ and msgpack serialization
-- Create and manage multiple vector indices
-- Add, search, and manage vectors efficiently
-- Multi-tenant support with API key authentication
-- Python package with server and client components
-- Docker-based deployment
-- Optimized for production workloads
+## 📚 Table of Contents
 
-## Installation
+- [Overview](#-overview)
+- [Getting Started](#-getting-started)
+- [Key Features](#-key-features)
+- [Architecture](#-architecture)
+- [Server Setup](#-server-setup)
+- [Client Implementation](#-client-implementation)
+- [Docker Deployment](#-docker-deployment)
+- [Performance](#-performance)
+- [Development](#-development)
+- [Project Structure](#-project-structure)
+- [License](#-license)
+
+## 👉 Overview
+
+**FAISSx** is a lightweight, high-performance vector database proxy that runs [Facebook AI Similarity Search (FAISS)](https://github.com/facebookresearch/faiss) as a service. It provides a client-server architecture for efficient vector operations with significantly better performance than HTTP-based alternatives.
+
+The client library acts as a true drop-in replacement for FAISS, meaning you can use it without changing your existing code - simply change your import statements and optionally configure remote execution. FAISSx seamlessly transitions between local FAISS execution and remote server operations based on your configuration.
+
+FAISSx is designed for production workloads with multi-tenant support, authentication, and efficient binary messaging protocol using ZeroMQ and msgpack serialization.
+
+---
+
+## 🚀 Getting Started
+
+### Installation
 
 ```bash
-# Install from PyPI (when published)
+# Install from PyPI
 pip install faissx
 
 # For development
@@ -30,11 +58,111 @@ cd faissx
 pip install -e .
 ```
 
-## Quick Start
+### Quick Start: Running FAISSx Server
 
-### Setting up the server
+```bash
+# Start the server with default settings
+faissx.server run
 
-#### Option 1: Using the Python API
+# Start with custom options
+faissx.server run --port 45678 --data-dir ./data --enable-auth --auth-keys "key1:tenant1,key2:tenant2"
+```
+
+### Quick Start: Using FAISSx Client
+
+**1. Using FAISS locally - no configuration needed**
+
+```python
+from faissx import client as faiss
+import numpy as np
+
+# Do FAISS stuff...
+dimension = 128
+index = faiss.IndexFlatL2(dimension)
+vectors = np.random.rand(100, dimension).astype(np.float32)
+index.add(vectors)
+D, I = index.search(np.random.rand(1, dimension).astype(np.float32), k=5)
+```
+
+**2. Using a remote FAISSx server**
+
+```python
+from faissx import client as faiss
+import numpy as np
+
+# Connect to a remove FAISSx server
+faiss.configure(
+    server="tcp://localhost:45678",  # ZeroMQ server address
+    api_key="test-key-1",            # API key for authentication
+    tenant_id="tenant-1"             # Tenant ID for multi-tenant isolation
+)
+
+# All operations after configure() will use the remote server
+index = faiss.IndexFlatL2(128)
+vectors = np.random.rand(100, 128).astype(np.float32)
+index.add(vectors)
+D, I = index.search(np.random.rand(1, 128).astype(np.float32), k=5)
+```
+
+---
+
+## ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **📦 Drop-in replacement** | Use your existing FAISS code with minimal changes |
+| **🔄 Binary protocol** | ZeroMQ and msgpack for efficient data transfer |
+| **🌐 Multi-tenant support** | API key authentication for secure multi-tenant deployment |
+| **📊 Vector operations** | Create indices, add vectors, and perform similarity searches |
+| **🚀 High performance** | Significantly faster than HTTP-based alternatives |
+| **📦 Persistent storage** | Optional persistence for vector indices |
+| **🐳 Docker deployment** | Easy deployment with Docker images (Server) |
+
+---
+
+## 🏗️ Architecture
+
+FAISSx follows a client-server architecture with high-performance binary communication:
+
+```mermaid
+flowchart TD
+    Client[Client Application] --> ClientLib[FAISSx Client Library]
+    ClientLib --> ZMQ[ZeroMQ Connection]
+    ZMQ --> Server[FAISSx Server]
+    Server --> FAISS[FAISS Index Manager]
+    Server --> Auth[Authentication]
+    Server --> Storage[Storage]
+```
+
+### Components
+
+1. **Client Library**: Drop-in replacement for FAISS with remote execution capabilities
+   - Uses the same API as FAISS
+   - Implements local FAISS by default when unconfigured
+   - Supports remote execution when explicitly configured
+
+2. **ZeroMQ Communication**: High-performance binary messaging
+   - Zero-copy binary protocol
+   - Efficient msgpack serialization
+   - Low latency, persistent connections
+
+3. **Server**: Main service that handles client requests
+   - Multi-tenant support
+   - Authentication
+   - Vector index management
+
+4. **FAISS Index Manager**: Core component that handles vector operations
+   - Creates and manages multiple indices
+   - Performs vector addition and search operations
+   - Optimizes memory usage
+
+---
+
+## 🖥️ Server Setup
+
+FAISSx server can be set up in multiple ways:
+
+### Python API
 
 ```python
 from faissx import server
@@ -58,9 +186,7 @@ server.configure(
 server.run()
 ```
 
-#### Option 2: Using the CLI
-
-After installing the package via pip, you can use the command-line interface:
+### Command-Line Interface
 
 ```bash
 # Start the server with default settings
@@ -81,41 +207,67 @@ faissx.server --version
 
 Note: For authentication, you can provide API keys either inline with `--auth-keys` or from a JSON file with `--auth-file`. The JSON file should have the format `{"api_key1": "tenant1", "api_key2": "tenant2"}`. Only one authentication method can be used at a time.
 
-#### Option 3: Using Docker
+---
 
-```bash
-# Pull and run the pre-built image
-docker run -p 45678:45678 -v ./data:/data muxi/faissx:latest
+## 📱 Client Implementation
 
-# Or build and run using docker-compose
-git clone https://github.com/muxi-ai/faissx.git
-cd faissx
-docker-compose up
+The FAISSx client provides a true drop-in replacement for FAISS, with the ability to transparently use either local FAISS or a remote FAISSx server:
+
+### Local Mode (Default)
+
+By default, FAISSx will use your local FAISS installation with no extra configuration required:
+
+```python
+# Just change the import - everything else stays the same
+from faissx import client as faiss
+import numpy as np
+
+# Create and use FAISS exactly as you would normally
+dimension = 128
+index = faiss.IndexFlatL2(dimension)
+vectors = np.random.random((100, dimension)).astype('float32')
+index.add(vectors)
+D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
 ```
 
-### Using the client
+### Remote Mode
+
+When you want to use the remote FAISSx server instead of local processing, just add a configure() call:
 
 ```python
 from faissx import client as faiss
 import numpy as np
 
-# Configure the client with authentication
+# Configure to use the remote server
 faiss.configure(
-    server="tcp://localhost:45678",  # ZeroMQ server address
-    api_key="test-key-1",            # API key for authentication
-    tenant_id="tenant-1"             # Tenant ID for multi-tenant isolation
+    server="tcp://your-server:45678",
+    api_key="your-api-key",
+    tenant_id="your-tenant-id"
 )
 
-# Use it like regular FAISS - drop-in replacement
-index = faiss.IndexFlatL2(128)  # Create a new index with dimension 128
-vectors = np.random.rand(100, 128).astype(np.float32)  # Generate random vectors
-index.add(vectors)  # Add vectors to the index
-D, I = index.search(np.random.rand(1, 128).astype(np.float32), k=5)  # Search for similar vectors
+# After configure(), all operations will use the remote server
+dimension = 128
+index = faiss.IndexFlatL2(dimension)
+vectors = np.random.random((100, dimension)).astype('float32')
+index.add(vectors)
+D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
 ```
 
-## Docker Deployment
+**Note**: When you call `configure()`, all subsequent operations MUST use the remote server. If the server connection fails, operations will fail - there is no automatic fallback to local mode after `configure()` is called.
 
-We provide Docker images for easy deployment:
+### Environment Variables
+
+You can configure the client using environment variables:
+
+- `FAISSX_SERVER`: ZeroMQ server address (default: `tcp://localhost:45678`)
+- `FAISSX_API_KEY`: API key for authentication
+- `FAISSX_TENANT_ID`: Tenant ID for multi-tenant isolation
+
+---
+
+## 🐳 Docker Deployment
+
+FAISSx provides Docker images for easy deployment:
 
 ```bash
 # Run with default settings
@@ -131,13 +283,17 @@ docker run -p 45678:45678 \
   muxi/faissx:latest
 ```
 
-## Documentation
+You can also use docker-compose:
 
-- [Server Documentation](server/README.md): Detailed information about the server component
-- [Client Documentation](client/README.md): Detailed information about the client library
-- [Next Steps](NEXT_STEPS.md): Roadmap and upcoming features
+```bash
+git clone https://github.com/muxi-ai/faissx.git
+cd faissx
+docker-compose up
+```
 
-## Performance
+---
+
+## 📊 Performance
 
 The ZeroMQ-based implementation provides significant performance improvements over HTTP-based alternatives:
 
@@ -146,7 +302,9 @@ The ZeroMQ-based implementation provides significant performance improvements ov
 - Efficient vector operations through direct numpy integration
 - No JSON encoding/decoding overhead for large vector data
 
-## Development
+---
+
+## 🛠️ Development
 
 To set up a development environment:
 
@@ -183,7 +341,9 @@ cd server
 ./build_docker.sh
 ```
 
-## Project Structure
+---
+
+## 📁 Project Structure
 
 ```
 /faissx       - Python package source code
@@ -195,6 +355,31 @@ cd server
 /data         - Default directory for FAISS data files
 ```
 
-## License
+---
 
-Apache 2.0
+## 📄 License
+
+FAISSx is licensed under the [Apache 2.0 license](./LICENSE).
+
+### Why Apache 2.0?
+
+I chose the Apache 2.0 license to make FAISSx easy to adopt, integrate, and build on. This license:
+
+- Allows you to freely use, modify, and distribute the library in both open-source and proprietary software
+- Encourages wide adoption by individuals, startups, and enterprises alike
+- Includes a clear patent grant for legal peace of mind
+- Enables flexible usage without the complexity of copyleft restrictions
+
+---
+
+## 🙏 Thank You
+
+Thank you for trying out FAISSx! Your interest and support mean a lot to this project. Whether you're using it in your applications or just exploring the capabilities, your participation helps drive this project forward.
+
+If you find FAISSx useful in your work:
+
+- Consider starring the repository on GitHub
+- Share your experiences or use cases with the community
+- Let me know how I can make it better for your needs
+
+~ **Ran Aroussi**
