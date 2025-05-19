@@ -218,6 +218,38 @@ class FaissXClient:
 
         return self._send_request(request)
 
+    def range_search(
+        self,
+        index_id: str,
+        query_vectors: np.ndarray,
+        radius: float,
+    ) -> Dict[str, Any]:
+        """
+        Search for vectors within a specified radius.
+
+        Args:
+            index_id: ID of the index to search
+            query_vectors: Query vectors to find matches for
+            radius: Maximum distance threshold for matches
+
+        Returns:
+            Dictionary containing search results including distances and indices
+            for each point within the radius
+        """
+        # Convert numpy array to list for serialization
+        vectors_list = (
+            query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
+        )
+
+        request = {
+            "action": "range_search",
+            "index_id": index_id,
+            "query_vectors": vectors_list,
+            "radius": float(radius)  # Ensure radius is a float
+        }
+
+        return self._send_request(request)
+
     def get_index_stats(self, index_id: str) -> Dict[str, Any]:
         """
         Retrieve statistics about an index.

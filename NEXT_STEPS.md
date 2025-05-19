@@ -44,7 +44,7 @@ This document outlines the current status and next steps for the FAISSx project,
   - [x] IndexHNSW
   - [x] IndexPQ
 - [x] Implement index training endpoints
-- [ ] Add specialized search operations (range search, etc.)
+- [x] Add specialized search operations (range search, etc.)
 
 ### Client Library Enhancements
 - [x] Implement additional FAISS index classes

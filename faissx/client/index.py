@@ -200,44 +200,111 @@ class IndexFlatL2:
             # Use local FAISS implementation directly
             return self._local_index.search(query_vectors, k)
 
-        # Perform search on remote index (remote mode)
-        result = self.client.search(
-            self.index_id,
-            query_vectors=query_vectors,
-            k=k
-        )
+        # Search via remote index
+        result = self.client.search(self.index_id, query_vectors, k)
 
-        n = x.shape[0]  # Number of query vectors
+        if not result.get("success", False):
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Search failed: {error}")
+
+        # Process results
         search_results = result.get("results", [])
+        n_queries = len(search_results)
 
-        # Initialize output arrays with default values
-        distances = np.full((n, k), float('inf'), dtype=np.float32)
-        idx = np.full((n, k), -1, dtype=np.int64)
+        # Initialize empty arrays for distances and indices
+        distances = np.zeros((n_queries, k), dtype=np.float32)
+        indices = np.zeros((n_queries, k), dtype=np.int64)
 
-        # Process results for each query vector
-        for i in range(min(n, len(search_results))):
-            result_data = search_results[i]
-            result_distances = result_data.get("distances", [])
-            result_indices = result_data.get("indices", [])
+        # Fill arrays with results
+        for i, res in enumerate(search_results):
+            # Copy distances directly
+            result_distances = np.array(res.get("distances", []), dtype=np.float32)
+            result_indices = np.array(res.get("indices", []), dtype=np.int64)
 
-            # Fill in results for this query vector
-            for j in range(min(k, len(result_distances))):
-                distances[i, j] = result_distances[j]
+            # Handle case where fewer than k results are returned
+            actual_k = min(k, len(result_distances))
+            distances[i, :actual_k] = result_distances[:actual_k]
+            indices[i, :actual_k] = result_indices[:actual_k]
 
-                # Map server index back to local index
-                server_idx = result_indices[j]
-                found = False
-                for local_idx, info in self._vector_mapping.items():
-                    if info["server_idx"] == server_idx:
-                        idx[i, j] = local_idx
-                        found = True
-                        break
+            # Fill remaining slots with default values if fewer than k results
+            if actual_k < k:
+                distances[i, actual_k:] = float('inf')
+                indices[i, actual_k:] = -1
 
-                # Keep -1 if mapping not found
-                if not found:
-                    idx[i, j] = -1
+        return distances, indices
 
-        return distances, idx
+    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Search for all vectors within the specified radius.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            radius (float): Maximum distance threshold
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - lims: array of shape (n+1) giving the boundaries of results for each query
+                - distances: array of shape (sum_of_results) containing all distances
+                - indices: array of shape (sum_of_results) containing all indices
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If range search fails or isn't supported by the index type
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            if hasattr(self._local_index, 'range_search'):
+                return self._local_index.range_search(query_vectors, radius)
+            else:
+                raise RuntimeError("Local FAISS index does not support range_search")
+
+        # Search via remote index
+        result = self.client.range_search(self.index_id, query_vectors, radius)
+
+        if not result.get("success", False):
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Range search failed: {error}")
+
+        # Process results
+        search_results = result.get("results", [])
+        n_queries = len(search_results)
+
+        # Calculate total number of results across all queries
+        total_results = sum(res.get("count", 0) for res in search_results)
+
+        # Initialize arrays
+        lims = np.zeros(n_queries + 1, dtype=np.int64)
+        distances = np.zeros(total_results, dtype=np.float32)
+        indices = np.zeros(total_results, dtype=np.int64)
+
+        # Fill arrays with results
+        offset = 0
+        for i, res in enumerate(search_results):
+            # Set limit boundary for this query
+            lims[i] = offset
+
+            # Get results for this query
+            result_distances = res.get("distances", [])
+            result_indices = res.get("indices", [])
+            count = len(result_distances)
+
+            # Copy data to output arrays
+            if count > 0:
+                distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
+                indices[offset:offset+count] = np.array(result_indices, dtype=np.int64)
+                offset += count
+
+        # Set final boundary
+        lims[n_queries] = offset
+
+        return lims, distances, indices
 
     def reset(self) -> None:
         """
@@ -467,6 +534,7 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If index is not trained before searching
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -520,6 +588,96 @@ class IndexIVFFlat:
                     idx[i, j] = -1
 
         return distances, idx
+
+    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Search for all vectors within the specified radius.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            radius (float): Maximum distance threshold
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - lims: array of shape (n+1) giving the boundaries of results for each query
+                - distances: array of shape (sum_of_results) containing all distances
+                - indices: array of shape (sum_of_results) containing all indices
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If index is not trained or range search fails
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        if not self.is_trained:
+            raise RuntimeError("Index must be trained before searching")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            if hasattr(self._local_index, 'range_search'):
+                return self._local_index.range_search(query_vectors, radius)
+            else:
+                raise RuntimeError("Local FAISS index does not support range_search")
+
+        # Search via remote index
+        result = self.client.range_search(self.index_id, query_vectors, radius)
+
+        if not result.get("success", False):
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Range search failed: {error}")
+
+        # Process results
+        search_results = result.get("results", [])
+        n_queries = len(search_results)
+
+        # Calculate total number of results across all queries
+        total_results = sum(res.get("count", 0) for res in search_results)
+
+        # Initialize arrays
+        lims = np.zeros(n_queries + 1, dtype=np.int64)
+        distances = np.zeros(total_results, dtype=np.float32)
+        indices = np.zeros(total_results, dtype=np.int64)
+
+        # Fill arrays with results
+        offset = 0
+        for i, res in enumerate(search_results):
+            # Set limit boundary for this query
+            lims[i] = offset
+
+            # Get results for this query
+            result_distances = res.get("distances", [])
+            result_indices = res.get("indices", [])
+            count = len(result_distances)
+
+            # Copy data to output arrays
+            if count > 0:
+                distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
+
+                # Map server indices back to local indices
+                mapped_indices = np.zeros(count, dtype=np.int64)
+                for j, server_idx in enumerate(result_indices):
+                    found = False
+                    for local_idx, info in self._vector_mapping.items():
+                        if info["server_idx"] == server_idx:
+                            mapped_indices[j] = local_idx
+                            found = True
+                            break
+
+                    if not found:
+                        mapped_indices[j] = -1
+
+                indices[offset:offset+count] = mapped_indices
+                offset += count
+
+        # Set final boundary
+        lims[n_queries] = offset
+
+        return lims, distances, indices
 
     def reset(self) -> None:
         """
@@ -779,6 +937,93 @@ class IndexHNSWFlat:
                     idx[i, j] = -1
 
         return distances, idx
+
+    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Search for all vectors within the specified radius.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            radius (float): Maximum distance threshold
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - lims: array of shape (n+1) giving the boundaries of results for each query
+                - distances: array of shape (sum_of_results) containing all distances
+                - indices: array of shape (sum_of_results) containing all indices
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If range search fails or isn't supported by the index type
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            if hasattr(self._local_index, 'range_search'):
+                return self._local_index.range_search(query_vectors, radius)
+            else:
+                raise RuntimeError("Local FAISS index does not support range_search")
+
+        # Search via remote index
+        result = self.client.range_search(self.index_id, query_vectors, radius)
+
+        if not result.get("success", False):
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Range search failed: {error}")
+
+        # Process results
+        search_results = result.get("results", [])
+        n_queries = len(search_results)
+
+        # Calculate total number of results across all queries
+        total_results = sum(res.get("count", 0) for res in search_results)
+
+        # Initialize arrays
+        lims = np.zeros(n_queries + 1, dtype=np.int64)
+        distances = np.zeros(total_results, dtype=np.float32)
+        indices = np.zeros(total_results, dtype=np.int64)
+
+        # Fill arrays with results
+        offset = 0
+        for i, res in enumerate(search_results):
+            # Set limit boundary for this query
+            lims[i] = offset
+
+            # Get results for this query
+            result_distances = res.get("distances", [])
+            result_indices = res.get("indices", [])
+            count = len(result_distances)
+
+            # Copy data to output arrays
+            if count > 0:
+                distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
+
+                # Map server indices back to local indices
+                mapped_indices = np.zeros(count, dtype=np.int64)
+                for j, server_idx in enumerate(result_indices):
+                    found = False
+                    for local_idx, info in self._vector_mapping.items():
+                        if info["server_idx"] == server_idx:
+                            mapped_indices[j] = local_idx
+                            found = True
+                            break
+
+                    if not found:
+                        mapped_indices[j] = -1
+
+                indices[offset:offset+count] = mapped_indices
+                offset += count
+
+        # Set final boundary
+        lims[n_queries] = offset
+
+        return lims, distances, indices
 
     def reset(self) -> None:
         """
@@ -1079,6 +1324,96 @@ class IndexPQ:
                     idx[i, j] = -1
 
         return distances, idx
+
+    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Search for all vectors within the specified radius.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            radius (float): Maximum distance threshold
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - lims: array of shape (n+1) giving the boundaries of results for each query
+                - distances: array of shape (sum_of_results) containing all distances
+                - indices: array of shape (sum_of_results) containing all indices
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If index is not trained or range search fails
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        if not self.is_trained:
+            raise RuntimeError("Index must be trained before searching")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            if hasattr(self._local_index, 'range_search'):
+                return self._local_index.range_search(query_vectors, radius)
+            else:
+                raise RuntimeError("Local FAISS index does not support range_search")
+
+        # Search via remote index
+        result = self.client.range_search(self.index_id, query_vectors, radius)
+
+        if not result.get("success", False):
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Range search failed: {error}")
+
+        # Process results
+        search_results = result.get("results", [])
+        n_queries = len(search_results)
+
+        # Calculate total number of results across all queries
+        total_results = sum(res.get("count", 0) for res in search_results)
+
+        # Initialize arrays
+        lims = np.zeros(n_queries + 1, dtype=np.int64)
+        distances = np.zeros(total_results, dtype=np.float32)
+        indices = np.zeros(total_results, dtype=np.int64)
+
+        # Fill arrays with results
+        offset = 0
+        for i, res in enumerate(search_results):
+            # Set limit boundary for this query
+            lims[i] = offset
+
+            # Get results for this query
+            result_distances = res.get("distances", [])
+            result_indices = res.get("indices", [])
+            count = len(result_distances)
+
+            # Copy data to output arrays
+            if count > 0:
+                distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
+
+                # Map server indices back to local indices
+                mapped_indices = np.zeros(count, dtype=np.int64)
+                for j, server_idx in enumerate(result_indices):
+                    found = False
+                    for local_idx, info in self._vector_mapping.items():
+                        if info["server_idx"] == server_idx:
+                            mapped_indices[j] = local_idx
+                            found = True
+                            break
+
+                    if not found:
+                        mapped_indices[j] = -1
+
+                indices[offset:offset+count] = mapped_indices
+                offset += count
+
+        # Set final boundary
+        lims[n_queries] = offset
+
+        return lims, distances, indices
 
     def reset(self) -> None:
         """
