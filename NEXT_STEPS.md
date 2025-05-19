@@ -53,7 +53,8 @@ This document outlines the current status and next steps for the FAISSx project,
 
 ### Advanced Features
 - [ ] Optimize persistence layer for large indices
-- [ ] Add GPU support via FAISS GPU indices
+- [x] Add GPU support via FAISS GPU indices (Client side; local mode)
+- [ ] Add GPU support via FAISS GPU indices (Server side)
 
 ## Implementation Priorities
 
@@ -68,6 +69,25 @@ This document outlines the current status and next steps for the FAISSx project,
 
 ### Medium Priority
 1. Add more client-side features and FAISS compatibility
+   - [x] Additional index types:
+     - [x] IndexIVFPQ (IVF + Product Quantization)
+     - [x] IndexScalarQuantizer (efficient scalar quantization)
+     - [ ] IndexIDMap/IndexIDMap2 (custom vector IDs)
+     - [ ] Binary indices (IndexBinaryFlat, etc.)
+     - [ ] IndexPreTransform (vector transformations)
+   - [ ] Additional operations:
+     - [ ] Vector reconstruction (reconstruct() and reconstruct_n())
+     - [ ] Custom ID support (add_with_ids())
+     - [ ] Parameter control (nprobe, efSearch settings)
+     - [ ] Vector removal (remove_ids())
+   - [ ] Advanced features:
+     - [ ] Factory pattern (index_factory)
+     - [ ] Metadata filtering
+     - [ ] Direct index persistence (write_index/read_index)
+     - [ ] Index modification (merging, splitting)
+   - [ ] Optimization controls:
+     - [ ] Fine-grained parameters
+     - [ ] Memory management options
 2. Create benchmarking tools
 3. Add performance optimizations
 
