@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-FAISS Proxy Server CLI
+FAISSx Server CLI
 
-Command-line interface for the FAISS Proxy server.
+Command-line interface for the FAISSx server.
 """
 
 import sys
 import argparse
-from faiss_proxy import server
-from faiss_proxy import __version__
+from faissx import server
+from faissx import __version__
 
 
 def run_command(args):
@@ -44,7 +44,7 @@ def run_command(args):
         print(f"Error configuring server: {e}")
         return 1
 
-    print(f"Starting FAISS Proxy Server on {args.bind_address}:{args.port}")
+    print(f"Starting FAISSx Server on {args.bind_address}:{args.port}")
     if args.data_dir:
         print(f"Data directory: {args.data_dir}")
     else:
@@ -67,14 +67,14 @@ def run_command(args):
 
 def version_command(_):
     """Show version information"""
-    print(f"FAISS Proxy Server v{__version__}")
+    print(f"FAISSx Server v{__version__}")
     return 0
 
 
 def setup_run_parser(subparsers):
     """Set up the 'run' command parser"""
     parser = subparsers.add_parser(
-        "run", help="Run the FAISS Proxy server"
+        "run", help="Run the FAISSx server"
     )
     parser.add_argument("--port", type=int, default=45678, help="Port to listen on")
     parser.add_argument("--bind-address", default="0.0.0.0", help="Address to bind to")
@@ -91,7 +91,7 @@ def setup_run_parser(subparsers):
 def main():
     """Main entry point for the CLI"""
     parser = argparse.ArgumentParser(
-        description="FAISS Proxy Server - A high-performance vector database proxy"
+        description="FAISSx Server - A high-performance vector database proxy"
     )
     parser.add_argument(
         "--version", action="store_true", help="Show version information"

@@ -1,10 +1,10 @@
-# FAISS Proxy
+# FAISSx (FAISS Extended)
 
 High-performance vector database proxy built with FAISS and ZeroMQ.
 
 ## Overview
 
-FAISS Proxy provides a lightweight, efficient interface to create, manage, and search vector indices using Facebook AI Similarity Search (FAISS). It uses ZeroMQ for high-performance binary communication, making it significantly faster than HTTP-based alternatives.
+FAISSx provides a lightweight, efficient interface to create, manage, and search vector indices using Facebook AI Similarity Search (FAISS). It uses ZeroMQ for high-performance binary communication, making it significantly faster than HTTP-based alternatives.
 
 ## Features
 
@@ -19,7 +19,7 @@ FAISS Proxy provides a lightweight, efficient interface to create, manage, and s
 ## Installation
 
 ```bash
-pip install faiss-proxy
+pip install faissx
 ```
 
 ## Quick Start
@@ -29,7 +29,7 @@ pip install faiss-proxy
 #### Option 1: Using the Python API
 
 ```python
-from faiss_proxy import server
+from faissx import server
 
 server.configure(
     port=45678,  # default is 45678
@@ -56,19 +56,19 @@ After installing the package via pip, you can use the command-line interface:
 
 ```bash
 # Start the server with default settings
-faiss-proxy.server run
+faissx.server run
 
 # Start with custom options
-faiss-proxy.server run --port 45678 --data-dir ./data --enable-auth --auth-keys "key1:tenant1,key2:tenant2"
+faissx.server run --port 45678 --data-dir ./data --enable-auth --auth-keys "key1:tenant1,key2:tenant2"
 
 # Using authentication file instead of inline keys
-faiss-proxy.server run --enable-auth --auth-file path/to/auth.json
+faissx.server run --enable-auth --auth-file path/to/auth.json
 
 # Show help
-faiss-proxy.server run --help
+faissx.server run --help
 
 # Show version
-faiss-proxy.server --version
+faissx.server --version
 ```
 
 Note: For authentication, you can provide API keys either inline with `--auth-keys` or from a JSON file with `--auth-file`. The JSON file should have the format `{"api_key1": "tenant1", "api_key2": "tenant2"}`. Only one authentication method can be used at a time.
@@ -76,13 +76,13 @@ Note: For authentication, you can provide API keys either inline with `--auth-ke
 #### Option 3: Using Docker
 
 ```bash
-docker run -p 45678:45678 -v ./data:/data muxi/faiss-proxy:latest
+docker run -p 45678:45678 -v ./data:/data muxi/faissx:latest
 ```
 
 ### Using the client
 
 ```python
-from faiss_proxy import client as faiss
+from faissx import client as faiss
 
 faiss.configure(
     server="tcp://faiss-service:45678",
@@ -104,13 +104,13 @@ We provide two Docker images:
 1. Standard Python-based container:
 
 ```bash
-docker run -p 45678:45678 -v /path/to/data:/data muxi/faiss-proxy:latest
+docker run -p 45678:45678 -v /path/to/data:/data muxi/faissx:latest
 ```
 
 2. PyPy-based container for potential performance improvements:
 
 ```bash
-docker run -p 45678:45678 -v /path/to/data:/data muxi/faiss-proxy:pypy
+docker run -p 45678:45678 -v /path/to/data:/data muxi/faissx:pypy
 ```
 
 ## Documentation
@@ -131,8 +131,8 @@ To set up a development environment:
 
 ```bash
 # Clone the repository
-git clone https://github.com/muxi/faiss-proxy.git
-cd faiss-proxy
+git clone https://github.com/muxi-ai/faissx.git
+cd faissx
 
 # Install in development mode
 pip install -e .
@@ -153,4 +153,4 @@ cd server
 
 ## License
 
-MIT
+Apache 2.0

@@ -6,8 +6,8 @@ import subprocess
 import requests
 from uuid import uuid4
 
-import faiss_proxy
-from faiss_proxy import configure, IndexFlatL2
+import faissx
+from faissx import configure, IndexFlatL2
 
 
 # Skip all tests in this module if NO_INTEGRATION_TESTS is set
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def server_process():
-    """Start a FAISS Proxy server for integration testing"""
+    """Start a FAISSx server for integration testing"""
     # Check if a server is already running
     try:
         response = requests.get("http://localhost:8000/")
@@ -85,7 +85,7 @@ def client_config():
 
 
 class TestIntegration:
-    """Integration tests for FAISS Proxy client with a running server"""
+    """Integration tests for FAISSx client with a running server"""
 
     def test_basic_workflow(self, server_process, client_config):
         """Test basic workflow with index creation, adding vectors, and search"""

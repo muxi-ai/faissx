@@ -2,16 +2,16 @@ import pytest
 import os
 from unittest.mock import patch, MagicMock
 
-import faiss_proxy
-from faiss_proxy.client import FaissProxyClient, configure, get_client
+import faissx
+from faissx.client import FaissXClient, configure, get_client
 
 
-class TestFaissProxyClient:
-    """Unit tests for the FAISS Proxy client"""
+class TestFaissXClient:
+    """Unit tests for the FAISSx client"""
 
     def test_client_initialization(self):
         """Test client initialization with configuration"""
-        client = FaissProxyClient(
+        client = FaissXClient(
             api_url="http://test-server:8000",
             api_key="test-api-key",
             tenant_id="test-tenant"
@@ -30,20 +30,20 @@ class TestFaissProxyClient:
         """Test client initialization with missing configuration"""
         # Should raise ValueError when config is missing
         with pytest.raises(ValueError, match="API URL must be provided"):
-            FaissProxyClient(api_url=None, api_key="key", tenant_id="tenant")
+            FaissXClient(api_url=None, api_key="key", tenant_id="tenant")
 
         with pytest.raises(ValueError, match="API key must be provided"):
-            FaissProxyClient(api_url="url", api_key=None, tenant_id="tenant")
+            FaissXClient(api_url="url", api_key=None, tenant_id="tenant")
 
         with pytest.raises(ValueError, match="Tenant ID must be provided"):
-            FaissProxyClient(api_url="url", api_key="key", tenant_id=None)
+            FaissXClient(api_url="url", api_key="key", tenant_id=None)
 
     def test_configure_function(self):
         """Test the configure function for setting global configuration"""
         # Save original values
-        original_url = faiss_proxy._API_URL
-        original_key = faiss_proxy._API_KEY
-        original_tenant = faiss_proxy._TENANT_ID
+        original_url = faissx._API_URL
+        original_key = faissx._API_KEY
+        original_tenant = faissx._TENANT_ID
 
         try:
             # Configure with new values
@@ -54,17 +54,17 @@ class TestFaissProxyClient:
             )
 
             # Check that module-level variables are updated
-            assert faiss_proxy._API_URL == "http://new-server:8000"
-            assert faiss_proxy._API_KEY == "new-api-key"
-            assert faiss_proxy._TENANT_ID == "new-tenant"
+            assert faissx._API_URL == "http://new-server:8000"
+            assert faissx._API_KEY == "new-api-key"
+            assert faissx._TENANT_ID == "new-tenant"
         finally:
             # Restore original values
-            faiss_proxy._API_URL = original_url
-            faiss_proxy._API_KEY = original_key
-            faiss_proxy._TENANT_ID = original_tenant
+            faissx._API_URL = original_url
+            faissx._API_KEY = original_key
+            faissx._TENANT_ID = original_tenant
 
-    @patch("faiss_proxy.client._client", None)
-    @patch("faiss_proxy.client.FaissProxyClient")
+    @patch("faissx.client._client", None)
+    @patch("faissx.client.FaissXClient")
     def test_get_client(self, mock_client_class):
         """Test the get_client function creates and caches client instance"""
         # Setup mock
@@ -98,7 +98,7 @@ class TestFaissProxyClient:
         mock_session_class.return_value = mock_session
 
         # Create client with mocked session
-        client = FaissProxyClient(
+        client = FaissXClient(
             api_url="http://test-server:8000",
             api_key="test-api-key",
             tenant_id="test-tenant"
@@ -142,7 +142,7 @@ class TestFaissProxyClient:
         mock_session_class.return_value = mock_session
 
         # Create client with mocked session
-        client = FaissProxyClient(
+        client = FaissXClient(
             api_url="http://test-server:8000",
             api_key="test-api-key",
             tenant_id="test-tenant"

@@ -1,5 +1,5 @@
 """
-FAISS Proxy Server Module
+FAISSx Server Module
 
 This module provides a high-performance vector database proxy server
 using FAISS and ZeroMQ communication.
@@ -36,7 +36,7 @@ def configure(
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Configure the FAISS Proxy Server.
+    Configure the FAISSx Server.
 
     Args:
         port: Port to listen on (default: 45678)
@@ -91,7 +91,7 @@ def get_config() -> Dict[str, Any]:
 
 def run():
     """
-    Run the FAISS Proxy Server with the current configuration.
+    Run the FAISSx Server with the current configuration.
 
     This will start the ZeroMQ server and begin accepting connections.
     """
@@ -105,7 +105,7 @@ def run():
     # Set environment variables from config
     if _config["data_dir"]:
         os.environ["FAISS_DATA_DIR"] = _config["data_dir"]
-    os.environ["FAISS_PROXY_PORT"] = str(_config["port"])
+    os.environ["faissx_PORT"] = str(_config["port"])
 
     # Start the server
     run_server(

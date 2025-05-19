@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-FAISS Proxy Server Runner
+FAISSx Server Runner
 
-This script runs the FAISS Proxy server using environment variables for configuration,
+This script runs the FAISSx server using environment variables for configuration,
 making it suitable for Docker deployments.
 """
 
 import os
-from faiss_proxy import server
+from faissx import server
 
 if __name__ == "__main__":
     # Read configuration from environment variables
@@ -31,7 +31,7 @@ if __name__ == "__main__":
             print(f"Error parsing API keys from environment: {e}")
 
     # Print configuration
-    print(f"Starting FAISS Proxy Server on {bind_address}:{port}")
+    print(f"Starting FAISSx Server on {bind_address}:{port}")
     if data_dir:
         print(f"Data directory: {data_dir}")
     else:

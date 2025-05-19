@@ -1,5 +1,5 @@
 """
-FAISS Proxy client implementation
+FAISSx client implementation
 """
 
 import requests
@@ -10,9 +10,9 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
-class FaissProxyClient:
+class FaissXClient:
     """
-    Client for interacting with FAISS Proxy server
+    Client for interacting with FAISSx server
     """
 
     def __init__(
@@ -25,7 +25,7 @@ class FaissProxyClient:
         Initialize the client.
 
         Args:
-            api_url: URL of the FAISS Proxy server
+            api_url: URL of the FAISSx server
             api_key: API key for authentication
             tenant_id: Tenant ID for multi-tenant isolation
         """
@@ -53,7 +53,7 @@ class FaissProxyClient:
         self, method: str, endpoint: str, json_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Make a request to the FAISS Proxy server.
+        Make a request to the FAISSx server.
 
         Args:
             method: HTTP method (GET, POST, DELETE)
@@ -87,7 +87,7 @@ class FaissProxyClient:
 
         except requests.RequestException as e:
             logger.error(f"Request failed: {str(e)}")
-            raise RuntimeError(f"FAISS Proxy request failed: {str(e)}")
+            raise RuntimeError(f"FAISSx request failed: {str(e)}")
 
     def create_index(
         self, name: str, dimension: int, index_type: str = "IndexFlatL2"
@@ -170,7 +170,7 @@ class FaissProxyClient:
 
 
 # Singleton client instance
-_client: Optional[FaissProxyClient] = None
+_client: Optional[FaissXClient] = None
 
 
 def configure(
@@ -179,10 +179,10 @@ def configure(
     tenant_id: Optional[str] = None,
 ) -> None:
     """
-    Configure the FAISS Proxy client.
+    Configure the FAISSx client.
 
     Args:
-        api_url: URL of the FAISS Proxy server
+        api_url: URL of the FAISSx server
         api_key: API key for authentication
         tenant_id: Tenant ID for multi-tenant isolation
     """
@@ -192,34 +192,34 @@ def configure(
     from . import _API_URL, _API_KEY, _TENANT_ID
 
     if api_url:
-        import faiss_proxy
+        import faissx
 
-        faiss_proxy._API_URL = api_url
+        faissx._API_URL = api_url
 
     if api_key:
-        import faiss_proxy
+        import faissx
 
-        faiss_proxy._API_KEY = api_key
+        faissx._API_KEY = api_key
 
     if tenant_id:
-        import faiss_proxy
+        import faissx
 
-        faiss_proxy._TENANT_ID = tenant_id
+        faissx._TENANT_ID = tenant_id
 
     # Reset client so it's recreated with new configuration
     _client = None
 
 
-def get_client() -> FaissProxyClient:
+def get_client() -> FaissXClient:
     """
     Get the configured client instance.
 
     Returns:
-        FaissProxyClient instance
+        FaissXClient instance
     """
     global _client
 
     if _client is None:
-        _client = FaissProxyClient()
+        _client = FaissXClient()
 
     return _client

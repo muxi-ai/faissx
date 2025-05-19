@@ -1,15 +1,15 @@
-# FAISS Proxy Client
+# FAISSx Client
 
 A drop-in replacement for FAISS with remote execution capabilities
 
 ## Overview
 
-FAISS Proxy Client is a Python library that provides a compatible API with FAISS but delegates all operations to a remote FAISS Proxy server. This allows applications to use FAISS in a distributed environment without changing their code significantly.
+FAISSx Client is a Python library that provides a compatible API with FAISS but delegates all operations to a remote FAISSx server. This allows applications to use FAISS in a distributed environment without changing their code significantly.
 
 ## Installation
 
 ```bash
-pip install faiss-proxy
+pip install faissx
 ```
 
 ## Usage
@@ -17,8 +17,8 @@ pip install faiss-proxy
 ### Basic Usage
 
 ```python
-# Standard FAISS import replaced with proxy import
-import faiss_proxy as faiss
+# Standard FAISS import replaced with faissx import
+import faissx as faiss
 
 # Create an index - transparently creates remote index
 index = faiss.IndexFlatL2(128)
@@ -37,9 +37,9 @@ D, I = index.search(query_vectors, k=5)
 
 ```python
 # Configure once at application startup
-import faiss_proxy
+import faissx
 
-faiss_proxy.configure(
+faissx.configure(
     api_url="http://faiss-service:8000",
     api_key="your-api-key",
     tenant_id="your-tenant-id"
@@ -48,12 +48,12 @@ faiss_proxy.configure(
 
 ### Environment Variables
 
-You can also configure FAISS Proxy using environment variables:
+You can also configure FAISSx using environment variables:
 
 ```bash
-export FAISS_PROXY_API_URL="http://faiss-service:8000"
-export FAISS_PROXY_API_KEY="your-api-key"
-export FAISS_PROXY_TENANT_ID="your-tenant-id"
+export faissx_API_URL="http://faiss-service:8000"
+export faissx_API_KEY="your-api-key"
+export faissx_TENANT_ID="your-tenant-id"
 ```
 
 ## Supported FAISS Features

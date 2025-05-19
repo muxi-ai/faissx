@@ -14,7 +14,7 @@ class IndexFlatL2:
     Proxy implementation of FAISS IndexFlatL2
 
     This class mimics the behavior of FAISS IndexFlatL2 but uses the
-    remote FAISS Proxy service for all operations.
+    remote FAISSx service for all operations.
     """
 
     def __init__(self, d: int):

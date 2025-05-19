@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-FAISS Proxy Client Example (Placeholder)
+FAISSx Client Example (Placeholder)
 
 This example shows how the client will be used once implemented.
 Note: This is just a placeholder for the future client implementation.
 """
 
 import numpy as np
-import faiss_proxy as faiss
+import faissx as faiss
 
 # Configure the client
 faiss.configure(

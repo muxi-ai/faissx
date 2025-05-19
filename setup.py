@@ -4,14 +4,14 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="faiss-proxy",
+    name="FAISSx",
     version="0.1.0",
     author="Muxi AI",
     author_email="info@muxi.ai",
     description="High-performance vector database proxy using FAISS and ZeroMQ",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/muxi/faiss-proxy",
+    url="https://github.com/muxi-ai/faissx",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -42,7 +42,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'faiss-proxy.server=faiss_proxy.server.cli:main',
+            'faissx.server=faissx.server.cli:main',
         ],
     },
 )

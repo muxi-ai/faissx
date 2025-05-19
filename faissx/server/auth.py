@@ -16,7 +16,7 @@ def set_api_keys(keys: Dict[str, str]):
 # Override with environment variables if provided
 def load_api_keys_from_env():
     """Load API keys from environment variables if available"""
-    env_keys = os.environ.get("FAISS_PROXY_API_KEYS")
+    env_keys = os.environ.get("faissx_API_KEYS")
     if env_keys:
         try:
             # Format: "key1:tenant1,key2:tenant2"

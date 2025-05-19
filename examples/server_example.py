@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-FAISS Proxy Server Example
+FAISSx Server Example
 
-This example shows how to configure and run the FAISS Proxy server.
+This example shows how to configure and run the FAISSx server.
 """
 
-from faiss_proxy import server
+from faissx import server
 
 # Configure the server with default in-memory storage
 server.configure(
@@ -22,7 +22,7 @@ server.configure(
     # enable_auth=True
 )
 
-print("Starting FAISS Proxy Server...")
+print("Starting FAISSx Server...")
 print(f"Configuration: {server.get_config()}")
 
 # To use a specific data directory instead, you would configure like this:

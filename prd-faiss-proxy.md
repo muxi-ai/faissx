@@ -1,4 +1,4 @@
-# FAISS Proxy (0MQ Edition)
+# FAISSx (0MQ Edition)
 
 > Ultra-Fast Remote Vector Database Service (0MQ-based)
 
@@ -6,12 +6,12 @@
 
 **Seamless Local/Remote Switching:**
 
-The `faiss_proxy` client library is designed to be a true drop-in replacement for the original FAISS library. The only difference is whether you call `faiss.configure()`:
+The `faissx` client library is designed to be a true drop-in replacement for the original FAISS library. The only difference is whether you call `faiss.configure()`:
 
 - **Remote Mode:**
 
   ```python
-  import faiss_proxy as faiss
+  import faissx as faiss
   faiss.configure("tcp://remote-server:5555")
   # All FAISS operations are transparently executed on the remote server
 
@@ -23,7 +23,7 @@ The `faiss_proxy` client library is designed to be a true drop-in replacement fo
 - **Local Mode (Default):**
 
   ```python
-  import faiss_proxy as faiss
+  import faissx as faiss
   # No faiss.configure() called, so all operations use the local FAISS library
 
   index = faiss.IndexFlatL2(128)
@@ -33,14 +33,14 @@ The `faiss_proxy` client library is designed to be a true drop-in replacement fo
 
 **Key Points:**
 
-- If `faiss.configure()` is not called, `faiss_proxy` will automatically use the local FAISS implementation.
+- If `faiss.configure()` is not called, `faissx` will automatically use the local FAISS implementation.
 - The API and behavior are identical to the original FAISS library.
 - No need to change any other code—just swap the import and (optionally) call `faiss.configure()` to use remote.
 - This allows you to use the same codebase for both local and remote vector search, with zero friction.
 
 ## Overview
 
-FAISS Proxy is a high-performance microservice that provides remote access to FAISS vector indices using ZeroMQ (0MQ) for communication. It enables multiple clients to store, retrieve, and search vector embeddings through a persistent, binary protocol. The proxy handles index management, tenant isolation, and authentication, while maximizing throughput and minimizing latency—ideal for large-scale, real-time vector search workloads.
+FAISSx is a high-performance microservice that provides remote access to FAISS vector indices using ZeroMQ (0MQ) for communication. It enables multiple clients to store, retrieve, and search vector embeddings through a persistent, binary protocol. The proxy handles index management, tenant isolation, and authentication, while maximizing throughput and minimizing latency—ideal for large-scale, real-time vector search workloads.
 
 ## Objectives
 
@@ -138,10 +138,10 @@ All client-server communication happens over a persistent 0MQ REQ/REP socket. Ea
 
 ```python
 # Standard FAISS import replaced with proxy import
-import faiss_proxy as faiss
+import faissx as faiss
 
 # Configure once at application startup
-faiss_proxy.configure(
+faissx.configure(
     zmq_url="tcp://faiss-service:5555",
     api_key="your-api-key",
     tenant_id="your-tenant-id"
@@ -213,14 +213,14 @@ D, I = index.search(query_vectors, k=10)
 The project is split into server and client components:
 
 ```
-faiss-proxy/
+faissx/
 ├── server/           # 0MQ server implementation
 │   ├── app/          # Server application code
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── README.md
 ├── client/           # Python client library
-│   ├── faiss_proxy/  # Package directory
+│   ├── faissx/  # Package directory
 │   ├── setup.py
 │   ├── README.md
 │   └── tests/        # Client tests
@@ -252,5 +252,5 @@ faiss-proxy/
 
 ## Conclusion
 
-FAISS Proxy (0MQ Edition) provides a blazing-fast, general-purpose remote vector database service with a drop-in replacement client library. By leveraging 0MQ and binary protocols, it enables seamless migration from local FAISS to a distributed, high-performance deployment—ideal for applications demanding maximum speed and scalability.
+FAISSx (0MQ Edition) provides a blazing-fast, general-purpose remote vector database service with a drop-in replacement client library. By leveraging 0MQ and binary protocols, it enables seamless migration from local FAISS to a distributed, high-performance deployment—ideal for applications demanding maximum speed and scalability.
 

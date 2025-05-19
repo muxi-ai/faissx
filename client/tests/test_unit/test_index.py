@@ -2,13 +2,13 @@ import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock
 
-from faiss_proxy.index import IndexFlatL2
+from faissx.index import IndexFlatL2
 
 
 class TestIndexFlatL2:
     """Unit tests for the IndexFlatL2 class"""
 
-    @patch("faiss_proxy.index.get_client")
+    @patch("faissx.index.get_client")
     def test_index_init(self, mock_get_client):
         """Test initialization of the IndexFlatL2 class"""
         # Setup mock
@@ -35,7 +35,7 @@ class TestIndexFlatL2:
         assert kwargs["index_type"] == "IndexFlatL2"
         assert "name" in kwargs and kwargs["name"].startswith("index-flat-l2-")
 
-    @patch("faiss_proxy.index.get_client")
+    @patch("faissx.index.get_client")
     def test_add_vectors(self, mock_get_client):
         """Test adding vectors to the index"""
         # Setup mock
@@ -77,7 +77,7 @@ class TestIndexFlatL2:
         assert [1.0, 0.0, 0.0] in vector_values
         assert [0.0, 1.0, 0.0] in vector_values
 
-    @patch("faiss_proxy.index.get_client")
+    @patch("faissx.index.get_client")
     def test_search(self, mock_get_client):
         """Test searching for similar vectors"""
         # Setup mock
@@ -130,7 +130,7 @@ class TestIndexFlatL2:
         assert kwargs["vector"] == [0.9, 0.1, 0.0]
         assert kwargs["k"] == 2
 
-    @patch("faiss_proxy.index.get_client")
+    @patch("faissx.index.get_client")
     def test_reset(self, mock_get_client):
         """Test resetting the index"""
         # Setup mock
@@ -156,7 +156,7 @@ class TestIndexFlatL2:
         mock_client.delete_index.assert_called_once_with("test-index-id")
         assert mock_client.create_index.call_count == 2  # Once for init, once for reset
 
-    @patch("faiss_proxy.index.get_client")
+    @patch("faissx.index.get_client")
     def test_invalid_vector_shape(self, mock_get_client):
         """Test handling of invalid vector shapes"""
         # Setup mock

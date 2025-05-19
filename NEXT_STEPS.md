@@ -1,8 +1,8 @@
-# FAISS Proxy: Next Steps (0MQ Edition)
+# FAISSx: Next Steps (0MQ Edition)
 
 > **Note:** The following checklist reflects the planned 0MQ-based architecture. Actual ZMQ implementation work has not started yet; most technical tasks below are pending.
 
-This document outlines the next steps for the FAISS Proxy project, now based on a high-performance 0MQ binary protocol. These items are organized by priority and component.
+This document outlines the next steps for the FAISSx project, now based on a high-performance 0MQ binary protocol. These items are organized by priority and component.
 
 ## Project Setup & Planning Completed
 
@@ -22,7 +22,7 @@ This document outlines the next steps for the FAISS Proxy project, now based on 
 - [ ] Implement remote API client using 0MQ
 - [ ] Create IndexFlatL2 implementation with API parity
 - [ ] Add documentation for client usage
-- [ ] Implement drop-in replacement behavior (import faiss_proxy as faiss, configure for remote, fallback to local)
+- [ ] Implement drop-in replacement behavior (import faissx as faiss, configure for remote, fallback to local)
 
 ### Project Organization
 - [x] Split into server and client components

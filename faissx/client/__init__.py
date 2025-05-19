@@ -1,5 +1,5 @@
 """
-FAISS Proxy - A drop-in replacement for FAISS with remote execution capabilities
+FAISSx - A drop-in replacement for FAISS with remote execution capabilities
 """
 
 import os
@@ -9,10 +9,10 @@ from typing import Optional
 __version__ = "0.1.0"
 
 # Global configuration
-_API_URL: Optional[str] = os.environ.get("FAISS_PROXY_API_URL")
-_API_KEY: Optional[str] = os.environ.get("FAISS_PROXY_API_KEY")
-_TENANT_ID: Optional[str] = os.environ.get("FAISS_PROXY_TENANT_ID")
-_FALLBACK_TO_LOCAL: bool = os.environ.get("FAISS_PROXY_FALLBACK_TO_LOCAL", "1") == "1"
+_API_URL: Optional[str] = os.environ.get("faissx_API_URL")
+_API_KEY: Optional[str] = os.environ.get("faissx_API_KEY")
+_TENANT_ID: Optional[str] = os.environ.get("faissx_TENANT_ID")
+_FALLBACK_TO_LOCAL: bool = os.environ.get("faissx_FALLBACK_TO_LOCAL", "1") == "1"
 
 # Import all public FAISS symbols
 try:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FAISS Proxy Server - ZeroMQ Implementation
+FAISSx Server - ZeroMQ Implementation
 A standalone server that provides vector operations via ZeroMQ
 """
 
@@ -199,7 +199,7 @@ def run_server(
 
     faiss_index = FaissIndex(data_dir=data_dir)
 
-    print(f"FAISS Proxy Server (ZeroMQ) started on {bind_address}:{port}")
+    print(f"FAISSx Server (ZeroMQ) started on {bind_address}:{port}")
     print(f"Using FAISS version: {faiss.__version__}")
     if data_dir:
         print(f"Data directory: {data_dir}")
@@ -271,7 +271,7 @@ def run_server(
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("FAISS_PROXY_PORT", DEFAULT_PORT))
+    port = int(os.environ.get("faissx_PORT", DEFAULT_PORT))
     data_dir = os.environ.get("FAISS_DATA_DIR", None)
     bind_address = os.environ.get("FAISS_BIND_ADDRESS", DEFAULT_BIND_ADDRESS)
 
