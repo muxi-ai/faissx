@@ -308,6 +308,9 @@ def get_client() -> FaissXClient:
 
     Returns:
         Configured FaissXClient instance
+
+    Raises:
+        RuntimeError: If connection fails or authentication is missing
     """
     global _client
 

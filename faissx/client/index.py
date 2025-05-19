@@ -46,19 +46,21 @@ class IndexFlatL2:
     """
     Proxy implementation of FAISS IndexFlatL2
 
-    This class mimics the behavior of FAISS IndexFlatL2 but uses the
-    remote FAISSx service for all operations via ZeroMQ. It maintains
-    a mapping between local and server-side indices to ensure consistent
-    indexing across operations.
+    This class mimics the behavior of FAISS IndexFlatL2. It uses the local FAISS
+    implementation by default, but can use the remote FAISSx service when explicitly
+    configured via configure(). It maintains a mapping between local and server-side
+    indices to ensure consistent indexing across operations when using remote mode.
 
     Attributes:
         d (int): Vector dimension
         is_trained (bool): Always True for L2 index
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
-        index_id (str): Server-side index identifier
-        _vector_mapping (dict): Maps local indices to server indices
-        _next_idx (int): Next available local index
+        index_id (str): Server-side index identifier (when in remote mode)
+        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _next_idx (int): Next available local index (remote mode only)
+        _local_index: Local FAISS index (local mode only)
+        _using_remote (bool): Whether we're using remote or local implementation
     """
 
     def __init__(self, d: int):
@@ -76,24 +78,54 @@ class IndexFlatL2:
         # Generate unique name for the index
         self.name = f"index-flat-l2-{uuid.uuid4().hex[:8]}"
 
-        # Initialize connection to remote service and create index
-        self.client = get_client()
-        self.index_id = self.client.create_index(
-            name=self.name,
-            dimension=self.d,
-            index_type="L2"
-        )
+        # Check if we should use remote implementation
+        # (this depends on if configure() has been called)
+        try:
+            # Import here to avoid circular imports
+            import faissx
 
-        # Initialize local tracking of vectors
-        self._vector_mapping = {}  # Maps local indices to server-side information
-        self._next_idx = 0  # Counter for local indices
+            # Check if API key or server URL are set - this indicates configure() was called
+            configured = bool(faissx._API_KEY) or (
+                faissx._API_URL != "tcp://localhost:45678"
+            )
+
+            # If configure was explicitly called, use remote mode
+            if configured:
+                self._using_remote = True
+                self.client = get_client()
+                self._local_index = None
+
+                # Create index on server
+                self.index_id = self.client.create_index(
+                    name=self.name,
+                    dimension=self.d,
+                    index_type="L2"
+                )
+
+                # Initialize local tracking of vectors for remote mode
+                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._next_idx = 0  # Counter for local indices
+                return
+
+        except Exception as e:
+            import logging
+            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+
+        # Use local FAISS implementation by default
+        self._using_remote = False
+        self._local_index = None
+
+        # Import local FAISS here to avoid module-level dependency
+        try:
+            import faiss
+            self._local_index = faiss.IndexFlatL2(d)
+            self.index_id = self.name  # Use name as ID for consistency
+        except ImportError as e:
+            raise ImportError(f"Failed to import FAISS for local mode: {e}")
 
     def add(self, x: np.ndarray) -> None:
         """
         Add vectors to the index.
-
-        This method adds vectors to both the remote index and maintains
-        local mapping between client and server indices.
 
         Args:
             x (np.ndarray): Vectors to add, shape (n, d) where n is number of vectors
@@ -109,7 +141,13 @@ class IndexFlatL2:
         # Convert to float32 if needed (FAISS requirement)
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        # Add vectors to remote index
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            self._local_index.add(vectors)
+            self.ntotal = self._local_index.ntotal
+            return
+
+        # Add vectors to remote index (remote mode)
         result = self.client.add_vectors(self.index_id, vectors)
 
         # Update local tracking if addition was successful
@@ -128,9 +166,6 @@ class IndexFlatL2:
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Search for k nearest neighbors for each query vector.
-
-        This method performs a k-nearest neighbor search using L2 distance
-        and maps the server-side indices back to local indices.
 
         Args:
             x (np.ndarray): Query vectors, shape (n, d)
@@ -151,7 +186,11 @@ class IndexFlatL2:
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        # Perform search on remote index
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            return self._local_index.search(query_vectors, k)
+
+        # Perform search on remote index (remote mode)
         result = self.client.search(
             self.index_id,
             query_vectors=query_vectors,
@@ -193,11 +232,14 @@ class IndexFlatL2:
     def reset(self) -> None:
         """
         Reset the index to its initial state.
-
-        This method creates a new remote index and resets all local tracking.
-        If the current index exists, it creates a new one with a modified name.
         """
-        # Check if current index exists and create new one
+        if not self._using_remote:
+            # Reset local FAISS index
+            self._local_index.reset()
+            self.ntotal = 0
+            return
+
+        # Remote mode reset
         try:
             stats = self.client.get_index_stats(self.index_id)
             if stats.get("success", False):
@@ -225,9 +267,6 @@ class IndexFlatL2:
     def __del__(self) -> None:
         """
         Clean up resources when the index is deleted.
-
-        Note: Currently no explicit cleanup is performed as the server API
-        doesn't provide an index deletion operation.
         """
-        # No explicit delete index operation in the server API
+        # Local index will be cleaned up by garbage collector
         pass

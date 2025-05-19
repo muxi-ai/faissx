@@ -23,17 +23,25 @@ FAISSx Client Module
 A drop-in replacement for FAISS with remote execution capabilities
 
 This module provides a client interface for FAISSx that implements the
-FAISS API but executes operations remotely via ZeroMQ. Key features include:
+FAISS API, with two distinct modes of operation:
 
-1. Drop-in API compatibility with the original FAISS library
-2. Transparent remote execution of vector operations (add, search)
-3. Environment-based configuration for easy deployment
-4. Automatic fallback to local FAISS when server is unavailable
+1. Local Mode (Default): Uses the local FAISS library, making it a true
+   drop-in replacement without any configuration required.
+
+2. Remote Mode: Activated by calling configure(), this mode executes
+   operations remotely via ZeroMQ, offering enhanced scalability.
+
+Key features include:
+
+1. True drop-in API compatibility with the original FAISS library
+2. Local FAISS by default for simplicity with no configuration required
+3. Optional remote execution of vector operations when configured
+4. Environment-based or programmatic configuration
 5. Support for authentication and multi-tenant isolation
 6. Index implementations that mirror the behavior of native FAISS indices
 
 Users can switch between local FAISS processing and remote FAISSx execution
-by simply changing the import statement and adding a configure() call.
+by simply adding a configure() call before creating any indices.
 """
 
 import os
