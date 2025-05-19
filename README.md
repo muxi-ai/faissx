@@ -267,11 +267,17 @@ You can configure the client using environment variables:
 
 ## 🐳 Docker Deployment
 
-FAISSx provides Docker images for easy deployment:
+FAISSx provides Docker images through GitHub Container Registry for easy deployment:
 
 ```bash
+# Pull the image from GitHub Container Registry
+docker pull ghcr.io/muxi-ai/faissx:latest
+
+# Or use the optimized slim version (recommended for production)
+docker pull ghcr.io/muxi-ai/faissx:latest-slim
+
 # Run with default settings
-docker run -p 45678:45678 muxi/faissx:latest
+docker run -p 45678:45678 ghcr.io/muxi-ai/faissx:latest
 
 # Run with persistent data and authentication
 docker run -p 45678:45678 \
@@ -280,14 +286,30 @@ docker run -p 45678:45678 \
   -e FAISSX_DATA_DIR=/data \
   -e FAISSX_AUTH_FILE=/auth.json \
   -e FAISSX_ENABLE_AUTH=true \
-  muxi/faissx:latest
+  ghcr.io/muxi-ai/faissx:latest-slim
 ```
 
 You can also use docker-compose:
 
+```yaml
+# docker-compose.yml
+version: '3'
+services:
+  faissx:
+    image: ghcr.io/muxi-ai/faissx:latest-slim
+    ports:
+      - "45678:45678"
+    volumes:
+      - ./data:/data
+      - ./auth.json:/auth.json
+    environment:
+      - FAISSX_DATA_DIR=/data
+      - FAISSX_AUTH_FILE=/auth.json
+      - FAISSX_ENABLE_AUTH=true
+```
+
+Then run:
 ```bash
-git clone https://github.com/muxi-ai/faissx.git
-cd faissx
 docker-compose up
 ```
 

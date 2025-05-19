@@ -223,32 +223,37 @@ Each tenant has isolated storage, preventing cross-tenant data access. All vecto
 
 ## Docker Deployment
 
-### Building the Docker Image
+### Available Images
+
+FAISSx is available on GitHub Container Registry with both standard and optimized slim versions:
 
 ```bash
-# From the server directory
-./build_docker.sh
+# Standard image with complete environment
+ghcr.io/muxi-ai/faissx:latest
 
-# Or manually
-docker build -t muxi/faissx:latest .
+# Optimized slim image for production (significantly smaller)
+ghcr.io/muxi-ai/faissx:latest-slim
 ```
 
 ### Running with Docker
 
 ```bash
-# Basic run
-docker run -p 45678:45678 muxi/faissx:latest
+# Pull the image
+docker pull ghcr.io/muxi-ai/faissx:latest-slim
+
+# Basic run with default settings
+docker run -p 45678:45678 ghcr.io/muxi-ai/faissx:latest-slim
 
 # With persistent storage
 docker run -p 45678:45678 -v /path/to/data:/data \
-  -e FAISSX_DATA_DIR=/data muxi/faissx:latest
+  -e FAISSX_DATA_DIR=/data ghcr.io/muxi-ai/faissx:latest-slim
 
 # With authentication
 docker run -p 45678:45678 \
   -v /path/to/auth.json:/auth.json \
   -e FAISSX_ENABLE_AUTH=1 \
   -e FAISSX_AUTH_FILE=/auth.json \
-  muxi/faissx:latest
+  ghcr.io/muxi-ai/faissx:latest-slim
 ```
 
 ### Docker Compose
@@ -258,7 +263,7 @@ docker run -p 45678:45678 \
 version: '3'
 services:
   faissx:
-    image: muxi/faissx:latest
+    image: ghcr.io/muxi-ai/faissx:latest-slim
     ports:
       - "45678:45678"
     volumes:
@@ -268,6 +273,16 @@ services:
       - FAISSX_DATA_DIR=/data
       - FAISSX_ENABLE_AUTH=1
       - FAISSX_AUTH_FILE=/auth.json
+    restart: unless-stopped
+```
+
+### Building Custom Images
+
+If you need to build a custom image:
+
+```bash
+# From the project root
+docker build -t custom-faissx -f server/Dockerfile .
 ```
 
 ## Performance
