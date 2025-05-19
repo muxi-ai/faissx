@@ -1,7 +1,7 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 LABEL maintainer="Muxi AI"
-LABEL description="FAISSx Server - High-performance vector database proxy with ZeroMQ"
+LABEL description="FAISS, Extended - A high-performance vector database proxy with ZeroMQ"
 LABEL version="0.1.0"
 
 WORKDIR /app
