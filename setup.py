@@ -15,7 +15,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 
 setup(
-    name="FAISSx",
+    name="faissx",
     version=version,
     author="Ran Aroussi",
     author_email="ran@aroussi.com",

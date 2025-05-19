@@ -1,11 +1,6 @@
 # Changelog
 
-All notable changes to FAISSx will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [0.0.1]
+## 0.0.2
 
 Initial release of FAISSx, a high-performance vector database proxy using FAISS and ZeroMQ.
 
@@ -37,22 +32,7 @@ Initial release of FAISSx, a high-performance vector database proxy using FAISS 
 - Drop-in replacement behavior for seamless FAISS integration
 - Test suite for client functionality
 
-### Documentation
-- Main README with project overview and quick start guides
-- Server README with architecture and API details
-- Client README with detailed usage examples
-- Implementation status tracker
-- Contributing guidelines
 
-## [Unreleased]
+## 0.0.1
 
-### Coming Soon
-- Support for additional FAISS index types (IndexIVFFlat, IndexHNSW, IndexPQ)
-- Index training endpoints
-- Specialized search operations (range search, etc.)
-- Proper deletion through index rebuilding
-- Benchmarking tools
-- Additional client-side features and FAISS compatibility
-- Error recovery and reconnection
-- Metadata filtering
-- Batch operations support
+Initial release of FAISSx, a high-performance vector database proxy using FAISS and ZeroMQ.
