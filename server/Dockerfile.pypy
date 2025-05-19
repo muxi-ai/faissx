@@ -1,0 +1,36 @@
+FROM pypy:3.9-slim
+
+LABEL maintainer="Muxi AI"
+LABEL description="FAISS Proxy Server - High-performance vector database proxy with ZeroMQ (PyPy optimized)"
+LABEL version="0.1.0"
+
+WORKDIR /app
+
+# Install system dependencies for FAISS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libopenblas-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY dev-requirements.txt .
+RUN pip install --no-cache-dir -r dev-requirements.txt
+
+# Copy server implementation
+COPY src/ /app/src/
+
+# Create data directory
+RUN mkdir -p /data
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FAISS_DATA_DIR=/data
+ENV FAISS_PROXY_PORT=5555
+ENV FAISS_BIND_ADDRESS=0.0.0.0
+
+# Expose the ZeroMQ port
+EXPOSE 5555
+
+# Run the server
+CMD ["pypy3", "-m", "src.server"]

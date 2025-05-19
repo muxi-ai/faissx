@@ -1,205 +1,188 @@
-# FAISS Proxy Server
+# FAISS Proxy Server: ZeroMQ Edition
 
-A lightweight proxy service for FAISS vector operations in multi-server deployments.
-
-## Overview
-
-FAISS Proxy Server provides a simple REST API for storing, retrieving, and searching vector embeddings. It enables sharing FAISS indices across multiple applications with tenant isolation. The service is designed to be:
-
-- **Simple**: Focused on core vector operations
-- **Fast**: Optimized for vector search performance
-- **Scalable**: Supports multiple tenants and indices
-- **Secure**: API key authentication and tenant isolation
+A high-performance vector database proxy server using ZeroMQ for ultra-low latency communication.
 
 ## Features
 
-- Create and manage multiple FAISS indices
-- Store vectors with associated metadata
-- Perform vector similarity search with metadata filtering
-- API key-based authentication
-- Tenant isolation for multi-application deployments
-- Simple persistence to disk
-- Health and metrics endpoints for monitoring
+- High-performance binary protocol using ZeroMQ
+- Efficient vector serialization with numpy arrays
+- Metadata handling with msgpack
+- Multi-tenant support with API key authentication
+- Persistent connections for reduced latency
+- Deployable as Docker container or standalone Python package
+- Drop-in FAISS API compatibility (when used with the client library)
 
-## Quick Start
+## Architecture
 
-### Using Docker
+The server uses a simple and efficient architecture:
 
-```bash
-# Build the Docker image
-cd server
-docker build -t faiss-proxy-server .
+- **ZeroMQ REP Socket**: Handles request/reply pattern with clients
+- **Protocol Layer**: Serializes/deserializes messages with numpy and msgpack
+- **FAISS Manager**: Core vector operations and index management
+- **Authentication**: API key validation and tenant isolation
 
-# Run the container
-docker run -p 8000:8000 -v /path/to/data:/data faiss-proxy-server
-```
+## Installation
 
-### Using PyOxidizer (Standalone Executable)
+### Option 1: PyPI Package (Recommended)
 
 ```bash
-# Install PyOxidizer
-pip install pyoxidizer
+# Install the package
+pip install faiss-proxy
 
-# Build the executable
-cd server
-pyoxidizer build --release
-
-# Run the executable
-./build/x86_64-unknown-linux-gnu/release/install/faiss-proxy
+# Run the server with Python API
+python -c "from faiss_proxy import server; server.configure(port=5555); server.run()"
 ```
 
-### Setting API Keys
-
-API keys can be set using an environment variable:
+### Option 2: Docker Container
 
 ```bash
-export FAISS_PROXY_API_KEYS="key1:tenant1,key2:tenant2"
+# Pull the image
+docker pull muxi/faiss-proxy:latest
+
+# Run with default configuration
+docker run -p 5555:5555 -v /path/to/data:/data muxi/faiss-proxy:latest
+
+# Run with custom configuration
+docker run -p 5555:5555 \
+  -v /path/to/data:/data \
+  -e FAISS_DATA_DIR=/data \
+  -e FAISS_API_KEYS=key1:tenant1,key2:tenant2 \
+  muxi/faiss-proxy:latest
 ```
 
-Or by modifying the `auth.py` file for a development setup.
+## Configuration Options
 
-## API Usage
+The server can be configured using environment variables or the Python API:
 
-### Authentication
+| Variable            | Python Config     | Description                           | Default          |
+|---------------------|-------------------|---------------------------------------|------------------|
+| FAISS_DATA_DIR      | data_dir          | Directory to store FAISS indexes      | None (in-memory) |
+| FAISS_PORT          | port              | Port to listen on                     | 45678            |
+| FAISS_BIND_ADDRESS  | bind_address      | Address to bind to                    | 0.0.0.0          |
+| FAISS_AUTH_KEYS     | auth_keys         | API key:tenant mapping                | {} (no keys)     |
+| FAISS_AUTH_FILE     | auth_file         | Path to JSON file with API keys       | None             |
+| FAISS_ENABLE_AUTH   | enable_auth       | Enable authentication                 | False            |
 
-All API requests require an API key in the `X-API-Key` header:
+> Note: You can provide API keys either inline with `auth_keys` or from a JSON file with `auth_file`.
+> The JSON file should have the format `{"api_key1": "tenant1", "api_key2": "tenant2"}`.
+> Only one authentication method can be used at a time.
 
+### Python API Configuration
+
+```python
+from faiss_proxy import server
+
+# Configure the server with inline API keys
+server.configure(
+    port=45678,
+    bind_address="0.0.0.0",
+    data_dir="/path/to/data",  # omit for in-memory indices
+    auth_keys={"key1": "tenant1", "key2": "tenant2"},
+    enable_auth=True
+)
+
+# Alternatively, load API keys from a JSON file
+# server.configure(
+#     port=45678,
+#     bind_address="0.0.0.0",
+#     auth_file="/path/to/auth_keys.json",
+#     enable_auth=True
+# )
+
+# Run the server
+server.run()
 ```
-X-API-Key: your-api-key
-```
 
-### Create an Index
+### Docker Container Configuration
 
 ```bash
-curl -X POST "http://localhost:8000/v1/index" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: test-key-1" \
-  -d '{
-    "name": "my-index",
-    "dimension": 1536,
-    "index_type": "IndexFlatL2",
-    "tenant_id": "tenant-1"
-  }'
+# Pull the image
+docker pull muxi/faiss-proxy:latest
+
+# Run with default configuration
+docker run -p 45678:45678 muxi/faiss-proxy:latest
+
+# Run with custom configuration
+docker run -p 45678:45678 \
+  -v /path/to/data:/data \
+  -v /path/to/auth.json:/auth.json \
+  -e FAISS_PORT=45678 \
+  -e FAISS_BIND_ADDRESS=0.0.0.0 \
+  -e FAISS_DATA_DIR=/data \
+  -e FAISS_AUTH_KEYS=key1:tenant1,key2:tenant2 \
+  -e FAISS_AUTH_FILE=/auth.json \
+  -e FAISS_ENABLE_AUTH=true \
+  muxi/faiss-proxy:latest
+
+# Note: You should use either FAISS_AUTH_KEYS or FAISS_AUTH_FILE, not both
 ```
 
-### Add Vectors
+## Protocol
 
-```bash
-curl -X POST "http://localhost:8000/v1/index/{index_id}/vectors" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: test-key-1" \
-  -d '{
-    "vectors": [
-      {
-        "id": "vec1",
-        "values": [0.1, 0.2, ...],
-        "metadata": {
-          "source": "document-1",
-          "timestamp": 1645023489
-        }
-      }
-    ]
-  }'
+The ZeroMQ message protocol uses a binary format:
+
+1. **Header**: Msgpack-encoded dictionary with operation, authentication, and parameters
+2. **Vector Data**: Raw numpy array bytes (present for add and search operations)
+3. **Metadata**: Msgpack-encoded structured data (IDs, filters, etc.)
+
+### Supported Operations
+
+- `create_index`: Create a new FAISS index
+- `add_vectors`: Add vectors to an index
+- `search`: Search for similar vectors
+- `delete_vector`: Delete a vector from an index
+- `delete_index`: Delete an index
+- `get_index_stats`: Get index metadata
+- `list_indexes`: List all available indexes
+- `ping`: Check server availability
+
+## Client Integration
+
+To connect to the server, use the FAISS Proxy client library for a drop-in replacement for FAISS:
+
+```python
+import faiss_proxy as faiss
+
+# Configure the client
+faiss.configure(zmq_url="tcp://localhost:5555", api_key="your-key")
+
+# Use like normal FAISS
+index = faiss.IndexFlatL2(128)
+index.add(vectors)
+D, I = index.search(query_vectors, k=10)
 ```
 
-### Search Vectors
+## Docker Files
 
-```bash
-curl -X GET "http://localhost:8000/v1/index/{index_id}/search" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: test-key-1" \
-  -d '{
-    "vector": [0.1, 0.2, ...],
-    "k": 10,
-    "filter": {
-      "source": "document-1"
-    }
-  }'
-```
+The repository includes two Dockerfile options:
 
-### Delete a Vector
-
-```bash
-curl -X DELETE "http://localhost:8000/v1/index/{index_id}/vectors/{vector_id}" \
-  -H "X-API-Key: test-key-1"
-```
-
-### Delete an Index
-
-```bash
-curl -X DELETE "http://localhost:8000/v1/index/{index_id}" \
-  -H "X-API-Key: test-key-1"
-```
-
-## Technical Details
-
-### Project Structure
-
-```
-server/
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py
-│   ├── routers/
-│   │   ├── __init__.py
-│   │   ├── admin.py
-│   │   ├── index.py
-│   │   └── vectors.py
-│   └── utils/
-│       ├── __init__.py
-│       ├── auth.py
-│       └── faiss_manager.py
-├── requirements.txt
-├── Dockerfile
-└── pyoxidizer.bzl
-```
-
-### Data Persistence
-
-FAISS indices and metadata are persisted to disk at:
-
-- Docker: `/data/{tenant_id}/{index_id}/`
-- Local: `./data/{tenant_id}/{index_id}/` (default)
-
-The data directory can be configured using the `FAISS_DATA_DIR` environment variable.
-
-## Configuration
-
-Environment variables:
-
-- `FAISS_DATA_DIR`: Directory for storing indices and metadata
-- `FAISS_PROXY_API_KEYS`: Comma-separated list of API keys and tenant IDs (format: "key1:tenant1,key2:tenant2")
+1. `Dockerfile` - Standard Python-based container
+2. `Dockerfile.pypy` - PyPy-based container for potential performance improvements
 
 ## Development
 
-### Setup
+For development purposes, dependencies are specified in `dev-requirements.txt`.
 
 ```bash
-# Create a virtual environment
-cd server
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install development dependencies
+pip install -r server/dev-requirements.txt
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the development server
-uvicorn app.main:app --reload
+# Run tests
+pytest
 ```
 
-### Testing
+## Performance Considerations
 
-API documentation is available at http://localhost:8000/docs when running the development server.
+The ZeroMQ-based implementation provides significant performance improvements over HTTP/REST:
 
-## Limitations
+- Binary protocol with minimal overhead
+- Persistent connections to reduce latency
+- Efficient serialization of vectors using numpy arrays
+- No need for JSON encoding/decoding of large vector data
 
-- FAISS doesn't support direct deletion of vectors. When deleting vectors, only the metadata is removed, but the vector remains in the index.
-- For production use, consider implementing proper deletion by rebuilding indices periodically.
-- This implementation is optimized for simplicity, not for very large indices (millions of vectors).
+This makes it particularly suitable for high-throughput vector operations in production environments.
 
-## License
+## Security Notes
 
-MIT
+- The server supports API keys for authentication
+- Communication is not encrypted by default - use in secure networks or behind a proxy

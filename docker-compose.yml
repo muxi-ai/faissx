@@ -1,0 +1,21 @@
+version: '3'
+
+services:
+  faiss-proxy:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "45678:45678"
+    volumes:
+      - ./data:/data
+      - ./examples/auth.json:/auth.json
+    environment:
+      - FAISS_PORT=45678
+      - FAISS_BIND_ADDRESS=0.0.0.0
+      - FAISS_DATA_DIR=/data
+      # Use either FAISS_AUTH_KEYS or FAISS_AUTH_FILE, not both
+      # - FAISS_AUTH_KEYS=key1:tenant1,key2:tenant2
+      - FAISS_AUTH_FILE=/auth.json
+      - FAISS_ENABLE_AUTH=true
+    restart: unless-stopped

@@ -1,0 +1,23 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY dev-requirements.txt .
+RUN pip install --no-cache-dir -r dev-requirements.txt
+
+# Copy server code
+COPY server.py .
+
+# Create data directory
+RUN mkdir -p /data
+
+# Expose ZeroMQ port
+EXPOSE 5555
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FAISS_PROXY_PORT=5555
+
+# Run the server
+CMD ["python", "server.py"]

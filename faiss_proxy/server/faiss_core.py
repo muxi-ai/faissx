@@ -31,6 +31,7 @@ class FaissManager:
     """
     Manager for FAISS indices with tenant isolation and persistence
     """
+
     def __init__(self, data_dir: str = "./data"):
         """
         Initialize FAISS manager.
@@ -43,7 +44,9 @@ class FaissManager:
 
         # In-memory storage for indices and metadata
         # {tenant_id: {index_id: (faiss_index, index_metadata, {vector_id: metadata})}}
-        self.indices: Dict[TenantID, Dict[IndexID, Tuple[faiss.Index, Dict, Dict[VectorID, Dict]]]] = {}
+        self.indices: Dict[
+            TenantID, Dict[IndexID, Tuple[faiss.Index, Dict, Dict[VectorID, Dict]]]
+        ] = {}
 
         # Lock for thread safety
         self.lock = threading.RLock()
@@ -86,7 +89,11 @@ class FaissManager:
                         with open(vectors_meta_path, "r") as f:
                             vectors_meta = json.load(f)
 
-                    self.indices[tenant_id][index_id] = (faiss_index, index_meta, vectors_meta)
+                    self.indices[tenant_id][index_id] = (
+                        faiss_index,
+                        index_meta,
+                        vectors_meta,
+                    )
                 except Exception as e:
                     print(f"Error loading index {index_id}: {e}")
 
@@ -117,7 +124,13 @@ class FaissManager:
         except Exception as e:
             print(f"Error saving index {index_id}: {e}")
 
-    def create_index(self, tenant_id: TenantID, name: str, dimension: int, index_type: str = "IndexFlatL2") -> IndexID:
+    def create_index(
+        self,
+        tenant_id: TenantID,
+        name: str,
+        dimension: int,
+        index_type: str = "IndexFlatL2",
+    ) -> IndexID:
         """
         Create a new FAISS index.
 
@@ -148,7 +161,7 @@ class FaissManager:
                 "dimension": dimension,
                 "index_type": index_type,
                 "tenant_id": tenant_id,
-                "vector_count": 0
+                "vector_count": 0,
             }
 
             # Initialize tenant if needed
@@ -210,22 +223,27 @@ class FaissManager:
 
             return True
 
-    def add_vectors(self, tenant_id: TenantID, index_id: IndexID,
-                   vectors: List[Any]) -> List[bool]:
+    def add_vectors(
+        self, tenant_id: TenantID, index_id: IndexID, vectors: List[Any]
+    ) -> Dict[str, Any]:
         """
         Add vectors to an index.
 
         Args:
             tenant_id: Tenant ID
             index_id: Index ID
-            vectors: List of vectors (either dicts or Pydantic Vector objects)
+            vectors: List of vectors (either dicts or array-like objects)
 
         Returns:
-            success_list: List of booleans indicating success for each vector
+            result: Dict with success info, added and failed counts
         """
         with self.lock:
             if tenant_id not in self.indices or index_id not in self.indices[tenant_id]:
-                return [False] * len(vectors)
+                return {
+                    "success": False,
+                    "added_count": 0,
+                    "failed_count": len(vectors),
+                }
 
             faiss_index, index_meta, vectors_meta = self.indices[tenant_id][index_id]
 
@@ -234,17 +252,26 @@ class FaissManager:
 
             success_list = []
             vectors_to_add = []
+            vector_ids = []
+            vector_metadata = []
 
             for vector in vectors:
-                # Handle both dict and Pydantic model formats
-                if hasattr(vector, "id"):  # Pydantic model
+                # Handle both dict and vector-like formats
+                if isinstance(vector, dict):
+                    vector_id = vector.get("id")
+                    vector_values = vector.get("values", [])
+                    metadata = vector.get("metadata", {})
+                elif hasattr(vector, "id") and hasattr(vector, "values"):  # Object-like
                     vector_id = vector.id
                     vector_values = vector.values
-                    vector_metadata = vector.metadata
-                else:  # Dictionary
-                    vector_id = vector["id"]
-                    vector_values = vector["values"]
-                    vector_metadata = vector.get("metadata", {})
+                    metadata = getattr(vector, "metadata", {})
+                else:
+                    success_list.append(False)
+                    continue
+
+                if not vector_id:
+                    success_list.append(False)
+                    continue
 
                 # Validate vector dimension
                 if len(vector_values) != dimension:
@@ -253,10 +280,8 @@ class FaissManager:
 
                 # Prepare vector for addition
                 vectors_to_add.append(vector_values)
-
-                # Store metadata
-                vectors_meta[vector_id] = vector_metadata
-
+                vector_ids.append(vector_id)
+                vector_metadata.append(metadata)
                 success_list.append(True)
 
             if vectors_to_add:
@@ -264,17 +289,30 @@ class FaissManager:
                 vectors_array = np.array(vectors_to_add, dtype=np.float32)
                 faiss_index.add(vectors_array)
 
+                # Store metadata
+                for i, vector_id in enumerate(vector_ids):
+                    vectors_meta[vector_id] = vector_metadata[i]
+
                 # Update vector count
                 index_meta["vector_count"] += len(vectors_to_add)
 
                 # Save to disk
                 self._save_index(tenant_id, index_id)
 
-            return success_list
+            return {
+                "success": any(success_list),
+                "added_count": sum(success_list),
+                "failed_count": len(vectors) - sum(success_list),
+            }
 
-    def search(self, tenant_id: TenantID, index_id: IndexID,
-               vector: List[float], k: int = 10,
-               filter_metadata: Optional[Dict] = None) -> List[Dict]:
+    def search(
+        self,
+        tenant_id: TenantID,
+        index_id: IndexID,
+        vector: List[float],
+        k: int = 10,
+        filter_metadata: Optional[Dict] = None,
+    ) -> List[Dict]:
         """
         Search for similar vectors in an index.
 
@@ -321,11 +359,9 @@ class FaissManager:
                 # Higher score is better (1.0 is identical, 0.0 is completely dissimilar)
                 similarity = 1.0 / (1.0 + distance)
 
-                results.append({
-                    "id": vector_id,
-                    "score": similarity,
-                    "metadata": metadata
-                })
+                results.append(
+                    {"id": vector_id, "score": similarity, "metadata": metadata}
+                )
 
             return results
 
@@ -345,7 +381,9 @@ class FaissManager:
                 return False
         return True
 
-    def delete_vector(self, tenant_id: TenantID, index_id: IndexID, vector_id: VectorID) -> bool:
+    def delete_vector(
+        self, tenant_id: TenantID, index_id: IndexID, vector_id: VectorID
+    ) -> bool:
         """
         Delete a vector from an index.
 
