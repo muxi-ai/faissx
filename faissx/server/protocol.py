@@ -18,12 +18,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+FAISSx Protocol - Message Serialization and Deserialization
+
+This module defines the binary communication protocol used between
+FAISSx clients and servers.
+
+It provides functions for:
+- Serializing and deserializing messages with headers / vector data / metadata
+- Creating standardized request and response formats for all operations
+- Handling binary vector data efficiently using NumPy arrays
+- Formatting operation-specific messages (create_index, add_vectors, search, etc.)
+- Error handling and response formatting
+
+The protocol uses MessagePack for efficient binary serialization of
+structured data and raw binary encoding for vector data to minimize overhead
+and maximize performance.
+"""
+
 import msgpack
 import numpy as np
 from typing import Dict, List, Any, Tuple, Optional
 
 # Constants for message structure
-HEADER_FIELDS = ["operation", "api_key", "tenant_id", "index_id", "request_id"]  # Required fields in message headers
+# Required fields in message headers
+HEADER_FIELDS = ["operation", "api_key", "tenant_id", "index_id", "request_id"]
 VECTOR_DTYPE = np.float32  # Standard dtype for vector data
 
 
@@ -131,13 +150,13 @@ def deserialize_message(
         offset = sizes_end + 1
 
         # 3. Extract and parse message header
-        header = msgpack.unpackb(data[offset : offset + header_size])
+        header = msgpack.unpackb(data[offset:offset + header_size])
         offset += header_size
 
         # 4. Process vector data if present
         vectors = None
         if vector_size > 0:
-            vector_data = data[offset : offset + vector_size]
+            vector_data = data[offset:offset + vector_size]
 
             # Reconstruct array shape based on header information
             if "vector_shape" in header:
@@ -162,7 +181,7 @@ def deserialize_message(
         # 5. Extract metadata if present
         metadata = None
         if metadata_size > 0:
-            metadata = msgpack.unpackb(data[offset : offset + metadata_size])
+            metadata = msgpack.unpackb(data[offset:offset + metadata_size])
 
         return header, vectors, metadata
 

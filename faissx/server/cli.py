@@ -21,9 +21,9 @@
 """
 FAISSx Server CLI
 
-Command-line interface for the FAISSx server. This module provides a CLI for running
-and managing the FAISSx vector database proxy server, including configuration of
-authentication, data persistence, and network settings.
+Command-line interface for the FAISSx server. This module provides a CLI
+for running and managing the FAISSx vector database proxy server, including
+configuration of authentication, data persistence, and network settings.
 """
 
 import sys

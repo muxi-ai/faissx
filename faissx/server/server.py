@@ -21,7 +21,19 @@
 
 """
 FAISSx Server - ZeroMQ Implementation
-A standalone server that provides vector operations via ZeroMQ
+
+This module provides the core server implementation for the FAISSx vector
+search service.
+
+It handles:
+- ZeroMQ socket communication and message processing
+- FAISS index management for vector operations
+- Authentication and tenant isolation
+- Binary protocol serialization/deserialization
+- Request handling for create_index, add_vectors, search, and other operations
+
+The server uses a REP socket pattern to provide synchronous request-response
+communication and supports both in-memory and persistent storage of vector indices.
 """
 
 import os
@@ -49,8 +61,8 @@ class FaissIndex:
         Initialize the FAISS index manager.
 
         Args:
-            data_dir (str, optional): Directory to store FAISS indices. If None, uses in-memory indices
-                                     without persistence.
+            data_dir (str, optional): Directory to store FAISS indices.
+                    If None, uses in-memory indices without persistence.
         """
         self.data_dir = data_dir
         self.indexes = {}  # Dictionary to store FAISS indexes
@@ -124,7 +136,10 @@ class FaissIndex:
             if vectors_np.shape[1] != self.dimensions[index_id]:
                 return {
                     "success": False,
-                    "error": f"Vector dimension mismatch. Expected {self.dimensions[index_id]}, got {vectors_np.shape[1]}",
+                    "error": (
+                        f"Vector dimension mismatch. Expected {self.dimensions[index_id]}, "
+                        f"got {vectors_np.shape[1]}"
+                    ),
                 }
 
             # Add vectors to index
@@ -156,7 +171,10 @@ class FaissIndex:
             if query_np.shape[1] != self.dimensions[index_id]:
                 return {
                     "success": False,
-                    "error": f"Query vector dimension mismatch. Expected {self.dimensions[index_id]}, got {query_np.shape[1]}",
+                    "error": (
+                        f"Query vector dimension mismatch. Expected {self.dimensions[index_id]}, "
+                        f"got {query_np.shape[1]}"
+                    ),
                 }
 
             # Perform search

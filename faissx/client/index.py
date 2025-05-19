@@ -19,16 +19,25 @@
 # limitations under the License.
 
 """
-FAISS index classes implementation for ZeroMQ-based FAISSx
+FAISSx Index Implementation Module
 
-This module provides a client-side implementation of FAISS index operations
-that communicate with a remote FAISSx service via ZeroMQ. It implements
-the same interface as FAISS but delegates all operations to the remote service.
+This module provides client-side implementations of FAISS index classes that
+communicate with a remote FAISSx service via ZeroMQ. Key features include:
+
+- Drop-in replacements for FAISS index types (currently IndexFlatL2)
+- Identical API signatures to the original FAISS implementations
+- Transparent remote execution of add, search, and other vector operations
+- Local-to-server index mapping to maintain consistent vector references
+- Automatic conversion of data types and array formats for ZeroMQ transport
+- Support for all standard FAISS index operations with server delegation
+
+Each index class matches the behavior of its FAISS counterpart while sending
+the actual computational work to the FAISSx server.
 """
 
 import uuid
 import numpy as np
-from typing import Dict, Tuple, Any
+from typing import Tuple
 
 from .client import get_client
 

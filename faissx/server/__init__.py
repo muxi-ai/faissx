@@ -135,7 +135,7 @@ def run():
     according to the current configuration.
     """
     # Import server module for actual server implementation
-    from .server import run_server
+    from faissx.server.server import run_server
 
     # Create data directory if specified
     if _config["data_dir"]:

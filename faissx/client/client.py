@@ -19,10 +19,22 @@
 # limitations under the License.
 
 """
-FAISSx client implementation using ZeroMQ.
+FAISSx ZeroMQ Client Implementation
 
-This module provides a client interface for interacting with FAISSx vector search server.
-It uses ZeroMQ for communication and supports authentication and multi-tenant isolation.
+This module provides the core client interface for communicating with
+the FAISSx vector server.
+
+It handles:
+- ZeroMQ socket communication with binary protocol support
+- Request/response cycles for all vector operations
+- Authentication and tenant isolation
+- Connection management and error handling
+- Serialization/deserialization of vector data
+- Index creation, vector addition, and similarity searches
+
+The FaissXClient class handles low-level communication details, while the
+public configure() and get_client() functions provide a simplified interface
+for the rest of the client library.
 """
 
 import zmq
@@ -137,7 +149,8 @@ class FaissXClient:
         Args:
             name: Unique identifier for the index
             dimension: Dimensionality of vectors to be stored
-            index_type: Type of similarity metric ("L2" for Euclidean distance or "IP" for inner product)
+            index_type: Type of similarity metric
+                        ("L2" for Euclidean distance or "IP" for inner product)
 
         Returns:
             The created index ID (same as name if successful)
@@ -192,7 +205,9 @@ class FaissXClient:
             Dictionary containing search results and distances
         """
         # Convert numpy array to list for serialization
-        vectors_list = query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
+        vectors_list = (
+            query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
+        )
 
         request = {
             "action": "search",

@@ -18,6 +18,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+FAISSx Server Authentication Module
+
+This module handles API key authentication and tenant isolation for
+the FAISSx server.
+
+It provides functions for:
+- Managing API keys and their associated tenant IDs
+- Loading auth credentials from environment variables or configuration
+- Validating requests based on API keys
+- Enforcing tenant-level access control to ensure data isolation
+- Custom exceptions for authentication and permission failures
+
+The authentication system ensures that each client can only access indices and
+vectors that belong to their assigned tenant, providing multi-tenant security.
+"""
+
 import os
 from typing import Dict, Optional
 

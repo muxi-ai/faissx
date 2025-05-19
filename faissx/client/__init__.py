@@ -19,25 +19,46 @@
 # limitations under the License.
 
 """
-FAISSx - A drop-in replacement for FAISS with remote execution capabilities via ZeroMQ
+FAISSx Client Module
+A drop-in replacement for FAISS with remote execution capabilities
 
-This module provides a client interface for FAISSx, allowing vector operations to be
-executed remotely via ZeroMQ. It includes fallback capabilities to local FAISS when needed.
+This module provides a client interface for FAISSx that implements the
+FAISS API but executes operations remotely via ZeroMQ. Key features include:
+
+1. Drop-in API compatibility with the original FAISS library
+2. Transparent remote execution of vector operations (add, search)
+3. Environment-based configuration for easy deployment
+4. Automatic fallback to local FAISS when server is unavailable
+5. Support for authentication and multi-tenant isolation
+6. Index implementations that mirror the behavior of native FAISS indices
+
+Users can switch between local FAISS processing and remote FAISSx execution
+by simply changing the import statement and adding a configure() call.
 """
 
 import os
 import sys
 from typing import Optional
 
+# Import core client functionality
+from .client import configure, FaissXClient, get_client
+from .index import (
+    IndexFlatL2,  # L2 distance-based index implementation
+    # Add other index types as they are implemented
+)
+
 # Module version
 __version__ = "0.1.0"
 
 # Global configuration variables with environment variable fallbacks
 # These control the client's connection and authentication settings
-_API_URL: Optional[str] = os.environ.get("FAISSX_SERVER", "tcp://localhost:45678")  # Default to localhost
+_API_URL: Optional[str] = os.environ.get(
+    "FAISSX_SERVER", "tcp://localhost:45678"  # Default to localhost
+)
 _API_KEY: Optional[str] = os.environ.get("FAISSX_API_KEY", "")  # API key for authentication
 _TENANT_ID: Optional[str] = os.environ.get("FAISSX_TENANT_ID", "")  # Tenant ID for multi-tenancy
-_FALLBACK_TO_LOCAL: bool = os.environ.get("FAISSX_FALLBACK_TO_LOCAL", "1") == "1"  # Enable local FAISS fallback by default
+# Enable local FAISS fallback by default
+_FALLBACK_TO_LOCAL: bool = os.environ.get("FAISSX_FALLBACK_TO_LOCAL", "1") == "1"
 
 # Attempt to import local FAISS for fallback capabilities
 try:
@@ -50,13 +71,6 @@ except ImportError:
             "Warning: Local FAISS not found, can't use fallback mode", file=sys.stderr
         )
         _FALLBACK_TO_LOCAL = False
-
-# Import core client functionality
-from .client import configure, FaissXClient, get_client
-from .index import (
-    IndexFlatL2,  # L2 distance-based index implementation
-    # Add other index types as they are implemented
-)
 
 # Define public API - symbols that can be imported directly from the module
 __all__ = [

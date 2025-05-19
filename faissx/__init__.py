@@ -19,15 +19,35 @@
 # limitations under the License.
 
 """
-FAISSx package - High-performance vector database proxy using ZeroMQ.
+FAISSx Package - High-performance vector database proxy using ZeroMQ
 
-This package provides both server and client implementations for using
-FAISS (Facebook AI Similarity Search) over ZeroMQ for high performance.
+This package provides a complete solution for distributed vector search operations
+using Facebook AI Similarity Search (FAISS) over ZeroMQ for high-performance communication.
 
-The package consists of:
-- Server: A standalone service that manages FAISS indices and handles vector operations
-- Client: A Python client library that provides a FAISS-compatible interface
-- Protocol: A ZeroMQ-based communication protocol for client-server interaction
+Key components:
+
+1. Server Module (faissx.server):
+   - Standalone service that manages FAISS indices
+   - Multi-tenant isolation for shared deployments
+   - Authentication with API keys
+   - Persistent storage for indices
+   - Binary protocol for efficient data transfer
+   - Command-line interface for easy deployment
+
+2. Client Module (faissx.client):
+   - Drop-in replacement for FAISS with identical API
+   - Transparent remote execution of vector operations
+   - Support for standard FAISS index types
+   - Efficient binary serialization of vector data
+   - Authentication and tenant isolation
+   - Local fallback capabilities
+
+3. Protocol:
+   - Zero-copy binary messaging for maximum performance
+   - MessagePack-based serialization for structured data
+   - Optimized for large vector datasets
+
+The package can be used in both standalone server mode and as a client library.
 """
 
 import os

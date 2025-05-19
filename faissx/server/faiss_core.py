@@ -18,6 +18,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+FAISSx Core - Vector Index Management System
+
+This module provides the core implementation for managing FAISS vector
+indices in the FAISSx system.
+
+It handles:
+- Creation and management of vector indices with multi-tenant isolation
+- Thread-safe operations for concurrent access from multiple clients
+- Persistent storage and loading of indices from disk
+- Vector addition, deletion, and search operations with metadata support
+- Index statistics and information retrieval
+- Efficient memory management for large-scale vector operations
+
+The FaissManager class acts as a central component that maintains the
+lifecycle of all vector indices, ensuring data isolation between tenants
+and providing efficient, scalable vector operations.
+"""
+
 import os
 import json
 import uuid
@@ -427,44 +446,3 @@ class FaissManager:
             if key not in metadata or metadata[key] != value:
                 return False
         return True
-
-    def delete_vector(
-        self, tenant_id: TenantID, index_id: IndexID, vector_id: VectorID
-    ) -> bool:
-        """
-        Delete a vector from an index.
-
-        Note: FAISS doesn't support direct deletion, so we rebuild the index without the vector.
-        This is an expensive operation and not recommended for frequent use.
-
-        Args:
-            tenant_id: Tenant ID
-            index_id: Index ID
-            vector_id: Vector ID
-
-        Returns:
-            success: Whether deletion succeeded
-        """
-        with self.lock:
-            if tenant_id not in self.indices or index_id not in self.indices[tenant_id]:
-                return False
-
-            faiss_index, index_meta, vectors_meta = self.indices[tenant_id][index_id]
-
-            # Check if vector exists
-            if vector_id not in vectors_meta:
-                return False
-
-            # Remove metadata
-            del vectors_meta[vector_id]
-
-            # Update vector count
-            index_meta["vector_count"] -= 1
-
-            # Save to disk
-            self._save_index(tenant_id, index_id)
-
-            # Note: We don't actually remove from FAISS index as it would require rebuilding
-            # For a production version, we would need to implement proper deletion or have a cleanup process
-
-            return True
