@@ -39,37 +39,29 @@ This document outlines the current status and next steps for the FAISSx project,
 ## Next Milestones
 
 ### Server Enhancements
-- [ ] Add support for additional FAISS index types:
-  - [ ] IndexIVFFlat
-  - [ ] IndexHNSW
-  - [ ] IndexPQ
-- [ ] Implement index training endpoints
+- [x] Add support for additional FAISS index types:
+  - [x] IndexIVFFlat
+  - [x] IndexHNSW
+  - [x] IndexPQ
+- [x] Implement index training endpoints
 - [ ] Add specialized search operations (range search, etc.)
-- [ ] Implement proper deletion through index rebuilding
-- [ ] Add benchmarking tools
 
 ### Client Library Enhancements
-- [ ] Implement additional FAISS index classes
-- [ ] Add support for index training
-- [ ] Implement metadata filtering
-- [ ] Add error recovery and reconnection
-- [ ] Create advanced examples and tutorials
+- [x] Implement additional FAISS index classes
+- [x] Add support for index training
 - [ ] Support for batch operations
+- [ ] Create advanced examples and tutorials
 
 ### Advanced Features
 - [ ] Optimize persistence layer for large indices
 - [ ] Add GPU support via FAISS GPU indices
-- [ ] Implement caching for frequently accessed indices
-- [ ] Add monitoring dashboard
-- [ ] Support for distributed indices
-- [ ] High availability configuration
 
 ## Implementation Priorities
 
 ### High Priority
 1. ~~Publish to PyPI~~ ✅ Done
-2. Support for additional index types (IndexIVFFlat)
-3. Implement proper index training
+2. ~~Support for additional index types (IndexIVFFlat)~~ ✅ Done
+3. ~~Implement proper index training~~ ✅ Done
 4. Create detailed documentation and examples
    - [x] Comprehensive server documentation
    - [x] Client API documentation
@@ -79,12 +71,16 @@ This document outlines the current status and next steps for the FAISSx project,
 1. Add more client-side features and FAISS compatibility
 2. Create benchmarking tools
 3. Add performance optimizations
-4. Implement metadata filtering
 
 ### Low Priority
 1. GPU support
 2. Monitoring dashboard
 3. Additional language clients (TypeScript, Go, etc.)
+4. Implement metadata filtering
+5. Add error recovery and reconnection
+6. Implement caching for frequently accessed indices
+7. Support for distributed indices
+8. High availability configuration
 
 ## Get Involved
 
