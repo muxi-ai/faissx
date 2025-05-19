@@ -38,12 +38,10 @@ the actual computational work to the FAISSx server.
 import uuid
 import numpy as np
 from typing import Tuple
+import faiss
 
-# Import faiss for constants and compatibility
-try:
-    import faiss
-except ImportError:
-    # Define constants for when faiss isn't available
+# Define constants for when faiss isn't fully available
+if not hasattr(faiss, 'METRIC_L2'):
     class FaissConstants:
         METRIC_L2 = 0
         METRIC_INNER_PRODUCT = 1
@@ -61,6 +59,9 @@ class IndexFlatL2:
     configured via configure(). It maintains a mapping between local and server-side
     indices to ensure consistent indexing across operations when using remote mode.
 
+    When running in local mode with CUDA-capable GPUs, it will automatically use
+    GPU acceleration if available.
+
     Attributes:
         d (int): Vector dimension
         is_trained (bool): Always True for L2 index
@@ -71,6 +72,8 @@ class IndexFlatL2:
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _using_remote (bool): Whether we're using remote or local implementation
+        _gpu_resources: GPU resources if using GPU (local mode only)
+        _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
     def __init__(self, d: int):
@@ -84,6 +87,10 @@ class IndexFlatL2:
         self.d = d
         self.is_trained = True  # L2 index doesn't require training
         self.ntotal = 0  # Track total vectors
+
+        # Initialize GPU-related attributes
+        self._use_gpu = False
+        self._gpu_resources = None
 
         # Generate unique name for the index
         self.name = f"index-flat-l2-{uuid.uuid4().hex[:8]}"
@@ -128,7 +135,33 @@ class IndexFlatL2:
         # Import local FAISS here to avoid module-level dependency
         try:
             import faiss
-            self._local_index = faiss.IndexFlatL2(d)
+
+            # Check if GPU is available and can be used
+            try:
+                # Import GPU-specific module
+                import faiss.contrib.gpu
+                ngpus = faiss.get_num_gpus()
+
+                if ngpus > 0:
+                    # GPU is available, create resources and GPU index
+                    self._use_gpu = True
+                    self._gpu_resources = faiss.StandardGpuResources()
+
+                    # Create CPU index first
+                    cpu_index = faiss.IndexFlatL2(d)
+
+                    # Convert to GPU index
+                    self._local_index = faiss.index_cpu_to_gpu(self._gpu_resources, 0, cpu_index)
+
+                    import logging
+                    logging.info(f"Using GPU-accelerated index for {self.name}")
+                else:
+                    # No GPUs available
+                    self._local_index = faiss.IndexFlatL2(d)
+            except (ImportError, AttributeError):
+                # GPU support not available in this FAISS build
+                self._local_index = faiss.IndexFlatL2(d)
+
             self.index_id = self.name  # Use name as ID for consistency
         except ImportError as e:
             raise ImportError(f"Failed to import FAISS for local mode: {e}")
@@ -225,27 +258,34 @@ class IndexFlatL2:
 
         # Process results
         search_results = result.get("results", [])
-        n_queries = len(search_results)
+        n = x.shape[0]  # Number of query vectors
 
-        # Initialize empty arrays for distances and indices
-        distances = np.zeros((n_queries, k), dtype=np.float32)
-        indices = np.zeros((n_queries, k), dtype=np.int64)
+        # Initialize output arrays with default values
+        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        indices = np.full((n, k), -1, dtype=np.int64)  # Use -1 as sentinel for not found
 
-        # Fill arrays with results
+        # Fill in results from the search
         for i, res in enumerate(search_results):
-            # Copy distances directly
-            result_distances = np.array(res.get("distances", []), dtype=np.float32)
-            result_indices = np.array(res.get("indices", []), dtype=np.int64)
+            result_distances = res.get("distances", [])
+            result_indices = res.get("indices", [])
+            num_results = min(len(result_distances), k)
 
-            # Handle case where fewer than k results are returned
-            actual_k = min(k, len(result_distances))
-            distances[i, :actual_k] = result_distances[:actual_k]
-            indices[i, :actual_k] = result_indices[:actual_k]
+            if num_results > 0:
+                # Fill distances directly
+                distances[i, :num_results] = result_distances[:num_results]
 
-            # Fill remaining slots with default values if fewer than k results
-            if actual_k < k:
-                distances[i, actual_k:] = float('inf')
-                indices[i, actual_k:] = -1
+                # Map server indices back to local indices
+                for j, server_idx in enumerate(result_indices[:num_results]):
+                    # Look up the server index in our vector mapping
+                    found = False
+                    for local_idx, info in self._vector_mapping.items():
+                        if info["server_idx"] == server_idx:
+                            indices[i, j] = local_idx
+                            found = True
+                            break
+
+                    if not found:
+                        indices[i, j] = -1  # Not found in local mapping
 
         return distances, indices
 
@@ -322,7 +362,21 @@ class IndexFlatL2:
             # Copy data to output arrays
             if count > 0:
                 distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
-                indices[offset:offset+count] = np.array(result_indices, dtype=np.int64)
+
+                # Map server indices back to local indices
+                mapped_indices = np.zeros(count, dtype=np.int64)
+                for j, server_idx in enumerate(result_indices):
+                    found = False
+                    for local_idx, info in self._vector_mapping.items():
+                        if info["server_idx"] == server_idx:
+                            mapped_indices[j] = local_idx
+                            found = True
+                            break
+
+                    if not found:
+                        mapped_indices[j] = -1
+
+                indices[offset:offset+count] = mapped_indices
                 offset += count
 
         # Set final boundary
@@ -369,6 +423,11 @@ class IndexFlatL2:
         """
         Clean up resources when the index is deleted.
         """
+        # Clean up GPU resources if used
+        if self._use_gpu and self._gpu_resources is not None:
+            # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
+            self._gpu_resources = None
+
         # Local index will be cleaned up by garbage collector
         pass
 
@@ -377,13 +436,16 @@ class IndexIVFFlat:
     """
     Proxy implementation of FAISS IndexIVFFlat
 
-    This class mimics the behavior of FAISS IndexIVFFlat, supporting IVF indices
-    with quantization to trade accuracy for speed and memory. It requires training
-    before vectors can be added.
+    This class mimics the behavior of FAISS IndexIVFFlat, which uses inverted file
+    indexing for efficient similarity search. It divides the vector space into partitions
+    (clusters) for faster search, requiring a training step before use.
+
+    When running in local mode with CUDA-capable GPUs, it will automatically use
+    GPU acceleration if available.
 
     Attributes:
         d (int): Vector dimension
-        nlist (int): Number of centroids/clusters for the IVF
+        nlist (int): Number of clusters/partitions
         metric_type (str): Distance metric type ('L2' or 'IP')
         is_trained (bool): Whether the index has been trained
         ntotal (int): Total number of vectors in the index
@@ -393,31 +455,36 @@ class IndexIVFFlat:
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _using_remote (bool): Whether we're using remote or local implementation
+        _gpu_resources: GPU resources if using GPU (local mode only)
+        _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
     def __init__(self, quantizer, d: int, nlist: int, metric_type=faiss.METRIC_L2):
         """
-        Initialize the IVF index with specified dimension and parameters.
+        Initialize the inverted file index with specified parameters.
 
         Args:
-            quantizer: The quantizer object (typically a flat index)
+            quantizer: Quantizer object that defines the centroids (usually IndexFlatL2)
             d (int): Vector dimension
-            nlist (int): Number of clusters/cells for the IVF index
-            metric_type: Distance metric (faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT)
+            nlist (int): Number of clusters/partitions
+            metric_type: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
         """
-        # Store dimension and initialize basic attributes
+        # Store core parameters
         self.d = d
         self.nlist = nlist
-        self.is_trained = False  # IVF indices need training
-        self.ntotal = 0  # Track total vectors
+        # Convert metric type to string representation
+        self.metric_type = "IP" if metric_type == faiss.METRIC_INNER_PRODUCT else "L2"
 
-        # Determine metric type from input
-        self.metric_type = "L2"
-        if metric_type == faiss.METRIC_INNER_PRODUCT:
-            self.metric_type = "IP"
+        # Initialize state variables
+        self.is_trained = False
+        self.ntotal = 0
+
+        # Initialize GPU-related attributes
+        self._use_gpu = False
+        self._gpu_resources = None
 
         # Generate unique name for the index
-        self.name = f"index-ivf-{nlist}-{self.metric_type.lower()}-{uuid.uuid4().hex[:8]}"
+        self.name = f"index-ivf-flat-{uuid.uuid4().hex[:8]}"
 
         # Check if we should use remote implementation
         try:
@@ -466,7 +533,40 @@ class IndexIVFFlat:
         # Import local FAISS here to avoid module-level dependency
         try:
             import faiss
-            self._local_index = faiss.IndexIVFFlat(quantizer, d, nlist, metric_type)
+
+            # Check if GPU is available and can be used
+            try:
+                # Import GPU-specific module
+                import faiss.contrib.gpu
+                ngpus = faiss.get_num_gpus()
+
+                if ngpus > 0:
+                    # GPU is available, create resources
+                    self._use_gpu = True
+                    self._gpu_resources = faiss.StandardGpuResources()
+
+                    # Create CPU index first
+                    if isinstance(quantizer, IndexFlatL2) and quantizer._use_gpu:
+                        # If the quantizer is already on GPU, get the CPU version
+                        cpu_quantizer = faiss.index_gpu_to_cpu(quantizer._local_index)
+                    else:
+                        # Otherwise, use the provided quantizer directly
+                        cpu_quantizer = quantizer._local_index if hasattr(quantizer, '_local_index') else quantizer
+
+                    cpu_index = faiss.IndexIVFFlat(cpu_quantizer, d, nlist, metric_type)
+
+                    # Convert to GPU index
+                    self._local_index = faiss.index_cpu_to_gpu(self._gpu_resources, 0, cpu_index)
+
+                    import logging
+                    logging.info(f"Using GPU-accelerated IVF index for {self.name}")
+                else:
+                    # No GPUs available, use CPU version
+                    self._local_index = faiss.IndexIVFFlat(quantizer._local_index, d, nlist, metric_type)
+            except (ImportError, AttributeError):
+                # GPU support not available in this FAISS build
+                self._local_index = faiss.IndexIVFFlat(quantizer._local_index, d, nlist, metric_type)
+
             self.index_id = self.name  # Use name as ID for consistency
         except ImportError as e:
             raise ImportError(f"Failed to import FAISS for local mode: {e}")
@@ -558,7 +658,6 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
-            RuntimeError: If index is not trained before searching
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -629,14 +728,11 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
-            RuntimeError: If index is not trained or range search fails
+            RuntimeError: If range search fails or isn't supported by the index type
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
-
-        if not self.is_trained:
-            raise RuntimeError("Index must be trained before searching")
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -757,6 +853,11 @@ class IndexIVFFlat:
         """
         Clean up resources when the index is deleted.
         """
+        # Clean up GPU resources if used
+        if self._use_gpu and self._gpu_resources is not None:
+            # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
+            self._gpu_resources = None
+
         # Local index will be cleaned up by garbage collector
         pass
 
@@ -765,15 +866,19 @@ class IndexHNSWFlat:
     """
     Proxy implementation of FAISS IndexHNSWFlat
 
-    This class mimics the behavior of FAISS IndexHNSWFlat, which implements the
-    Hierarchical Navigable Small World (HNSW) graph structure for efficient similarity search.
-    HNSW provides faster searches than flat indices for large datasets with minimal accuracy loss.
+    This class mimics the behavior of FAISS IndexHNSWFlat, which uses Hierarchical
+    Navigable Small World graphs for efficient approximate similarity search. It offers
+    excellent search performance with good accuracy, particularly for high-dimensional
+    data.
+
+    When running in local mode with CUDA-capable GPUs, it will automatically use
+    GPU acceleration if available.
 
     Attributes:
         d (int): Vector dimension
-        M (int): Maximum number of connections per node in the HNSW graph
+        M (int): Number of connections per node in the HNSW graph
         metric_type (str): Distance metric type ('L2' or 'IP')
-        is_trained (bool): Whether the index is trained (always True for HNSW)
+        is_trained (bool): Always True for HNSW index
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
         index_id (str): Server-side index identifier (when in remote mode)
@@ -781,30 +886,35 @@ class IndexHNSWFlat:
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _using_remote (bool): Whether we're using remote or local implementation
+        _gpu_resources: GPU resources if using GPU (local mode only)
+        _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
     def __init__(self, d: int, M: int = 32, metric=faiss.METRIC_L2):
         """
-        Initialize the HNSW index with specified dimension and parameters.
+        Initialize the HNSW index with specified parameters.
 
         Args:
             d (int): Vector dimension
-            M (int): Maximum number of connections per node in the HNSW graph
-            metric: Distance metric (faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT)
+            M (int): Number of connections per node (higher = better accuracy, more memory)
+            metric: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
         """
-        # Store dimension and initialize basic attributes
+        # Store core parameters
         self.d = d
         self.M = M
-        self.is_trained = True  # HNSW indices are always trained
-        self.ntotal = 0  # Track total vectors
+        # Convert metric type to string representation
+        self.metric_type = "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2"
 
-        # Determine metric type from input
-        self.metric_type = "L2"
-        if metric == faiss.METRIC_INNER_PRODUCT:
-            self.metric_type = "IP"
+        # Initialize state variables
+        self.is_trained = True  # HNSW doesn't need training
+        self.ntotal = 0
+
+        # Initialize GPU-related attributes
+        self._use_gpu = False
+        self._gpu_resources = None
 
         # Generate unique name for the index
-        self.name = f"index-hnsw-{M}-{self.metric_type.lower()}-{uuid.uuid4().hex[:8]}"
+        self.name = f"index-hnsw-flat-{uuid.uuid4().hex[:8]}"
 
         # Check if we should use remote implementation
         try:
@@ -852,7 +962,41 @@ class IndexHNSWFlat:
         # Import local FAISS here to avoid module-level dependency
         try:
             import faiss
-            self._local_index = faiss.IndexHNSWFlat(d, M, metric)
+
+            # Check if GPU is available and can be used
+            try:
+                # Import GPU-specific module
+                import faiss.contrib.gpu
+                ngpus = faiss.get_num_gpus()
+
+                if ngpus > 0:
+                    # GPU is available, create resources
+                    self._use_gpu = True
+                    self._gpu_resources = faiss.StandardGpuResources()
+
+                    # Note: HNSW is only partially supported on GPU
+                    # Create CPU index first (all HNSW operations except search will run on CPU)
+                    cpu_index = faiss.IndexHNSWFlat(d, M, metric)
+
+                    # For HNSW, typically only search can be GPU-accelerated
+                    # Convert to GPU index, but many operations will fall back to CPU
+                    try:
+                        self._local_index = faiss.index_cpu_to_gpu(self._gpu_resources, 0, cpu_index)
+                        import logging
+                        logging.info(f"Using GPU-accelerated HNSW index for {self.name} (search only)")
+                    except Exception as e:
+                        # If GPU conversion fails, fall back to CPU
+                        self._local_index = cpu_index
+                        self._use_gpu = False
+                        import logging
+                        logging.warning(f"Failed to create GPU HNSW index: {e}, using CPU instead")
+                else:
+                    # No GPUs available, use CPU version
+                    self._local_index = faiss.IndexHNSWFlat(d, M, metric)
+            except (ImportError, AttributeError):
+                # GPU support not available in this FAISS build
+                self._local_index = faiss.IndexHNSWFlat(d, M, metric)
+
             self.index_id = self.name  # Use name as ID for consistency
         except ImportError as e:
             raise ImportError(f"Failed to import FAISS for local mode: {e}")
@@ -1100,6 +1244,11 @@ class IndexHNSWFlat:
         """
         Clean up resources when the index is deleted.
         """
+        # Clean up GPU resources if used
+        if self._use_gpu and self._gpu_resources is not None:
+            # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
+            self._gpu_resources = None
+
         # Local index will be cleaned up by garbage collector
         pass
 
@@ -1111,6 +1260,9 @@ class IndexPQ:
     This class mimics the behavior of FAISS IndexPQ, which uses Product Quantization
     for efficient vector compression and similarity search. PQ significantly reduces
     the memory footprint of vectors while maintaining reasonable search accuracy.
+
+    When running in local mode with CUDA-capable GPUs, it will automatically use
+    GPU acceleration if available.
 
     Attributes:
         d (int): Vector dimension
@@ -1125,36 +1277,41 @@ class IndexPQ:
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _using_remote (bool): Whether we're using remote or local implementation
+        _gpu_resources: GPU resources if using GPU (local mode only)
+        _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
     def __init__(self, d: int, M: int = 8, nbits: int = 8, metric=faiss.METRIC_L2):
         """
-        Initialize the PQ index with specified dimension and parameters.
+        Initialize the PQ index with specified parameters.
 
         Args:
-            d (int): Vector dimension
-            M (int): Number of subquantizers (must be a divisor of d)
-            nbits (int): Number of bits per subquantizer (typically 8)
-            metric: Distance metric (faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT)
+            d (int): Vector dimension (must be a multiple of M)
+            M (int): Number of subquantizers
+            nbits (int): Number of bits per subquantizer (default 8)
+            metric: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
         """
-        # Verify dimension is compatible with the number of subquantizers
+        # Validate that dimension is a multiple of M
         if d % M != 0:
-            raise ValueError(f"Dimension {d} must be a multiple of M={M}")
+            raise ValueError(f"PQ requires dimension ({d}) to be a multiple of M ({M})")
 
-        # Store dimension and initialize basic attributes
+        # Store core parameters
         self.d = d
         self.M = M
         self.nbits = nbits
-        self.is_trained = False  # PQ indices need training
-        self.ntotal = 0  # Track total vectors
+        # Convert metric type to string representation
+        self.metric_type = "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2"
 
-        # Determine metric type from input
-        self.metric_type = "L2"
-        if metric == faiss.METRIC_INNER_PRODUCT:
-            self.metric_type = "IP"
+        # Initialize state variables
+        self.is_trained = False
+        self.ntotal = 0
+
+        # Initialize GPU-related attributes
+        self._use_gpu = False
+        self._gpu_resources = None
 
         # Generate unique name for the index
-        self.name = f"index-pq-{M}x{nbits}-{self.metric_type.lower()}-{uuid.uuid4().hex[:8]}"
+        self.name = f"index-pq-{uuid.uuid4().hex[:8]}"
 
         # Check if we should use remote implementation
         try:
@@ -1203,7 +1360,39 @@ class IndexPQ:
         # Import local FAISS here to avoid module-level dependency
         try:
             import faiss
-            self._local_index = faiss.IndexPQ(d, M, nbits, metric)
+
+            # Check if GPU is available and can be used
+            try:
+                # Import GPU-specific module
+                import faiss.contrib.gpu
+                ngpus = faiss.get_num_gpus()
+
+                if ngpus > 0:
+                    # GPU is available, create resources
+                    self._use_gpu = True
+                    self._gpu_resources = faiss.StandardGpuResources()
+
+                    # Create CPU index first
+                    cpu_index = faiss.IndexPQ(d, M, nbits, metric)
+
+                    # Convert to GPU index
+                    try:
+                        self._local_index = faiss.index_cpu_to_gpu(self._gpu_resources, 0, cpu_index)
+                        import logging
+                        logging.info(f"Using GPU-accelerated PQ index for {self.name}")
+                    except Exception as e:
+                        # If GPU conversion fails, fall back to CPU
+                        self._local_index = cpu_index
+                        self._use_gpu = False
+                        import logging
+                        logging.warning(f"Failed to create GPU PQ index: {e}, using CPU instead")
+                else:
+                    # No GPUs available, use CPU version
+                    self._local_index = faiss.IndexPQ(d, M, nbits, metric)
+            except (ImportError, AttributeError):
+                # GPU support not available in this FAISS build
+                self._local_index = faiss.IndexPQ(d, M, nbits, metric)
+
             self.index_id = self.name  # Use name as ID for consistency
         except ImportError as e:
             raise ImportError(f"Failed to import FAISS for local mode: {e}")
@@ -1365,14 +1554,11 @@ class IndexPQ:
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
-            RuntimeError: If index is not trained or range search fails
+            RuntimeError: If range search fails or isn't supported by the index type
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
-
-        if not self.is_trained:
-            raise RuntimeError("Index must be trained before searching")
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -1493,5 +1679,10 @@ class IndexPQ:
         """
         Clean up resources when the index is deleted.
         """
+        # Clean up GPU resources if used
+        if self._use_gpu and self._gpu_resources is not None:
+            # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
+            self._gpu_resources = None
+
         # Local index will be cleaned up by garbage collector
         pass
