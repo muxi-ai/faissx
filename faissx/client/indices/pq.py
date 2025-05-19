@@ -137,7 +137,7 @@ class IndexPQ:
             # Check if GPU is available and can be used
             try:
                 # Import GPU-specific module
-                import faiss.contrib.gpu
+                import faiss.contrib.gpu  # type: ignore
                 ngpus = faiss.get_num_gpus()
 
                 if ngpus > 0:
@@ -215,7 +215,9 @@ class IndexPQ:
         # Implementation omitted for brevity
         pass
 
-    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def range_search(
+        self, x: np.ndarray, radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 

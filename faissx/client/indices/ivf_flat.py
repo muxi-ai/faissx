@@ -114,7 +114,7 @@ class IndexIVFFlat:
             # Check if GPU is available and can be used
             try:
                 # Import GPU-specific module
-                import faiss.contrib.gpu
+                import faiss.contrib.gpu  # type: ignore
                 ngpus = faiss.get_num_gpus()
 
                 if ngpus > 0:
@@ -128,8 +128,11 @@ class IndexIVFFlat:
                         cpu_quantizer = faiss.index_gpu_to_cpu(quantizer._local_index)
                     else:
                         # Otherwise, use the provided quantizer directly
-                        cpu_quantizer = (quantizer._local_index if hasattr(quantizer, '_local_index')
-                                        else quantizer)
+                        cpu_quantizer = (
+                            quantizer._local_index
+                            if hasattr(quantizer, '_local_index')
+                            else quantizer
+                        )
 
                     cpu_index = faiss.IndexIVFFlat(cpu_quantizer, d, nlist, metric_type)
 
@@ -293,7 +296,9 @@ class IndexIVFFlat:
 
         return distances, idx
 
-    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def range_search(
+        self, x: np.ndarray, radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 

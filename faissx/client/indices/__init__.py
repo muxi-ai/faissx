@@ -25,3 +25,19 @@ Each class provides a client-side implementation of a FAISS index class that
 can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
 """
+
+from .flat import IndexFlatL2
+from .ivf_flat import IndexIVFFlat
+from .hnsw_flat import IndexHNSWFlat
+from .pq import IndexPQ
+from .ivf_pq import IndexIVFPQ
+from .scalar_quantizer import IndexScalarQuantizer
+
+__all__ = [
+    'IndexFlatL2',
+    'IndexIVFFlat',
+    'IndexHNSWFlat',
+    'IndexPQ',
+    'IndexIVFPQ',
+    'IndexScalarQuantizer',
+]

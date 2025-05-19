@@ -51,8 +51,12 @@ from typing import Optional
 # Import core client functionality
 from .client import configure, FaissXClient, get_client
 from .index import (
-    IndexFlatL2,  # L2 distance-based index implementation
-    # Add other index types as they are implemented
+    IndexFlatL2,
+    IndexIVFFlat,
+    IndexHNSWFlat,
+    IndexPQ,
+    IndexIVFPQ,
+    IndexScalarQuantizer,
 )
 
 # Module version
@@ -86,7 +90,11 @@ __all__ = [
     "FaissXClient",  # Main client class
     "get_client",  # Client instance getter
     "IndexFlatL2",  # L2 distance index implementation
-    # Add other exported symbols as they are implemented
+    "IndexIVFFlat",  # IVF flat index implementation
+    "IndexHNSWFlat",  # HNSW flat index implementation
+    "IndexPQ",  # PQ index implementation
+    "IndexIVFPQ",  # IVF PQ index implementation
+    "IndexScalarQuantizer",  # Scalar quantizer index implementation
 ]
 
 # Set version to match local FAISS version for compatibility

@@ -147,7 +147,7 @@ class IndexScalarQuantizer:
             # Try to use GPU if available
             gpu_available = False
             try:
-                import faiss.contrib.gpu
+                import faiss.contrib.gpu  # type: ignore
                 ngpus = faiss.get_num_gpus()
                 gpu_available = ngpus > 0
             except (ImportError, AttributeError) as e:
@@ -290,7 +290,9 @@ class IndexScalarQuantizer:
 
         return distances, idx
 
-    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def range_search(
+        self, x: np.ndarray, radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 

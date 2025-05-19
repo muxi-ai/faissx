@@ -26,8 +26,7 @@ It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
 """
 
-from .base import uuid, np, Tuple, faiss, logging, get_client
-from .flat import IndexFlatL2
+from .base import np, Tuple, faiss
 
 
 class IndexIVFPQ:
@@ -60,7 +59,9 @@ class IndexIVFPQ:
         _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
-    def __init__(self, quantizer, d: int, M: int, nbits: int, nlist: int, metric_type=faiss.METRIC_L2):
+    def __init__(
+        self, quantizer, d: int, M: int, nbits: int, nlist: int, metric_type=faiss.METRIC_L2
+    ):
         """
         Initialize the IVF-PQ index with specified parameters.
 
@@ -121,7 +122,9 @@ class IndexIVFPQ:
         # Implementation omitted for brevity
         pass
 
-    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def range_search(
+        self, x: np.ndarray, radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 
