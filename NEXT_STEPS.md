@@ -101,3 +101,4 @@ We welcome contributions to the FAISSx project. Here are some ways to get starte
 - **2023-05-25**: ✅ Completed test implementation for server and client components
 - **2023-06-15**: ✅ Project renamed from FAISS-Proxy to FAISSx
 - **2023-06-22**: ✅ Completed client implementation with IndexFlatL2 support
+- **2023-07-15**: ✅ Added proper licensing and documentation to all components
