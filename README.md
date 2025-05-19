@@ -1,6 +1,9 @@
 # FAISSx (FAISS Extended)
 
-High-performance vector database proxy built with FAISS and ZeroMQ.
+> High-performance vector database proxy built with FAISS and ZeroMQ.
+
+## Run FAISS as a service for multi-server deployments
+
 
 ## Overview
 
