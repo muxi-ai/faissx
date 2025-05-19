@@ -6,15 +6,17 @@ This directory contains tools and utilities for the FAISSx Server.
 
 The main server code is in the `faissx/server` Python package. This directory contains:
 
-- `test_client.py`: A simple client for testing server functionality
-- `run_zmq_tests.sh`: Script to run all ZeroMQ-related tests
+- `Dockerfile`: Docker configuration for the server
+- `build_docker.sh`: Script to build the Docker image
+- `pytest.ini`: Configuration for tests
 
 ## Running Tests
 
 To run the server tests:
 
 ```bash
-./run_zmq_tests.sh
+# From the project root
+pytest faissx/server/tests
 ```
 
 ## Installation
@@ -36,3 +38,16 @@ faissx.server run --port 45678 --enable-auth --auth-keys "key1:tenant1,key2:tena
 ```
 
 See the documentation in `faissx/server/__init__.py` for more configuration options.
+
+## Docker Deployment
+
+```bash
+# Build the Docker image
+./build_docker.sh
+
+# Run with default settings
+docker run -p 45678:45678 muxi/faissx:latest
+
+# Run with persistent data
+docker run -p 45678:45678 -v /path/to/data:/data muxi/faissx:latest
+```
