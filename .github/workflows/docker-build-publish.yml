@@ -123,3 +123,48 @@ jobs:
             echo "Tagging slim version with: ${VERSION_TAG}-slim"
             docker buildx imagetools create -t ${VERSION_TAG}-slim ghcr.io/${{ github.repository }}:latest-slim
           fi
+
+      # Clean up untagged images
+      - name: Clean up untagged images
+        run: |
+          # Wait a bit to make sure all images are properly registered
+          echo "Waiting 30 seconds before cleanup to ensure all operations are complete..."
+          sleep 30
+
+          # Extract the repository name from full path (e.g., "muxi-ai/faissx" from "github.com/muxi-ai/faissx")
+          REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+          # Get the name of the package without the owner (e.g., "faissx" from "muxi-ai/faissx")
+          PACKAGE_NAME=$(echo "$REPO_NAME" | cut -d '/' -f 2)
+          OWNER=$(echo "$REPO_NAME" | cut -d '/' -f 1)
+
+          echo "Repository: $REPO_NAME"
+          echo "Owner: $OWNER"
+          echo "Package: $PACKAGE_NAME"
+
+          # Find and delete all untagged images
+          echo "Finding untagged images to delete..."
+          # Get the list of all versions
+          VERSIONS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     "https://api.github.com/orgs/$OWNER/packages/container/$PACKAGE_NAME/versions")
+
+          # Find untagged versions
+          # Untagged versions have an empty tags array - look for "tags":[]
+          UNTAGGED_IDS=$(echo "$VERSIONS" | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id')
+
+          # Show how many untagged images were found
+          UNTAGGED_COUNT=$(echo "$UNTAGGED_IDS" | wc -l | xargs)
+          echo "Found $UNTAGGED_COUNT untagged images to delete"
+
+          # Delete each untagged version
+          if [ -n "$UNTAGGED_IDS" ]; then
+            for VERSION_ID in $UNTAGGED_IDS; do
+              echo "Deleting untagged image with ID: $VERSION_ID"
+              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                   -H "Accept: application/vnd.github.v3+json" \
+                   "https://api.github.com/orgs/$OWNER/packages/container/$PACKAGE_NAME/versions/$VERSION_ID"
+            done
+          else
+            echo "No untagged images found to delete"
+          fi
