@@ -2,15 +2,12 @@ FROM python:3.11-slim
 
 LABEL maintainer="Muxi AI"
 LABEL description="FAISS, Extended - A high-performance vector database proxy with ZeroMQ"
-LABEL version="0.1.0"
+LABEL version="0.0.2"
 
 WORKDIR /app
 
-# Copy the package files and install faissx
-COPY setup.py README.md MANIFEST.in requirements.txt ./
-COPY faissx ./faissx
-COPY examples ./examples
-RUN pip install --no-cache-dir -e .
+# Install faissx directly from PyPI
+RUN pip install --no-cache-dir faissx
 
 # Create data directory
 RUN mkdir -p /data

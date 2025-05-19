@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+LABEL maintainer="Muxi AI"
+LABEL description="FAISS, Extended (Development) - A high-performance vector database proxy with ZeroMQ"
+LABEL version="0.0.2"
+
+WORKDIR /app
+
+# Install development dependencies
+RUN pip install --no-cache-dir pytest pytest-cov black flake8
+
+# Create data directory
+RUN mkdir -p /data
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FAISSX_DATA_DIR=/data
+ENV FAISSX_PORT=45678
+ENV FAISSX_BIND_ADDRESS=0.0.0.0
+ENV FAISSX_ENABLE_AUTH=false
+# Prevent Python from writing .pyc files
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Expose the ZeroMQ port
+EXPOSE 45678
+
+# Install the package in development mode
+# The actual code will be mounted as a volume
+CMD ["sh", "-c", "pip install -e . && faissx.server run"]
