@@ -63,7 +63,7 @@ jobs:
       - name: Get primary tag
         id: primary_tag
         run: |
-          # Get first tag from the list of tags
+          # Convert multi-line output to a single line with the first tag
           PRIMARY_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
           echo "primary_tag=$PRIMARY_TAG" >> $GITHUB_OUTPUT
 
@@ -79,17 +79,24 @@ jobs:
       # Push optimized images to GHCR with appropriate tags
       - name: Tag and push optimized images
         run: |
-          # Get all the standard tags and create corresponding slim tags
-          for tag in ${{ steps.meta.outputs.tags }}; do
-            # Extract the tag part after the repository
-            TAG_SUFFIX=$(echo $tag | awk -F: '{print $2}')
+          # Convert multi-line output to space-separated list
+          TAGS=$(echo "${{ steps.meta.outputs.tags }}" | tr '\n' ' ')
 
-            # Create corresponding slim tag
-            SLIM_TAG="ghcr.io/${{ github.repository }}:${TAG_SUFFIX}-slim"
+          # Process each tag
+          for tag in $TAGS; do
+            if [ -n "$tag" ]; then
+              # Extract the tag part after the repository
+              TAG_SUFFIX=$(echo $tag | awk -F: '{print $2}')
 
-            # Tag the optimized image
-            docker tag slim-temp $SLIM_TAG
+              # Create corresponding slim tag
+              SLIM_TAG="ghcr.io/${{ github.repository }}:${TAG_SUFFIX}-slim"
 
-            # Push the slim image
-            docker push $SLIM_TAG
+              echo "Tagging slim-temp as $SLIM_TAG"
+              # Tag the optimized image
+              docker tag slim-temp $SLIM_TAG
+
+              echo "Pushing $SLIM_TAG"
+              # Push the slim image
+              docker push $SLIM_TAG
+            fi
           done
