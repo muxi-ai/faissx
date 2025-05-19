@@ -42,6 +42,7 @@ import zmq
 import numpy as np
 import faiss
 import msgpack
+from faissx import __version__ as faissx_version
 
 # Constants for server configuration
 DEFAULT_PORT = 45678  # Default port for ZeroMQ server
@@ -67,12 +68,6 @@ class FaissIndex:
         self.data_dir = data_dir
         self.indexes = {}  # Dictionary to store FAISS indexes
         self.dimensions = {}  # Dictionary to store dimensions for each index
-
-        if data_dir:
-            os.makedirs(data_dir, exist_ok=True)
-            print(f"FAISS Index initialized with data directory: {data_dir}")
-        else:
-            print("FAISS Index initialized with in-memory indices (no persistence)")
 
     def create_index(self, index_id, dimension, index_type="L2"):
         """
@@ -326,13 +321,15 @@ def run_server(
 
     faiss_index = FaissIndex(data_dir=data_dir)
 
-    print(f"\nFAISSx Server (ZeroMQ) started on {bind_address}:{port}")
-    print(f"Using FAISS version: {faiss.__version__}")
-    if data_dir:
-        print(f"Data directory: {data_dir}")
-    else:
-        print("Using in-memory indices (no persistence)")
-    print(f"Authentication enabled: {enable_auth}")
+    # Print concise startup message
+    storage_mode = f"persistent ({data_dir})" if data_dir else "in-memory"
+    auth_status = "enabled" if enable_auth else "disabled"
+
+    print(f"\nStarting FAISSx Server v{faissx_version} using:")
+    print(f"  - FAISS version: {faiss.__version__}")
+    print(f"  - Storage: {storage_mode}")
+    print(f"  - Authentication: {auth_status}")
+    print(f"FAISSx Server listening on {bind_address}:{port}\n")
 
     while True:
         try:

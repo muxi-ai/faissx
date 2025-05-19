@@ -9,12 +9,17 @@ making it suitable for Docker deployments.
 import os
 from faissx import server
 
+
 if __name__ == "__main__":
     # Read configuration from environment variables
     port = int(os.environ.get("FAISSX_PORT", "45678"))
     bind_address = os.environ.get("FAISSX_BIND_ADDRESS", "0.0.0.0")
     data_dir = os.environ.get("FAISSX_DATA_DIR")
-    enable_auth = os.environ.get("FAISSX_ENABLE_AUTH", "").lower() in ["true", "1", "yes"]
+    enable_auth = os.environ.get("FAISSX_ENABLE_AUTH", "").lower() in [
+        "true",
+        "1",
+        "yes",
+    ]
 
     # Handle authentication - use either auth_keys or auth_file
     auth_keys = None
@@ -30,19 +35,8 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error parsing API keys from environment: {e}")
 
-    # Print configuration
-    print(f"Starting FAISSx Server on {bind_address}:{port}")
-    if data_dir:
-        print(f"Data directory: {data_dir}")
-    else:
-        print("Using in-memory indices (no persistence)")
-    print(f"Authentication enabled: {enable_auth}")
-
-    if auth_keys:
-        print("Using API keys from environment variables")
-    elif auth_file:
-        print(f"Using API keys from file: {auth_file}")
-    elif enable_auth:
+    # Warning for auth enabled but no keys
+    if enable_auth and not auth_keys and not auth_file:
         print("Warning: Authentication enabled but no keys provided")
 
     try:

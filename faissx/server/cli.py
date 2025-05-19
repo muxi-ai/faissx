@@ -80,16 +80,6 @@ def run_command(args):
         print(f"Error configuring server: {e}")
         return 1
 
-    # Print server startup information
-    print(f"Starting FAISSx Server on {args.bind_address}:{args.port}")
-    if args.data_dir:
-        print(f"Data directory: {args.data_dir}")
-    else:
-        print("Using in-memory indices (no persistence)")
-    print(f"Authentication enabled: {args.enable_auth}")
-    if args.auth_file:
-        print(f"Loading authentication keys from: {args.auth_file}")
-
     # Start server and handle shutdown
     try:
         server.run()
