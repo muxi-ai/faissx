@@ -1,8 +1,10 @@
 """
-FAISSx client implementation
+FAISSx client implementation using ZeroMQ
 """
 
-import requests
+import zmq
+import msgpack
+import numpy as np
 import logging
 from typing import Dict, Any, Optional
 
@@ -12,12 +14,12 @@ logger = logging.getLogger(__name__)
 
 class FaissXClient:
     """
-    Client for interacting with FAISSx server
+    Client for interacting with FAISSx server via ZeroMQ
     """
 
     def __init__(
         self,
-        api_url: Optional[str] = None,
+        server: Optional[str] = None,
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
     ):
@@ -25,40 +27,39 @@ class FaissXClient:
         Initialize the client.
 
         Args:
-            api_url: URL of the FAISSx server
+            server: Server address (e.g. "tcp://localhost:45678")
             api_key: API key for authentication
             tenant_id: Tenant ID for multi-tenant isolation
         """
         from . import _API_URL, _API_KEY, _TENANT_ID
 
-        self.api_url = api_url or _API_URL
+        self.server = server or _API_URL
         self.api_key = api_key or _API_KEY
         self.tenant_id = tenant_id or _TENANT_ID
 
         # Validate configuration
-        if not self.api_url:
-            raise ValueError("API URL must be provided")
-        if not self.api_key:
-            raise ValueError("API key must be provided")
-        if not self.tenant_id:
-            raise ValueError("Tenant ID must be provided")
+        if not self.server:
+            raise ValueError("Server address must be provided")
 
-        # Initialize session for connection pooling
-        self.session = requests.Session()
-        self.session.headers.update(
-            {"X-API-Key": self.api_key, "Content-Type": "application/json"}
-        )
+        # Initialize ZeroMQ socket
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.REQ)
+        self.socket.connect(self.server)
 
-    def _make_request(
-        self, method: str, endpoint: str, json_data: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        # Test connection with ping
+        try:
+            self._send_request({"action": "ping"})
+            logger.info(f"Connected to FAISSx server at {self.server}")
+        except Exception as e:
+            logger.error(f"Failed to connect to FAISSx server: {e}")
+            raise RuntimeError(f"Failed to connect to FAISSx server at {self.server}: {e}")
+
+    def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Make a request to the FAISSx server.
+        Send a request to the FAISSx server.
 
         Args:
-            method: HTTP method (GET, POST, DELETE)
-            endpoint: API endpoint
-            json_data: JSON data to send
+            request: Request dictionary
 
         Returns:
             Response data as dictionary
@@ -66,107 +67,146 @@ class FaissXClient:
         Raises:
             RuntimeError: If request fails
         """
-        url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        # Add authentication if provided
+        if self.api_key:
+            request["api_key"] = self.api_key
+        if self.tenant_id:
+            request["tenant_id"] = self.tenant_id
 
         try:
-            if method == "GET":
-                response = self.session.get(url, json=json_data)
-            elif method == "POST":
-                response = self.session.post(url, json=json_data)
-            elif method == "DELETE":
-                response = self.session.delete(url, json=json_data)
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
+            # Serialize and send request
+            self.socket.send(msgpack.packb(request))
 
-            response.raise_for_status()
+            # Receive and deserialize response
+            response = self.socket.recv()
+            result = msgpack.unpackb(response, raw=False)
 
-            if response.status_code == 204:  # No content
-                return {}
+            # Check for error
+            if not result.get("success", False) and "error" in result:
+                logger.error(f"FAISSx request failed: {result['error']}")
+                raise RuntimeError(f"FAISSx request failed: {result['error']}")
 
-            return response.json()
-
-        except requests.RequestException as e:
+            return result
+        except zmq.ZMQError as e:
+            logger.error(f"ZMQ error: {str(e)}")
+            raise RuntimeError(f"ZMQ error: {str(e)}")
+        except Exception as e:
             logger.error(f"Request failed: {str(e)}")
             raise RuntimeError(f"FAISSx request failed: {str(e)}")
 
     def create_index(
-        self, name: str, dimension: int, index_type: str = "IndexFlatL2"
+        self, name: str, dimension: int, index_type: str = "L2"
     ) -> str:
         """
         Create a new index.
 
         Args:
-            name: Name of the index
+            name: Name of the index (used as index_id)
             dimension: Vector dimension
-            index_type: Type of FAISS index
+            index_type: Type of FAISS index (L2 or IP)
 
         Returns:
             Index ID
         """
-        data = {
-            "name": name,
+        request = {
+            "action": "create_index",
+            "index_id": name,
             "dimension": dimension,
-            "index_type": index_type,
-            "tenant_id": self.tenant_id,
+            "index_type": index_type
         }
 
-        response = self._make_request("POST", "/v1/index", data)
-        return response["id"]
+        response = self._send_request(request)
+        return response.get("index_id", name)
 
-    def add_vectors(self, index_id: str, vectors: Dict[str, Any]) -> Dict[str, Any]:
+    def add_vectors(self, index_id: str, vectors: np.ndarray) -> Dict[str, Any]:
         """
         Add vectors to an index.
 
         Args:
             index_id: Index ID
-            vectors: Vector batch data
+            vectors: Vector data as numpy array
 
         Returns:
             Response with success information
         """
-        return self._make_request("POST", f"/v1/index/{index_id}/vectors", vectors)
+        # Ensure vectors are in the correct format
+        vectors_list = vectors.tolist() if hasattr(vectors, 'tolist') else vectors
+
+        request = {
+            "action": "add_vectors",
+            "index_id": index_id,
+            "vectors": vectors_list
+        }
+
+        return self._send_request(request)
 
     def search(
         self,
         index_id: str,
-        vector: list,
+        query_vectors: np.ndarray,
         k: int = 10,
-        filter_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Search for similar vectors.
 
         Args:
             index_id: Index ID
-            vector: Query vector
+            query_vectors: Query vectors as numpy array
             k: Number of results to return
-            filter_metadata: Metadata filter
 
         Returns:
             Search results
         """
-        data = {"vector": vector, "k": k, "filter": filter_metadata}
+        # Ensure vectors are in the correct format
+        vectors_list = query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
 
-        return self._make_request("POST", f"/v1/index/{index_id}/search", data)
+        request = {
+            "action": "search",
+            "index_id": index_id,
+            "query_vectors": vectors_list,
+            "k": k
+        }
 
-    def delete_vector(self, index_id: str, vector_id: str) -> None:
+        return self._send_request(request)
+
+    def get_index_stats(self, index_id: str) -> Dict[str, Any]:
         """
-        Delete a vector from an index.
+        Get statistics for an index.
 
         Args:
             index_id: Index ID
-            vector_id: Vector ID
-        """
-        self._make_request("DELETE", f"/v1/index/{index_id}/vectors/{vector_id}")
 
-    def delete_index(self, index_id: str) -> None:
+        Returns:
+            Index statistics
         """
-        Delete an index.
+        request = {
+            "action": "get_index_stats",
+            "index_id": index_id
+        }
 
-        Args:
-            index_id: Index ID
+        return self._send_request(request)
+
+    def list_indexes(self) -> Dict[str, Any]:
         """
-        self._make_request("DELETE", f"/v1/index/{index_id}")
+        List all available indexes.
+
+        Returns:
+            List of indexes
+        """
+        request = {
+            "action": "list_indexes"
+        }
+
+        return self._send_request(request)
+
+    def close(self) -> None:
+        """
+        Close the connection to the server.
+        """
+        if hasattr(self, 'socket') and self.socket:
+            self.socket.close()
+        if hasattr(self, 'context') and self.context:
+            self.context.term()
 
 
 # Singleton client instance
@@ -174,7 +214,7 @@ _client: Optional[FaissXClient] = None
 
 
 def configure(
-    api_url: Optional[str] = None,
+    server: Optional[str] = None,
     api_key: Optional[str] = None,
     tenant_id: Optional[str] = None,
 ) -> None:
@@ -182,31 +222,28 @@ def configure(
     Configure the FAISSx client.
 
     Args:
-        api_url: URL of the FAISSx server
+        server: Server address (e.g. "tcp://localhost:45678")
         api_key: API key for authentication
         tenant_id: Tenant ID for multi-tenant isolation
     """
     global _client
 
     # Update module-level configuration
-    from . import _API_URL, _API_KEY, _TENANT_ID
-
-    if api_url:
+    if server:
         import faissx
-
-        faissx._API_URL = api_url
+        faissx._API_URL = server
 
     if api_key:
         import faissx
-
         faissx._API_KEY = api_key
 
     if tenant_id:
         import faissx
-
         faissx._TENANT_ID = tenant_id
 
     # Reset client so it's recreated with new configuration
+    if _client:
+        _client.close()
     _client = None
 
 
@@ -223,3 +260,12 @@ def get_client() -> FaissXClient:
         _client = FaissXClient()
 
     return _client
+
+
+def __del__():
+    """
+    Clean up resources when the module is unloaded.
+    """
+    global _client
+    if _client:
+        _client.close()

@@ -1,59 +1,63 @@
 # FAISSx Client
 
-A drop-in replacement for FAISS with remote execution capabilities
+This directory contains the FAISSx client implementation and utilities.
 
 ## Overview
 
-FAISSx Client is a Python library that provides a compatible API with FAISS but delegates all operations to a remote FAISSx server. This allows applications to use FAISS in a distributed environment without changing their code significantly.
+The FAISSx client provides a drop-in replacement for FAISS that connects to a FAISSx server via ZeroMQ. This allows you to use FAISS in a client-server architecture where the server manages the indices and performs the vector operations.
+
+## Features
+
+- Drop-in replacement for FAISS IndexFlatL2
+- ZeroMQ-based communication for high performance
+- Support for authentication
+- Simple API for creating indices, adding vectors, and searching
+
+## Usage
+
+```python
+from faissx import client as faiss
+
+# Configure the client
+faiss.configure(
+    server="tcp://localhost:45678",  # ZeroMQ server address
+    api_key="your-api-key",          # Optional API key for authentication
+    tenant_id="your-tenant-id"       # Optional tenant ID for multi-tenant isolation
+)
+
+# Use it like regular FAISS
+index = faiss.IndexFlatL2(128)
+index.add(vectors)
+distances, indices = index.search(query_vectors, k=10)
+```
+
+## Environment Variables
+
+You can configure the client using environment variables:
+
+- `FAISSX_SERVER`: ZeroMQ server address (default: `tcp://localhost:45678`)
+- `FAISSX_API_KEY`: API key for authentication
+- `FAISSX_TENANT_ID`: Tenant ID for multi-tenant isolation
+- `FAISSX_FALLBACK_TO_LOCAL`: Whether to fall back to local FAISS if the server is unavailable (default: `1`)
+
+## Examples
+
+See the `simple_client.py` script for a complete example of using the FAISSx client.
+
+## Testing
+
+To run the client tests:
+
+```bash
+./run_tests.sh
+```
+
+Make sure the FAISSx server is running before running the tests.
 
 ## Installation
 
 ```bash
 pip install faissx
-```
-
-## Usage
-
-### Basic Usage
-
-```python
-# Standard FAISS import replaced with faissx import
-import faissx as faiss
-
-# Create an index - transparently creates remote index
-index = faiss.IndexFlatL2(128)
-
-# Add vectors - transparently sends to remote service
-import numpy as np
-vectors = np.random.random((100, 128)).astype('float32')
-index.add(vectors)
-
-# Search - transparently queries remote service
-query_vectors = np.random.random((10, 128)).astype('float32')
-D, I = index.search(query_vectors, k=5)
-```
-
-### Configuration
-
-```python
-# Configure once at application startup
-import faissx
-
-faissx.configure(
-    api_url="http://faiss-service:8000",
-    api_key="your-api-key",
-    tenant_id="your-tenant-id"
-)
-```
-
-### Environment Variables
-
-You can also configure FAISSx using environment variables:
-
-```bash
-export faissx_API_URL="http://faiss-service:8000"
-export faissx_API_KEY="your-api-key"
-export faissx_TENANT_ID="your-tenant-id"
 ```
 
 ## Supported FAISS Features

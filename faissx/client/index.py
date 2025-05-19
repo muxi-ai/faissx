@@ -1,10 +1,10 @@
 """
-FAISS index classes implementation
+FAISS index classes implementation for ZeroMQ-based FAISSx
 """
 
 import uuid
 import numpy as np
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, Tuple, Any
 
 from .client import get_client
 
@@ -14,7 +14,7 @@ class IndexFlatL2:
     Proxy implementation of FAISS IndexFlatL2
 
     This class mimics the behavior of FAISS IndexFlatL2 but uses the
-    remote FAISSx service for all operations.
+    remote FAISSx service for all operations via ZeroMQ.
     """
 
     def __init__(self, d: int):
@@ -36,12 +36,12 @@ class IndexFlatL2:
         self.index_id = self.client.create_index(
             name=self.name,
             dimension=self.d,
-            index_type="IndexFlatL2"
+            index_type="L2"
         )
 
         # For tracking vectors locally
-        self._next_id = 0
-        self._vector_ids = []
+        self._vector_mapping = {}  # Maps internal indices to server-side information
+        self._next_idx = 0
 
     def add(self, x: np.ndarray) -> None:
         """
@@ -53,26 +53,23 @@ class IndexFlatL2:
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
-        # Convert vectors to list format for the API
-        vectors = []
-
-        for i in range(x.shape[0]):
-            vector_id = f"vec-{self._next_id}"
-            self._next_id += 1
-            self._vector_ids.append(vector_id)
-
-            vectors.append({
-                "id": vector_id,
-                "values": x[i].tolist(),
-                "metadata": {}
-            })
+        # Ensure we have float32 numpy array
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
         # Add vectors to the index
-        result = self.client.add_vectors(self.index_id, {"vectors": vectors})
+        result = self.client.add_vectors(self.index_id, vectors)
 
-        # Update count
+        # Update count and mappings
         if result.get("success", False):
-            self.ntotal += result.get("added_count", 0)
+            added_count = result.get("count", 0)
+            for i in range(added_count):
+                self._vector_mapping[self._next_idx] = {
+                    "local_idx": self._next_idx,
+                    "server_idx": self.ntotal + i
+                }
+                self._next_idx += 1
+
+            self.ntotal += added_count
 
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -84,77 +81,86 @@ class IndexFlatL2:
 
         Returns:
             D: Distances (n, k)
-            I: Indices (n, k)
+            indices: Indices (n, k)
         """
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
+        # Ensure we have float32 numpy array for the query
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        # Search for similar vectors
+        result = self.client.search(
+            self.index_id,
+            query_vectors=query_vectors,
+            k=k
+        )
+
         n = x.shape[0]
-        D = np.empty((n, k), dtype=np.float32)
-        I = np.empty((n, k), dtype=np.int64)
+        search_results = result.get("results", [])
 
-        for i in range(n):
-            query_vector = x[i].tolist()
+        # Initialize output arrays
+        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        idx = np.full((n, k), -1, dtype=np.int64)
 
-            # Search for similar vectors
-            result = self.client.search(
-                self.index_id,
-                vector=query_vector,
-                k=k
-            )
+        # Process results for each query vector
+        for i in range(min(n, len(search_results))):
+            result_data = search_results[i]
+            result_distances = result_data.get("distances", [])
+            result_indices = result_data.get("indices", [])
 
-            # Convert results to FAISS format
-            results = result.get("results", [])
+            # Copy results to output arrays
+            for j in range(min(k, len(result_distances))):
+                distances[i, j] = result_distances[j]
 
-            for j in range(min(k, len(results))):
-                # Map score to distance (higher score -> lower distance)
-                score = results[j].get("score", 0)
-                distance = 1.0 / score - 1.0 if score > 0 else float('inf')
+                # Map server-side index to client-side index
+                server_idx = result_indices[j]
+                # Find the local index corresponding to this server index
+                found = False
+                for local_idx, info in self._vector_mapping.items():
+                    if info["server_idx"] == server_idx:
+                        idx[i, j] = local_idx
+                        found = True
+                        break
 
-                # Get vector ID and find its index
-                vector_id = results[j].get("id")
-                try:
-                    idx = self._vector_ids.index(vector_id)
-                except ValueError:
-                    # If the vector ID is not found, use -1
-                    idx = -1
+                # If not found, keep -1
+                if not found:
+                    idx[i, j] = -1
 
-                D[i, j] = distance
-                I[i, j] = idx
-
-            # Fill remaining slots with -1 and infinity
-            for j in range(len(results), k):
-                D[i, j] = float('inf')
-                I[i, j] = -1
-
-        return D, I
+        return distances, idx
 
     def reset(self) -> None:
         """
         Reset the index.
         """
-        # Delete the current index
-        self.client.delete_index(self.index_id)
-
-        # Create a new index
-        self.index_id = self.client.create_index(
-            name=self.name,
-            dimension=self.d,
-            index_type="IndexFlatL2"
-        )
+        # Get index stats first to see if it exists
+        try:
+            stats = self.client.get_index_stats(self.index_id)
+            if stats.get("success", False):
+                # Create a new index (there's no explicit delete in the server API)
+                new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+                self.index_id = self.client.create_index(
+                    name=new_name,
+                    dimension=self.d,
+                    index_type="L2"
+                )
+                self.name = new_name
+        except Exception:  # Catch specific exceptions if possible
+            # If there's an error, just recreate with the same name
+            self.index_id = self.client.create_index(
+                name=self.name,
+                dimension=self.d,
+                index_type="L2"
+            )
 
         # Reset local state
         self.ntotal = 0
-        self._next_id = 0
-        self._vector_ids = []
+        self._vector_mapping = {}
+        self._next_idx = 0
 
     def __del__(self) -> None:
         """
         Clean up resources when the index is deleted.
         """
-        try:
-            # Delete the remote index when the object is garbage collected
-            self.client.delete_index(self.index_id)
-        except:
-            # Ignore errors during cleanup
-            pass
+        # No explicit delete index operation in the server API
+        pass
