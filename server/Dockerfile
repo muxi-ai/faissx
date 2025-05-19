@@ -12,9 +12,6 @@ COPY faissx ./faissx
 COPY examples ./examples
 RUN pip install --no-cache-dir -e .
 
-# Copy the run_server script
-COPY server/run_server.py .
-
 # Create data directory
 RUN mkdir -p /data
 
@@ -28,5 +25,7 @@ ENV FAISSX_ENABLE_AUTH=false
 # Expose the ZeroMQ port
 EXPOSE 45678
 
-# Run the server
-CMD ["python", "run_server.py"]
+# Run the server using the CLI
+# Note: For production, use docker's restart policy:
+# docker run --restart=always ... or docker-compose with restart: always
+CMD ["faissx.server", "run"]
