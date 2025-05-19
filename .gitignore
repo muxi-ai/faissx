@@ -176,3 +176,4 @@ cython_debug/
 .DS_Store
 client/muxi-implementation.md
 data/*
+slim.report.json
