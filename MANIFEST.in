@@ -3,6 +3,7 @@ include README.md
 include MANIFEST.in
 include setup.py
 include requirements.txt
+include faissx/.version
 
 # Documentation
 include server/README.md

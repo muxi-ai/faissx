@@ -1,22 +1,34 @@
+import os
 from setuptools import setup, find_packages
+
+# Read version from .version file in the faissx package
+version_file = os.path.join(os.path.dirname(__file__), "faissx", ".version")
+try:
+    with open(version_file, "r") as f:
+        version = f.read().strip()
+except (IOError, FileNotFoundError):
+    print(f"Warning: Could not read version from {version_file}, using default version")
+    version = "0.1.0"  # Default version if .version file is missing
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+
 setup(
     name="FAISSx",
-    version="0.1.0",
-    author="Muxi AI",
-    author_email="oss@muxi.org",
+    version=version,
+    author="Ran Aroussi",
+    author_email="ran@aroussi.com",
     description="High-performance vector database proxy using FAISS and ZeroMQ",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/muxi-ai/faissx",
     packages=find_packages(),
+    include_package_data=True,  # Include non-Python files specified in MANIFEST.in
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: Apache Software License",  # Updated to match Apache 2.0
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
@@ -41,8 +53,8 @@ setup(
         ],
     },
     entry_points={
-        'console_scripts': [
-            'faissx.server=faissx.server.cli:main',
+        "console_scripts": [
+            "faissx.server=faissx.server.cli:main",
         ],
     },
 )
