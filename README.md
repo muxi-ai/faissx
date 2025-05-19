@@ -97,18 +97,20 @@ docker-compose up
 
 ```python
 from faissx import client as faiss
+import numpy as np
 
+# Configure the client with authentication
 faiss.configure(
-    server="tcp://faiss-service:45678",
-    api_key="test-key-1",
-    tenant_id="tenant-1"
+    server="tcp://localhost:45678",  # ZeroMQ server address
+    api_key="test-key-1",            # API key for authentication
+    tenant_id="tenant-1"             # Tenant ID for multi-tenant isolation
 )
 
-# use the client as a drop-in replacement for FAISS
-
-index = faiss.IndexFlatL2(128)
-index.add(np.random.rand(100, 128).astype(np.float32))
-D, I = index.search(np.random.rand(1, 128).astype(np.float32), k=5)
+# Use it like regular FAISS - drop-in replacement
+index = faiss.IndexFlatL2(128)  # Create a new index with dimension 128
+vectors = np.random.rand(100, 128).astype(np.float32)  # Generate random vectors
+index.add(vectors)  # Add vectors to the index
+D, I = index.search(np.random.rand(1, 128).astype(np.float32), k=5)  # Search for similar vectors
 ```
 
 ## Docker Deployment
@@ -161,6 +163,15 @@ pytest
 
 # Run examples
 python examples/server_example.py
+```
+
+### Running Client Tests
+
+To run tests for the client component:
+
+```bash
+cd client
+./run_tests.sh
 ```
 
 ### Docker Development
