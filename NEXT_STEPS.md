@@ -30,6 +30,12 @@ This document outlines the current status and next steps for the FAISSx project,
 - [x] Implement drop-in replacement behavior
 - [x] Create test suite for client functionality
 
+### Packaging and Distribution (Complete ✅)
+- [x] Publish to PyPI
+- [x] Publish Docker images to GitHub Container Registry
+- [x] Create automated build and test pipeline (GitHub Actions)
+
+
 ## Next Milestones
 
 ### Server Enhancements
@@ -50,12 +56,6 @@ This document outlines the current status and next steps for the FAISSx project,
 - [ ] Create advanced examples and tutorials
 - [ ] Support for batch operations
 
-### Packaging and Distribution
-- [ ] Publish to PyPI
-- [ ] Create standalone binaries
-- [ ] Publish Docker images to Docker Hub
-- [ ] Create automated build and test pipeline
-
 ### Advanced Features
 - [ ] Optimize persistence layer for large indices
 - [ ] Add GPU support via FAISS GPU indices
@@ -67,7 +67,7 @@ This document outlines the current status and next steps for the FAISSx project,
 ## Implementation Priorities
 
 ### High Priority
-1. Publish to PyPI
+1. ~~Publish to PyPI~~ ✅ Done
 2. Support for additional index types (IndexIVFFlat)
 3. Implement proper index training
 4. Create detailed documentation and examples
@@ -109,3 +109,41 @@ We welcome contributions to the FAISSx project. Here are some ways to get starte
 - **2023-06-22**: ✅ Completed client implementation with IndexFlatL2 support
 - **2023-07-15**: ✅ Added proper licensing and documentation to all components
 - **2023-08-02**: ✅ Created comprehensive server documentation with API protocol details
+- **2023-10-05**: ✅ Published package to PyPI
+- **2023-10-10**: ✅ Created Docker images with multi-architecture support (AMD64/ARM64)
+- **2023-10-15**: ✅ Set up GitHub Actions for automated Docker image builds
+- **2023-10-20**: ✅ Improved server startup messaging for better clarity and consistency
+
+## Docker and Container Support
+
+### Current Features
+- [x] Official Docker images published to GitHub Container Registry
+- [x] Multi-architecture support (AMD64/ARM64)
+- [x] Slim image variant using multi-stage builds
+- [x] Development container with volume-mounted source code
+- [x] Docker Compose configuration for easy deployment
+
+### Container Usage
+```bash
+# Pull and run the official image
+docker run -p 45678:45678 ghcr.io/muxi-ai/faissx:latest
+
+# Pull and run the slim variant
+docker run -p 45678:45678 ghcr.io/muxi-ai/faissx:slim
+
+# Run with persistence enabled
+docker run -p 45678:45678 -v /path/to/data:/data -e FAISSX_DATA_DIR=/data ghcr.io/muxi-ai/faissx:latest
+
+# Run with authentication
+docker run -p 45678:45678 -e FAISSX_ENABLE_AUTH=true -e FAISSX_AUTH_KEYS="key1:tenant1,key2:tenant2" ghcr.io/muxi-ai/faissx:latest
+```
+
+### Development Setup
+```bash
+# Use Docker Compose to run the development container
+docker-compose up
+
+# Or build and run the development container manually
+docker build -t faissx:dev -f Dockerfile.dev .
+docker run -p 45678:45678 -v $(pwd):/app faissx:dev
+```
