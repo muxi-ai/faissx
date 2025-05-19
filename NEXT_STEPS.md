@@ -49,8 +49,7 @@ This document outlines the current status and next steps for the FAISSx project,
 ### Client Library Enhancements
 - [x] Implement additional FAISS index classes
 - [x] Add support for index training
-- [ ] Support for batch operations
-- [ ] Create advanced examples and tutorials
+- [x] Support for batch operations
 
 ### Advanced Features
 - [ ] Optimize persistence layer for large indices

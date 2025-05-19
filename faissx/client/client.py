@@ -187,6 +187,58 @@ class FaissXClient:
 
         return self._send_request(request)
 
+    def batch_add_vectors(
+        self,
+        index_id: str,
+        vectors: np.ndarray,
+        batch_size: int = 1000
+    ) -> Dict[str, Any]:
+        """
+        Add vectors to an index in optimized batches.
+
+        This method improves performance when adding large numbers of vectors
+        by splitting them into batches of optimal size for network transmission.
+
+        Args:
+            index_id: ID of the target index
+            vectors: Numpy array of vectors to add
+            batch_size: Size of each batch (default: 1000 vectors)
+
+        Returns:
+            Dictionary containing aggregated operation results and statistics
+        """
+        if not isinstance(vectors, np.ndarray):
+            vectors = np.array(vectors, dtype=np.float32)
+
+        total_vectors = vectors.shape[0]
+        total_added = 0
+        results = {"success": True, "count": 0, "total": 0}
+
+        # Process vectors in batches
+        for i in range(0, total_vectors, batch_size):
+            batch = vectors[i:min(i+batch_size, total_vectors)]
+
+            # Add this batch
+            batch_result = self.add_vectors(index_id, batch)
+
+            # If any batch fails, mark the whole operation as failed
+            if not batch_result.get("success", False):
+                error_msg = batch_result.get('error', 'Unknown error')
+                return {
+                    "success": False,
+                    "error": f"Failed at batch {i//batch_size}: {error_msg}",
+                    "count": total_added,
+                    "total": batch_result.get("total", 0)
+                }
+
+            # Update counters
+            total_added += batch_result.get("count", 0)
+            results["total"] = batch_result.get("total", 0)  # Get latest total
+
+        # Return aggregated results
+        results["count"] = total_added
+        return results
+
     def search(
         self,
         index_id: str,
@@ -217,6 +269,55 @@ class FaissXClient:
         }
 
         return self._send_request(request)
+
+    def batch_search(
+        self,
+        index_id: str,
+        query_vectors: np.ndarray,
+        k: int = 10,
+        batch_size: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Search for similar vectors in batches for improved performance.
+
+        For large numbers of query vectors, this method splits the search
+        into optimally sized batches to improve network efficiency.
+
+        Args:
+            index_id: ID of the index to search
+            query_vectors: Query vectors to find matches for
+            k: Number of nearest neighbors to return
+            batch_size: Size of each batch (default: 100 queries)
+
+        Returns:
+            Dictionary containing combined search results and distances
+        """
+        if not isinstance(query_vectors, np.ndarray):
+            query_vectors = np.array(query_vectors, dtype=np.float32)
+
+        total_queries = query_vectors.shape[0]
+        all_results = []
+
+        # Process queries in batches
+        for i in range(0, total_queries, batch_size):
+            batch = query_vectors[i:min(i+batch_size, total_queries)]
+
+            # Search this batch
+            batch_result = self.search(index_id, batch, k)
+
+            # Check for errors
+            if not batch_result.get("success", False):
+                error_msg = batch_result.get('error', 'Unknown error')
+                return {
+                    "success": False,
+                    "error": f"Failed at batch {i//batch_size}: {error_msg}"
+                }
+
+            # Add results from this batch to our collection
+            all_results.extend(batch_result.get("results", []))
+
+        # Return combined results
+        return {"success": True, "results": all_results}
 
     def range_search(
         self,
@@ -249,6 +350,55 @@ class FaissXClient:
         }
 
         return self._send_request(request)
+
+    def batch_range_search(
+        self,
+        index_id: str,
+        query_vectors: np.ndarray,
+        radius: float,
+        batch_size: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Perform radius search in batches for improved performance.
+
+        For large numbers of query vectors, this method splits the range search
+        into optimally sized batches to improve network efficiency.
+
+        Args:
+            index_id: ID of the index to search
+            query_vectors: Query vectors to find matches for
+            radius: Maximum distance threshold for matches
+            batch_size: Size of each batch (default: 100 queries)
+
+        Returns:
+            Dictionary containing combined search results
+        """
+        if not isinstance(query_vectors, np.ndarray):
+            query_vectors = np.array(query_vectors, dtype=np.float32)
+
+        total_queries = query_vectors.shape[0]
+        all_results = []
+
+        # Process queries in batches
+        for i in range(0, total_queries, batch_size):
+            batch = query_vectors[i:min(i+batch_size, total_queries)]
+
+            # Range search this batch
+            batch_result = self.range_search(index_id, batch, radius)
+
+            # Check for errors
+            if not batch_result.get("success", False):
+                error_msg = batch_result.get('error', 'Unknown error')
+                return {
+                    "success": False,
+                    "error": f"Failed at batch {i//batch_size}: {error_msg}"
+                }
+
+            # Add results from this batch to our collection
+            all_results.extend(batch_result.get("results", []))
+
+        # Return combined results
+        return {"success": True, "results": all_results}
 
     def get_index_stats(self, index_id: str) -> Dict[str, Any]:
         """

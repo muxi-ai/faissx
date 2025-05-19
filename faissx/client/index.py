@@ -157,8 +157,16 @@ class IndexFlatL2:
             self.ntotal = self._local_index.ntotal
             return
 
-        # Add vectors to remote index (remote mode)
-        result = self.client.add_vectors(self.index_id, vectors)
+        # Get vector count to be added
+        n_vectors = vectors.shape[0]
+
+        # For smaller batches, use regular add_vectors
+        if n_vectors <= 1000:
+            # Add vectors to remote index (remote mode)
+            result = self.client.add_vectors(self.index_id, vectors)
+        else:
+            # For larger batches, use the batch version with automatic chunking
+            result = self.client.batch_add_vectors(self.index_id, vectors)
 
         # Update local tracking if addition was successful
         if result.get("success", False):
@@ -200,8 +208,16 @@ class IndexFlatL2:
             # Use local FAISS implementation directly
             return self._local_index.search(query_vectors, k)
 
-        # Search via remote index
-        result = self.client.search(self.index_id, query_vectors, k)
+        # Get query count
+        n_queries = query_vectors.shape[0]
+
+        # For smaller query batches, use regular search
+        if n_queries <= 100:
+            # Search via remote index
+            result = self.client.search(self.index_id, query_vectors, k)
+        else:
+            # For larger query batches, use the batch version with automatic chunking
+            result = self.client.batch_search(self.index_id, query_vectors, k)
 
         if not result.get("success", False):
             error = result.get("error", "Unknown error")
@@ -265,8 +281,16 @@ class IndexFlatL2:
             else:
                 raise RuntimeError("Local FAISS index does not support range_search")
 
-        # Search via remote index
-        result = self.client.range_search(self.index_id, query_vectors, radius)
+        # Get query count
+        n_queries = query_vectors.shape[0]
+
+        # For smaller query batches, use regular range search
+        if n_queries <= 100:
+            # Search via remote index
+            result = self.client.range_search(self.index_id, query_vectors, radius)
+        else:
+            # For larger query batches, use the batch version with automatic chunking
+            result = self.client.batch_range_search(self.index_id, query_vectors, radius)
 
         if not result.get("success", False):
             error = result.get("error", "Unknown error")
