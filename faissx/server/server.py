@@ -325,11 +325,23 @@ def run_server(
     storage_mode = f"persistent ({data_dir})" if data_dir else "in-memory"
     auth_status = "enabled" if enable_auth else "disabled"
 
-    print(f"\nStarting FAISSx Server v{faissx_version} using:")
+    print("\n---------------------------------------------\n")
+    print("███████╗█████╗ ██╗███████╗███████╗ ██╗  ██╗")
+    print("██╔════██╔══██╗██║██╔════╝██╔════╝ ╚██╗██╔╝")
+    print("█████╗ ███████║██║███████╗███████╗  ╚███╔╝")
+    print("██╔══╝ ██╔══██║██║╚════██║╚════██║  ██╔██╗")
+    print("██║    ██║  ██║██║███████║███████║ ██╔╝ ██╗")
+    print("╚═╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝ ╚═╝  ╚═╝")
+    print("\n---------------------------------------------")
+    print(f"FAISSx Server v{faissx_version} (c) 2025 Ran Aroussi")
+    print("---------------------------------------------")
+    print("\nStarting using:")
     print(f"  - FAISS version: {faiss.__version__}")
     print(f"  - Storage: {storage_mode}")
     print(f"  - Authentication: {auth_status}")
-    print(f"FAISSx Server listening on {bind_address}:{port}\n")
+    # print("---------------------------------------------")
+    print(f"\nStarted. Listening on {bind_address}:{port}...")
+    print("\n---------------------------------------------\n")
 
     while True:
         try:
