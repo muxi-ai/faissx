@@ -199,7 +199,7 @@ def run_server(
 
     faiss_index = FaissIndex(data_dir=data_dir)
 
-    print(f"FAISSx Server (ZeroMQ) started on {bind_address}:{port}")
+    print(f"\nFAISSx Server (ZeroMQ) started on {bind_address}:{port}")
     print(f"Using FAISS version: {faiss.__version__}")
     if data_dir:
         print(f"Data directory: {data_dir}")
