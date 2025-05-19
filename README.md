@@ -81,7 +81,7 @@ dimension = 128
 index = faiss.IndexFlatL2(dimension)
 vectors = np.random.rand(100, dimension).astype(np.float32)
 index.add(vectors)
-D, I = index.search(np.random.rand(1, dimension).astype(np.float32), k=5)
+distances, indices = index.search(np.random.rand(1, dimension).astype(np.float32), k=5)
 ```
 
 **2. Using a remote FAISSx server**
@@ -101,7 +101,7 @@ faiss.configure(
 index = faiss.IndexFlatL2(128)
 vectors = np.random.rand(100, 128).astype(np.float32)
 index.add(vectors)
-D, I = index.search(np.random.rand(1, 128).astype(np.float32), k=5)
+distances, indices = index.search(np.random.rand(1, 128).astype(np.float32), k=5)
 ```
 
 ---
@@ -117,6 +117,8 @@ D, I = index.search(np.random.rand(1, 128).astype(np.float32), k=5)
 | **🚀 High performance** | Significantly faster than HTTP-based alternatives |
 | **📦 Persistent storage** | Optional persistence for vector indices |
 | **🐳 Docker deployment** | Easy deployment with Docker images (Server) |
+| **🔍 Multiple index types** | Support for various FAISS index types (FlatL2, IVFPQ, HNSW, etc.) |
+| **🖥️ GPU acceleration** | Client-side GPU support for local computations |
 
 ---
 
@@ -140,6 +142,7 @@ flowchart TD
    - Uses the same API as FAISS
    - Implements local FAISS by default when unconfigured
    - Supports remote execution when explicitly configured
+   - Modular architecture with separate index class implementations
 
 2. **ZeroMQ Communication**: High-performance binary messaging
    - Zero-copy binary protocol
@@ -227,7 +230,7 @@ dimension = 128
 index = faiss.IndexFlatL2(dimension)
 vectors = np.random.random((100, dimension)).astype('float32')
 index.add(vectors)
-D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
+distances, indices = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
 ```
 
 ### Remote Mode
@@ -250,7 +253,7 @@ dimension = 128
 index = faiss.IndexFlatL2(dimension)
 vectors = np.random.random((100, dimension)).astype('float32')
 index.add(vectors)
-D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
+distances, indices = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
 ```
 
 **Note**: When you call `configure()`, all subsequent operations MUST use the remote server. If the server connection fails, operations will fail - there is no automatic fallback to local mode after `configure()` is called.
@@ -262,6 +265,19 @@ You can configure the client using environment variables:
 - `FAISSX_SERVER`: ZeroMQ server address (default: `tcp://localhost:45678`)
 - `FAISSX_API_KEY`: API key for authentication
 - `FAISSX_TENANT_ID`: Tenant ID for multi-tenant isolation
+
+### Supported Index Types
+
+FAISSx currently supports these FAISS index implementations:
+
+- `IndexFlatL2` - Exact search with L2 distance
+- `IndexIVFFlat` - Inverted file index with exact storage
+- `IndexHNSWFlat` - Hierarchical navigable small world graph
+- `IndexPQ` - Product quantization for memory-efficient storage
+- `IndexIVFPQ` - Combined IVF and PQ for efficiency
+- `IndexScalarQuantizer` - Efficient scalar quantization
+
+All indices support GPU acceleration in local mode when available.
 
 ---
 
@@ -368,13 +384,21 @@ cd server
 ## 📁 Project Structure
 
 ```
-/faissx       - Python package source code
-  /server     - Server implementation
-  /client     - Client library implementation
-/server       - Server utilities, docker configs, tests
-/client       - Client utilities and tests
-/examples     - Example code for both client and server
-/data         - Default directory for FAISS data files
+/faissx                    - Python package source code
+  /server                  - Server implementation
+  /client                  - Client library implementation
+    /indices               - Separate implementations for each index type
+      base.py              - Common base utilities
+      flat.py              - IndexFlatL2 implementation
+      hnsw_flat.py         - IndexHNSWFlat implementation
+      ivf_flat.py          - IndexIVFFlat implementation
+      pq.py                - IndexPQ implementation
+      ivf_pq.py            - IndexIVFPQ implementation
+      scalar_quantizer.py  - IndexScalarQuantizer implementation
+/server                    - Server utilities, docker configs, tests
+/client                    - Client utilities and tests
+/examples                  - Example code for both client and server
+/data                      - Default directory for FAISS data files
 ```
 
 ---
