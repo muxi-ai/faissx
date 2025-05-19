@@ -1,17 +1,38 @@
 #!/bin/bash
-# Run tests for the FAISSx client
+# Run tests for the FAISSx client library
 
-set -e
+set -e  # Exit on any error
 
-# Go to client directory
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# Set environment variables for the tests
-export FAISSX_SERVER=tcp://localhost:45678
-export FAISSX_API_KEY=test-key-1
-export FAISSX_TENANT_ID=tenant-1
+# Check if server is running, if not, start it in background
+if ! nc -z localhost 45678 &>/dev/null; then
+    echo "Starting FAISSx server in the background..."
+    python -m faissx.server run --enable-auth --auth-keys "test-key-1:tenant-1" &
+    SERVER_PID=$!
+
+    # Give server time to start
+    sleep 2
+
+    echo "Server started with PID $SERVER_PID"
+    KILL_SERVER=true
+else
+    echo "FAISSx server already running"
+    KILL_SERVER=false
+fi
+
+# Install test requirements
+pip install -r tests/requirements.txt
 
 # Run the tests
-python -m unittest discover -s tests -p "test_*.py"
+echo "Running client tests..."
+python -m unittest discover -s tests
 
-echo "All tests passed!"
+# If we started the server, shut it down
+if [ "$KILL_SERVER" = true ]; then
+    echo "Shutting down FAISSx server (PID $SERVER_PID)..."
+    kill $SERVER_PID
+fi
+
+echo "Tests completed!"
