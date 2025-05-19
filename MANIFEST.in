@@ -1,7 +1,23 @@
 include LICENSE
 include README.md
-include server/README.md
+include MANIFEST.in
+include setup.py
 include requirements.txt
-include server/dev-requirements.txt
+
+# Documentation
+include server/README.md
+include client/README.md
+include NEXT_STEPS.md
+
+# Development files
+include server/pytest.ini
+
+# Source code - ensure all package files are included
+recursive-include faissx *.py
+
+# Examples
 recursive-include examples *.py
-recursive-include server/src *.py
+recursive-include examples *.json
+
+# Exclude any bytecode or cache files
+global-exclude *.py[cod] __pycache__/ .DS_Store

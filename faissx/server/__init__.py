@@ -104,8 +104,8 @@ def run():
 
     # Set environment variables from config
     if _config["data_dir"]:
-        os.environ["FAISS_DATA_DIR"] = _config["data_dir"]
-    os.environ["faissx_PORT"] = str(_config["port"])
+        os.environ["FAISSX_DATA_DIR"] = _config["data_dir"]
+    os.environ["FAISSX_PORT"] = str(_config["port"])
 
     # Start the server
     run_server(

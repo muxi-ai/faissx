@@ -11,11 +11,11 @@ services:
       - ./data:/data
       - ./examples/auth.json:/auth.json
     environment:
-      - FAISS_PORT=45678
-      - FAISS_BIND_ADDRESS=0.0.0.0
-      - FAISS_DATA_DIR=/data
-      # Use either FAISS_AUTH_KEYS or FAISS_AUTH_FILE, not both
-      # - FAISS_AUTH_KEYS=key1:tenant1,key2:tenant2
-      - FAISS_AUTH_FILE=/auth.json
-      - FAISS_ENABLE_AUTH=true
+      - FAISSX_PORT=45678
+      - FAISSX_BIND_ADDRESS=0.0.0.0
+      - FAISSX_DATA_DIR=/data
+      # Use either FAISSX_AUTH_KEYS or FAISSX_AUTH_FILE, not both
+      # - FAISSX_AUTH_KEYS=key1:tenant1,key2:tenant2
+      - FAISSX_AUTH_FILE=/auth.json
+      - FAISSX_ENABLE_AUTH=true
     restart: unless-stopped

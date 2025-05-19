@@ -1,4 +1,12 @@
+# Core dependencies
 faiss-cpu>=1.7.2
 numpy>=1.19.5
 pyzmq>=22.0.0
 msgpack>=1.0.2
+
+# Development dependencies
+pytest>=6.0.0
+black>=21.5b2
+isort>=5.9.1
+mypy>=0.812
+flake8>=3.9.2
