@@ -289,8 +289,8 @@ class FaissIndex:
                 return {
                     "success": False,
                     "error": (
-                        f"Query vector dimension mismatch. Expected {self.dimensions[index_id]}, "
-                        f"got {query_np.shape[1]}"
+                        f"Query vector dimension mismatch. "
+                        f"Expected {self.dimensions[index_id]}, got {query_np.shape[1]}"
                     ),
                 }
 
@@ -305,6 +305,70 @@ class FaissIndex:
                 )
 
             print(f"Searched index {index_id} with {len(query_vectors)} queries, k={k}")
+            return {"success": True, "results": results}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def range_search(self, index_id, query_vectors, radius):
+        """
+        Search for vectors within a specified radius.
+
+        Args:
+            index_id (str): ID of the target index
+            query_vectors (list): List of query vectors
+            radius (float): Maximum distance threshold
+
+        Returns:
+            dict: Response containing search results or error message
+        """
+        if index_id not in self.indexes:
+            return {"success": False, "error": f"Index {index_id} does not exist"}
+
+        try:
+            # Check if the index supports range_search
+            if not hasattr(self.indexes[index_id], 'range_search'):
+                return {
+                    "success": False,
+                    "error": (
+                        f"Index type {type(self.indexes[index_id]).__name__} "
+                        f"does not support range search"
+                    )
+                }
+
+            # Convert query vectors to numpy array and validate dimensions
+            query_np = np.array(query_vectors, dtype=np.float32)
+            if query_np.shape[1] != self.dimensions[index_id]:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Query vector dimension mismatch. "
+                        f"Expected {self.dimensions[index_id]}, got {query_np.shape[1]}"
+                    ),
+                }
+
+            # Perform range search
+            results = []
+            for i in range(query_np.shape[0]):
+                # Range search one query at a time to avoid memory issues
+                lims, distances, indices = self.indexes[index_id].range_search(
+                    query_np[i:i+1], radius
+                )
+
+                # Extract results for this query
+                # lims[0] is the start, lims[1] is the end of results for the first query
+                query_distances = distances[lims[0]:lims[1]].tolist()
+                query_indices = indices[lims[0]:lims[1]].tolist()
+
+                results.append({
+                    "distances": query_distances,
+                    "indices": query_indices,
+                    "count": len(query_distances)
+                })
+
+            print(
+                f"Range searched index {index_id} with {len(query_vectors)} "
+                f"queries, radius={radius}"
+            )
             return {"success": True, "results": results}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -543,6 +607,13 @@ def run_server(
                         request.get("index_id", ""),
                         request.get("query_vectors", []),
                         request.get("k", 10),
+                    )
+
+                elif action == "range_search":
+                    response = faiss_index.range_search(
+                        request.get("index_id", ""),
+                        request.get("query_vectors", []),
+                        request.get("radius", 1.0),
                     )
 
                 elif action == "get_index_stats":
