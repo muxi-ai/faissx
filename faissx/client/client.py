@@ -1,5 +1,28 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-FAISSx client implementation using ZeroMQ
+FAISSx client implementation using ZeroMQ.
+
+This module provides a client interface for interacting with FAISSx vector search server.
+It uses ZeroMQ for communication and supports authentication and multi-tenant isolation.
 """
 
 import zmq
@@ -8,13 +31,19 @@ import numpy as np
 import logging
 from typing import Dict, Any, Optional
 
-# Configure logging
+# Configure logging for the module
 logger = logging.getLogger(__name__)
 
 
 class FaissXClient:
     """
-    Client for interacting with FAISSx server via ZeroMQ
+    Client for interacting with FAISSx server via ZeroMQ.
+
+    This class handles all communication with the FAISSx server, including:
+    - Connection management
+    - Request/response handling
+    - Vector operations (create, add, search)
+    - Index management
     """
 
     def __init__(
@@ -24,29 +53,34 @@ class FaissXClient:
         tenant_id: Optional[str] = None,
     ):
         """
-        Initialize the client.
+        Initialize the client with server connection details and authentication.
 
         Args:
-            server: Server address (e.g. "tcp://localhost:45678")
-            api_key: API key for authentication
-            tenant_id: Tenant ID for multi-tenant isolation
+            server: Server address in ZeroMQ format (e.g. "tcp://localhost:45678")
+            api_key: API key for authentication with the server
+            tenant_id: Tenant ID for multi-tenant data isolation
+
+        Raises:
+            ValueError: If server address is not provided
+            RuntimeError: If connection to server fails
         """
         from . import _API_URL, _API_KEY, _TENANT_ID
 
+        # Use provided values or fall back to module defaults
         self.server = server or _API_URL
         self.api_key = api_key or _API_KEY
         self.tenant_id = tenant_id or _TENANT_ID
 
-        # Validate configuration
+        # Ensure server address is provided
         if not self.server:
             raise ValueError("Server address must be provided")
 
-        # Initialize ZeroMQ socket
+        # Set up ZeroMQ connection
         self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REQ)
+        self.socket = self.context.socket(zmq.REQ)  # Request-Reply pattern
         self.socket.connect(self.server)
 
-        # Test connection with ping
+        # Verify connection with a ping request
         try:
             self._send_request({"action": "ping"})
             logger.info(f"Connected to FAISSx server at {self.server}")
@@ -56,32 +90,32 @@ class FaissXClient:
 
     def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Send a request to the FAISSx server.
+        Internal method to send requests to the server and handle responses.
 
         Args:
-            request: Request dictionary
+            request: Dictionary containing the request data
 
         Returns:
-            Response data as dictionary
+            Dictionary containing the server's response
 
         Raises:
-            RuntimeError: If request fails
+            RuntimeError: If request fails or server returns an error
         """
-        # Add authentication if provided
+        # Add authentication headers if configured
         if self.api_key:
             request["api_key"] = self.api_key
         if self.tenant_id:
             request["tenant_id"] = self.tenant_id
 
         try:
-            # Serialize and send request
+            # Serialize request using msgpack for efficient binary transfer
             self.socket.send(msgpack.packb(request))
 
-            # Receive and deserialize response
+            # Wait for and deserialize response
             response = self.socket.recv()
             result = msgpack.unpackb(response, raw=False)
 
-            # Check for error
+            # Handle error responses
             if not result.get("success", False) and "error" in result:
                 logger.error(f"FAISSx request failed: {result['error']}")
                 raise RuntimeError(f"FAISSx request failed: {result['error']}")
@@ -98,15 +132,15 @@ class FaissXClient:
         self, name: str, dimension: int, index_type: str = "L2"
     ) -> str:
         """
-        Create a new index.
+        Create a new vector index on the server.
 
         Args:
-            name: Name of the index (used as index_id)
-            dimension: Vector dimension
-            index_type: Type of FAISS index (L2 or IP)
+            name: Unique identifier for the index
+            dimension: Dimensionality of vectors to be stored
+            index_type: Type of similarity metric ("L2" for Euclidean distance or "IP" for inner product)
 
         Returns:
-            Index ID
+            The created index ID (same as name if successful)
         """
         request = {
             "action": "create_index",
@@ -120,16 +154,16 @@ class FaissXClient:
 
     def add_vectors(self, index_id: str, vectors: np.ndarray) -> Dict[str, Any]:
         """
-        Add vectors to an index.
+        Add vectors to an existing index.
 
         Args:
-            index_id: Index ID
-            vectors: Vector data as numpy array
+            index_id: ID of the target index
+            vectors: Numpy array of vectors to add
 
         Returns:
-            Response with success information
+            Dictionary containing operation results and statistics
         """
-        # Ensure vectors are in the correct format
+        # Convert numpy array to list for serialization
         vectors_list = vectors.tolist() if hasattr(vectors, 'tolist') else vectors
 
         request = {
@@ -147,17 +181,17 @@ class FaissXClient:
         k: int = 10,
     ) -> Dict[str, Any]:
         """
-        Search for similar vectors.
+        Search for similar vectors in an index.
 
         Args:
-            index_id: Index ID
-            query_vectors: Query vectors as numpy array
-            k: Number of results to return
+            index_id: ID of the index to search
+            query_vectors: Query vectors to find matches for
+            k: Number of nearest neighbors to return
 
         Returns:
-            Search results
+            Dictionary containing search results and distances
         """
-        # Ensure vectors are in the correct format
+        # Convert numpy array to list for serialization
         vectors_list = query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
 
         request = {
@@ -171,13 +205,13 @@ class FaissXClient:
 
     def get_index_stats(self, index_id: str) -> Dict[str, Any]:
         """
-        Get statistics for an index.
+        Retrieve statistics about an index.
 
         Args:
-            index_id: Index ID
+            index_id: ID of the index to get stats for
 
         Returns:
-            Index statistics
+            Dictionary containing index statistics (dimension, vector count, etc.)
         """
         request = {
             "action": "get_index_stats",
@@ -188,10 +222,10 @@ class FaissXClient:
 
     def list_indexes(self) -> Dict[str, Any]:
         """
-        List all available indexes.
+        List all available indexes on the server.
 
         Returns:
-            List of indexes
+            Dictionary containing list of indexes and their metadata
         """
         request = {
             "action": "list_indexes"
@@ -201,7 +235,10 @@ class FaissXClient:
 
     def close(self) -> None:
         """
-        Close the connection to the server.
+        Clean up ZeroMQ resources and close the connection.
+
+        This method should be called when the client is no longer needed
+        to properly free system resources.
         """
         if hasattr(self, 'socket') and self.socket:
             self.socket.close()
@@ -209,7 +246,7 @@ class FaissXClient:
             self.context.term()
 
 
-# Singleton client instance
+# Global singleton client instance
 _client: Optional[FaissXClient] = None
 
 
@@ -219,16 +256,19 @@ def configure(
     tenant_id: Optional[str] = None,
 ) -> None:
     """
-    Configure the FAISSx client.
+    Configure the global FAISSx client settings.
+
+    This function updates the module-level configuration and resets the client
+    instance to ensure it uses the new settings.
 
     Args:
-        server: Server address (e.g. "tcp://localhost:45678")
-        api_key: API key for authentication
-        tenant_id: Tenant ID for multi-tenant isolation
+        server: New server address
+        api_key: New API key
+        tenant_id: New tenant ID
     """
     global _client
 
-    # Update module-level configuration
+    # Update module-level configuration variables
     if server:
         import faissx
         faissx._API_URL = server
@@ -241,7 +281,7 @@ def configure(
         import faissx
         faissx._TENANT_ID = tenant_id
 
-    # Reset client so it's recreated with new configuration
+    # Reset client to force recreation with new settings
     if _client:
         _client.close()
     _client = None
@@ -249,10 +289,10 @@ def configure(
 
 def get_client() -> FaissXClient:
     """
-    Get the configured client instance.
+    Get or create the singleton client instance.
 
     Returns:
-        FaissXClient instance
+        Configured FaissXClient instance
     """
     global _client
 
@@ -264,7 +304,9 @@ def get_client() -> FaissXClient:
 
 def __del__():
     """
-    Clean up resources when the module is unloaded.
+    Cleanup handler called when the module is unloaded.
+
+    Ensures proper cleanup of the client instance and its resources.
     """
     global _client
     if _client:

@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import json
 import uuid
@@ -7,20 +27,26 @@ from typing import Dict, List, Any, Optional, Tuple
 import threading
 from pathlib import Path
 
-# Type aliases
-IndexID = str
-TenantID = str
-VectorID = str
+# Type aliases for better code readability and type safety
+IndexID = str  # Unique identifier for a FAISS index
+TenantID = str  # Unique identifier for a tenant
+VectorID = str  # Unique identifier for a vector
 
-# Global singleton instance
+# Global singleton instance to ensure only one FaissManager exists
 _faiss_manager_instance = None
 
 
 def get_faiss_manager():
-    """Get the singleton FaissManager instance"""
+    """
+    Get or create the singleton FaissManager instance.
+
+    Returns:
+        FaissManager: The singleton instance managing FAISS indices
+    """
     global _faiss_manager_instance
 
     if _faiss_manager_instance is None:
+        # Use environment variable for data directory or default to ./data
         data_dir = os.environ.get("FAISS_DATA_DIR", "./data")
         _faiss_manager_instance = FaissManager(data_dir=data_dir)
 
@@ -29,36 +55,46 @@ def get_faiss_manager():
 
 class FaissManager:
     """
-    Manager for FAISS indices with tenant isolation and persistence
+    Manager for FAISS indices with tenant isolation and persistence.
+
+    This class provides a thread-safe interface for managing FAISS vector indices
+    with support for multiple tenants and persistent storage.
     """
 
     def __init__(self, data_dir: str = "./data"):
         """
-        Initialize FAISS manager.
+        Initialize FAISS manager with persistent storage.
 
         Args:
             data_dir: Directory for storing indices and metadata
         """
+        # Convert to Path object for cross-platform compatibility
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True, parents=True)
 
-        # In-memory storage for indices and metadata
-        # {tenant_id: {index_id: (faiss_index, index_metadata, {vector_id: metadata})}}
+        # In-memory storage structure:
+        # tenant_id -> {index_id -> (faiss_index, index_metadata, {vector_id -> metadata})}
         self.indices: Dict[
             TenantID, Dict[IndexID, Tuple[faiss.Index, Dict, Dict[VectorID, Dict]]]
         ] = {}
 
-        # Lock for thread safety
+        # Reentrant lock for thread safety
         self.lock = threading.RLock()
 
-        # Load existing indices from disk
+        # Load any existing indices from disk
         self._load_indices()
 
     def _load_indices(self):
-        """Load existing indices from disk"""
+        """
+        Load existing indices from disk storage.
+
+        This method traverses the data directory structure and loads all
+        valid FAISS indices and their associated metadata.
+        """
         if not self.data_dir.exists():
             return
 
+        # Iterate through tenant directories
         for tenant_dir in self.data_dir.iterdir():
             if not tenant_dir.is_dir():
                 continue
@@ -66,6 +102,7 @@ class FaissManager:
             tenant_id = tenant_dir.name
             self.indices[tenant_id] = {}
 
+            # Iterate through index directories for each tenant
             for index_dir in tenant_dir.iterdir():
                 if not index_dir.is_dir():
                     continue
@@ -75,20 +112,25 @@ class FaissManager:
                 index_path = index_dir / "index.faiss"
                 vectors_meta_path = index_dir / "vectors.json"
 
+                # Skip if required files are missing
                 if not index_meta_path.exists() or not index_path.exists():
                     continue
 
                 try:
+                    # Load index metadata
                     with open(index_meta_path, "r") as f:
                         index_meta = json.load(f)
 
+                    # Load FAISS index
                     faiss_index = faiss.read_index(str(index_path))
 
+                    # Load vector metadata if it exists
                     vectors_meta = {}
                     if vectors_meta_path.exists():
                         with open(vectors_meta_path, "r") as f:
                             vectors_meta = json.load(f)
 
+                    # Store in memory
                     self.indices[tenant_id][index_id] = (
                         faiss_index,
                         index_meta,
@@ -99,7 +141,7 @@ class FaissManager:
 
     def _save_index(self, tenant_id: TenantID, index_id: IndexID):
         """
-        Save index and metadata to disk.
+        Save index and metadata to disk storage.
 
         Args:
             tenant_id: Tenant ID
@@ -108,17 +150,21 @@ class FaissManager:
         if tenant_id not in self.indices or index_id not in self.indices[tenant_id]:
             return
 
+        # Create directory structure if it doesn't exist
         index_dir = self.data_dir / tenant_id / index_id
         index_dir.mkdir(exist_ok=True, parents=True)
 
         faiss_index, index_meta, vectors_meta = self.indices[tenant_id][index_id]
 
         try:
+            # Save FAISS index
             faiss.write_index(faiss_index, str(index_dir / "index.faiss"))
 
+            # Save index metadata
             with open(index_dir / "metadata.json", "w") as f:
                 json.dump(index_meta, f)
 
+            # Save vector metadata
             with open(index_dir / "vectors.json", "w") as f:
                 json.dump(vectors_meta, f)
         except Exception as e:
@@ -132,13 +178,13 @@ class FaissManager:
         index_type: str = "IndexFlatL2",
     ) -> IndexID:
         """
-        Create a new FAISS index.
+        Create a new FAISS index for a tenant.
 
         Args:
             tenant_id: Tenant ID
             name: Index name
             dimension: Vector dimension
-            index_type: FAISS index type
+            index_type: FAISS index type (currently only supports IndexFlatL2)
 
         Returns:
             index_id: ID of the created index
@@ -147,7 +193,7 @@ class FaissManager:
             # Generate a unique ID for the index
             index_id = str(uuid.uuid4())
 
-            # Create the FAISS index
+            # Create the FAISS index (currently only supports L2 distance)
             if index_type == "IndexFlatL2":
                 faiss_index = faiss.IndexFlatL2(dimension)
             else:
@@ -178,7 +224,7 @@ class FaissManager:
 
     def get_index_info(self, tenant_id: TenantID, index_id: IndexID) -> Optional[Dict]:
         """
-        Get index information.
+        Get index information and metadata.
 
         Args:
             tenant_id: Tenant ID
@@ -192,11 +238,11 @@ class FaissManager:
                 return None
 
             _, index_meta, _ = self.indices[tenant_id][index_id]
-            return dict(index_meta)  # Return a copy
+            return dict(index_meta)  # Return a copy to prevent modification
 
     def delete_index(self, tenant_id: TenantID, index_id: IndexID) -> bool:
         """
-        Delete an index.
+        Delete an index and its associated data.
 
         Args:
             tenant_id: Tenant ID
@@ -215,10 +261,10 @@ class FaissManager:
             # Remove from disk
             index_dir = self.data_dir / tenant_id / index_id
             if index_dir.exists():
-                # Remove files
+                # Remove all files in the directory
                 for file in index_dir.iterdir():
                     file.unlink()
-                # Remove directory
+                # Remove the directory itself
                 index_dir.rmdir()
 
             return True
@@ -227,7 +273,7 @@ class FaissManager:
         self, tenant_id: TenantID, index_id: IndexID, vectors: List[Any]
     ) -> Dict[str, Any]:
         """
-        Add vectors to an index.
+        Add vectors to an index with metadata.
 
         Args:
             tenant_id: Tenant ID
@@ -247,9 +293,10 @@ class FaissManager:
 
             faiss_index, index_meta, vectors_meta = self.indices[tenant_id][index_id]
 
-            # Check dimension
+            # Get expected vector dimension
             dimension = index_meta["dimension"]
 
+            # Track success/failure for each vector
             success_list = []
             vectors_to_add = []
             vector_ids = []

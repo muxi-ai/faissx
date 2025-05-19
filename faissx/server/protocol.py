@@ -1,15 +1,34 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import msgpack
 import numpy as np
 from typing import Dict, List, Any, Tuple, Optional
 
 # Constants for message structure
-HEADER_FIELDS = ["operation", "api_key", "tenant_id", "index_id", "request_id"]
-VECTOR_DTYPE = np.float32
+HEADER_FIELDS = ["operation", "api_key", "tenant_id", "index_id", "request_id"]  # Required fields in message headers
+VECTOR_DTYPE = np.float32  # Standard dtype for vector data
 
 
 class ProtocolError(Exception):
-    """Protocol parsing or formatting error"""
-
+    """Custom exception for protocol-related errors during message parsing or formatting"""
     pass
 
 
@@ -21,39 +40,45 @@ def serialize_message(
     """
     Serialize a message for sending over ZeroMQ.
 
+    The message format consists of:
+    1. A sizes header containing lengths of each component
+    2. The message header (operation, auth info, etc.)
+    3. Optional vector data
+    4. Optional metadata
+
     Args:
         header: Message header with operation, auth, etc.
         vectors: Optional numpy array of vectors
         metadata: Optional metadata to include
 
     Returns:
-        bytes: Serialized message
+        bytes: Serialized message ready for transmission
     """
     # 1. Serialize header with msgpack
     header_bytes = msgpack.packb(header)
     header_size = len(header_bytes)
 
-    # 2. Prepare parts
+    # 2. Initialize message parts list with header
     parts = [header_bytes]
 
-    # 3. Add vector data if present
+    # 3. Process vector data if present
     vector_size = 0
     if vectors is not None:
-        # Ensure vectors are float32
+        # Convert vectors to float32 if needed for consistency
         if vectors.dtype != VECTOR_DTYPE:
             vectors = vectors.astype(VECTOR_DTYPE)
         vector_bytes = vectors.tobytes()
         vector_size = len(vector_bytes)
         parts.append(vector_bytes)
 
-    # 4. Add metadata if present
+    # 4. Process metadata if present
     metadata_size = 0
     if metadata is not None:
         metadata_bytes = msgpack.packb(metadata)
         metadata_size = len(metadata_bytes)
         parts.append(metadata_bytes)
 
-    # 5. Create sizes header
+    # 5. Create sizes header containing lengths of all components
     sizes = msgpack.packb(
         {
             "header_size": header_size,
@@ -62,7 +87,7 @@ def serialize_message(
         }
     )
 
-    # 6. Combine all parts
+    # 6. Combine all parts into final message
     return sizes + b"".join(parts)
 
 
@@ -72,8 +97,14 @@ def deserialize_message(
     """
     Deserialize a message received over ZeroMQ.
 
+    The deserialization process:
+    1. Extracts the sizes header to determine component lengths
+    2. Parses the message header
+    3. Reconstructs vector data if present
+    4. Extracts metadata if present
+
     Args:
-        data: Raw message bytes
+        data: Raw message bytes received from ZeroMQ
 
     Returns:
         Tuple containing:
@@ -82,47 +113,48 @@ def deserialize_message(
         - metadata: Metadata object (if present)
 
     Raises:
-        ProtocolError: If message format is invalid
+        ProtocolError: If message format is invalid or parsing fails
     """
     try:
-        # 1. Extract sizes header
-        sizes_end = data.find(b"\xc0")  # Find end of msgpack map
+        # 1. Extract sizes header by finding end of msgpack map
+        sizes_end = data.find(b"\xc0")  # \xc0 is msgpack's nil value, marking end of map
         if sizes_end == -1:
             raise ProtocolError("Invalid message format: can't find sizes header")
 
         sizes = msgpack.unpackb(data[: sizes_end + 1])
 
-        # 2. Extract parts based on sizes
+        # 2. Get component sizes from header
         header_size = sizes.get("header_size", 0)
         vector_size = sizes.get("vector_size", 0)
         metadata_size = sizes.get("metadata_size", 0)
 
         offset = sizes_end + 1
 
-        # 3. Extract header
+        # 3. Extract and parse message header
         header = msgpack.unpackb(data[offset : offset + header_size])
         offset += header_size
 
-        # 4. Extract vectors if present
+        # 4. Process vector data if present
         vectors = None
         if vector_size > 0:
             vector_data = data[offset : offset + vector_size]
 
-            # We need shape information to reconstruct the array
-            # This should be part of the header for search/add operations
+            # Reconstruct array shape based on header information
             if "vector_shape" in header:
+                # Use explicit shape from header
                 shape = header["vector_shape"]
                 vectors = np.frombuffer(vector_data, dtype=VECTOR_DTYPE).reshape(shape)
             else:
-                # For single vector queries
+                # Infer shape from dimension information
                 dimension = header.get("dimension", 0)
                 if dimension > 0:
+                    # Calculate number of vectors based on data size
                     count = vector_size // (dimension * 4)  # 4 bytes per float32
                     vectors = np.frombuffer(vector_data, dtype=VECTOR_DTYPE).reshape(
                         count, dimension
                     )
                 else:
-                    # Just return the raw buffer if we can't determine shape
+                    # Fallback to raw buffer if shape can't be determined
                     vectors = np.frombuffer(vector_data, dtype=VECTOR_DTYPE)
 
             offset += vector_size
@@ -151,15 +183,17 @@ def prepare_create_index_request(
     """
     Prepare a create_index request message.
 
+    Creates a new vector index with specified parameters.
+
     Args:
         api_key: API key for authentication
-        tenant_id: Tenant ID
+        tenant_id: Tenant ID for multi-tenancy
         name: Index name
         dimension: Vector dimension
-        index_type: FAISS index type
+        index_type: FAISS index type (default: IndexFlatL2)
 
     Returns:
-        bytes: Serialized message
+        bytes: Serialized create_index request message
     """
     header = {
         "operation": "create_index",
@@ -183,16 +217,18 @@ def prepare_add_vectors_request(
     """
     Prepare an add_vectors request message.
 
+    Adds multiple vectors to an existing index with associated metadata.
+
     Args:
         api_key: API key for authentication
         tenant_id: Tenant ID
-        index_id: Index ID
+        index_id: Target index ID
         vectors: Numpy array of vectors to add (shape: N x D)
-        vector_ids: List of vector IDs
-        vector_metadata: List of vector metadata dicts
+        vector_ids: List of unique IDs for each vector
+        vector_metadata: List of metadata dictionaries for each vector
 
     Returns:
-        bytes: Serialized message
+        bytes: Serialized add_vectors request message
     """
     header = {
         "operation": "add_vectors",
@@ -202,7 +238,7 @@ def prepare_add_vectors_request(
         "vector_shape": vectors.shape,
     }
 
-    # Package metadata with IDs
+    # Combine vector IDs with their metadata
     metadata = []
     for i, vector_id in enumerate(vector_ids):
         metadata.append(
@@ -226,16 +262,18 @@ def prepare_search_request(
     """
     Prepare a search request message.
 
+    Searches for k nearest neighbors of the query vector.
+
     Args:
         api_key: API key for authentication
         tenant_id: Tenant ID
-        index_id: Index ID
+        index_id: Target index ID
         query_vector: Query vector (shape: D)
-        k: Number of results to return
-        filter_metadata: Optional metadata filter
+        k: Number of nearest neighbors to return
+        filter_metadata: Optional metadata filter criteria
 
     Returns:
-        bytes: Serialized message
+        bytes: Serialized search request message
     """
     header = {
         "operation": "search",
@@ -246,7 +284,7 @@ def prepare_search_request(
         "dimension": query_vector.shape[0],
     }
 
-    # Ensure query vector is correctly shaped (D) -> (1, D)
+    # Reshape single vector to 2D array if needed
     if len(query_vector.shape) == 1:
         query_vector = query_vector.reshape(1, -1)
 
@@ -259,14 +297,16 @@ def prepare_delete_vector_request(
     """
     Prepare a delete_vector request message.
 
+    Removes a single vector from the index.
+
     Args:
         api_key: API key for authentication
         tenant_id: Tenant ID
-        index_id: Index ID
-        vector_id: Vector ID to delete
+        index_id: Target index ID
+        vector_id: ID of vector to delete
 
     Returns:
-        bytes: Serialized message
+        bytes: Serialized delete_vector request message
     """
     header = {
         "operation": "delete_vector",

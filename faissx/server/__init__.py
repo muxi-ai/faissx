@@ -1,8 +1,29 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx Server Module
 
 This module provides a high-performance vector database proxy server
-using FAISS and ZeroMQ communication.
+using FAISS and ZeroMQ communication. It handles server configuration,
+authentication, and initialization of the vector database service.
 """
 
 import os
@@ -12,17 +33,17 @@ from typing import Dict, Any, Optional
 # Import auth module for setting API keys
 from . import auth
 
-# Default configuration
+# Default configuration values for the FAISSx server
 DEFAULT_CONFIG = {
-    "port": 45678,
-    "bind_address": "0.0.0.0",
-    "data_dir": None,  # Use FAISS default unless specified
-    "auth_keys": {},  # API key to tenant mapping
-    "auth_file": None,  # Path to JSON file with API keys
-    "enable_auth": False,
+    "port": 45678,  # Default port for ZeroMQ communication
+    "bind_address": "0.0.0.0",  # Listen on all network interfaces
+    "data_dir": None,  # Use FAISS default storage location unless specified
+    "auth_keys": {},  # Dictionary mapping API keys to tenant IDs
+    "auth_file": None,  # Path to JSON file containing API key mappings
+    "enable_auth": False,  # Authentication disabled by default
 }
 
-# Global configuration
+# Global configuration dictionary initialized with defaults
 _config = DEFAULT_CONFIG.copy()
 
 
@@ -36,7 +57,11 @@ def configure(
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Configure the FAISSx Server.
+    Configure the FAISSx Server with custom settings.
+
+    This function allows customization of server parameters including network settings,
+    authentication, and data storage location. It handles both direct API key configuration
+    and loading keys from a file.
 
     Args:
         port: Port to listen on (default: 45678)
@@ -48,17 +73,19 @@ def configure(
         kwargs: Additional configuration options
 
     Returns:
-        Current configuration
+        Dict[str, Any]: Current configuration dictionary
 
     Raises:
         ValueError: If both auth_keys and auth_file are provided
+        ValueError: If auth_file cannot be read or parsed
     """
     global _config
 
-    # Check that only one auth method is provided
+    # Validate that only one authentication method is specified
     if auth_keys and auth_file:
         raise ValueError("Cannot provide both auth_keys and auth_file")
 
+    # Update configuration with provided parameters
     _config["port"] = port
     _config["bind_address"] = bind_address
     _config["data_dir"] = data_dir
@@ -66,7 +93,7 @@ def configure(
     _config["auth_file"] = auth_file
     _config["enable_auth"] = enable_auth
 
-    # Load API keys from file if provided
+    # Load API keys from file if specified
     if auth_file:
         try:
             with open(auth_file, 'r') as f:
@@ -74,10 +101,10 @@ def configure(
         except Exception as e:
             raise ValueError(f"Failed to load auth keys from file {auth_file}: {str(e)}")
 
-    # Set API keys in the auth module
+    # Initialize authentication module with API keys
     auth.set_api_keys(_config["auth_keys"])
 
-    # Add any additional configuration options
+    # Add any additional configuration options from kwargs
     for key, value in kwargs.items():
         _config[key] = value
 
@@ -85,29 +112,41 @@ def configure(
 
 
 def get_config() -> Dict[str, Any]:
-    """Get the current server configuration."""
+    """
+    Retrieve the current server configuration.
+
+    Returns:
+        Dict[str, Any]: A copy of the current configuration dictionary
+    """
     return _config.copy()
 
 
 def run():
     """
-    Run the FAISSx Server with the current configuration.
+    Initialize and start the FAISSx Server.
 
-    This will start the ZeroMQ server and begin accepting connections.
+    This function:
+    1. Creates necessary data directories
+    2. Sets up environment variables
+    3. Initializes and starts the ZeroMQ server
+    4. Begins accepting client connections
+
+    The server will run until terminated, handling vector database operations
+    according to the current configuration.
     """
-    # Use the server module directly
+    # Import server module for actual server implementation
     from .server import run_server
 
-    # Ensure data directory exists if specified
+    # Create data directory if specified
     if _config["data_dir"]:
         os.makedirs(_config["data_dir"], exist_ok=True)
 
-    # Set environment variables from config
+    # Configure environment variables for server process
     if _config["data_dir"]:
         os.environ["FAISSX_DATA_DIR"] = _config["data_dir"]
     os.environ["FAISSX_PORT"] = str(_config["port"])
 
-    # Start the server
+    # Initialize and start the server with current configuration
     run_server(
         port=_config["port"],
         bind_address=_config["bind_address"],

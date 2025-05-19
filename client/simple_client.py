@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python33
 """
 Simple FAISSx Client Example
 
@@ -13,6 +13,7 @@ import sys
 # Add parent directory to path to import faissx
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from faissx import client as faiss
+
 
 def main():
     # Configure the client to connect to the server
@@ -56,9 +57,12 @@ def main():
     for i in range(min(3, query_count)):
         print(f"Query {i}:")
         for j in range(k):
-            print(f"  Result {j}: Distance={distances[i][j]:.4f}, Index={indices[i][j]}")
+            print(
+                f"  Result {j}: Distance={distances[i][j]:.4f}, Index={indices[i][j]}"
+            )
 
     print("\nDone!")
+
 
 if __name__ == "__main__":
     main()
