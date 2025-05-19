@@ -1,0 +1,95 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Build and push standard Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Install DockerSlim (Mintoolkit)
+      - name: Install DockerSlim (Mintoolkit)
+        run: |
+          curl -sL https://raw.githubusercontent.com/slimtoolkit/slim/master/scripts/install-slim.sh | sudo -E bash -
+
+      # Get the full tag to use for DockerSlim
+      - name: Get primary tag
+        id: primary_tag
+        run: |
+          # Get first tag from the list of tags
+          PRIMARY_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
+          echo "primary_tag=$PRIMARY_TAG" >> $GITHUB_OUTPUT
+
+      # Run DockerSlim on the image
+      - name: Optimize with DockerSlim
+        run: |
+          # Pull the standard image
+          docker pull ${{ steps.primary_tag.outputs.primary_tag }}
+
+          # Run DockerSlim - add probe=false to prevent HTTP probing
+          slim build --target ${{ steps.primary_tag.outputs.primary_tag }} --tag slim-temp --http-probe=false
+
+      # Push optimized images to GHCR with appropriate tags
+      - name: Tag and push optimized images
+        run: |
+          # Get all the standard tags and create corresponding slim tags
+          for tag in ${{ steps.meta.outputs.tags }}; do
+            # Extract the tag part after the repository
+            TAG_SUFFIX=$(echo $tag | awk -F: '{print $2}')
+
+            # Create corresponding slim tag
+            SLIM_TAG="ghcr.io/${{ github.repository }}:${TAG_SUFFIX}-slim"
+
+            # Tag the optimized image
+            docker tag slim-temp $SLIM_TAG
+
+            # Push the slim image
+            docker push $SLIM_TAG
+          done
