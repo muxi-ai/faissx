@@ -22,6 +22,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -51,52 +56,70 @@ jobs:
           context: .
           file: server/Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # Install DockerSlim (Mintoolkit)
-      - name: Install DockerSlim (Mintoolkit)
+      # Note: DockerSlim optimization needs to be handled differently for multi-arch
+      # For now, we'll create a simple slim version using a multi-stage Dockerfile approach
+
+      - name: Create and push slim version of Docker image
         run: |
-          curl -sL https://raw.githubusercontent.com/slimtoolkit/slim/master/scripts/install-slim.sh | sudo -E bash -
+          # Display the tags we've generated for debugging
+          echo "Tags to process: ${{ steps.meta.outputs.tags }}"
 
-      # Get the full tag to use for DockerSlim
-      - name: Get primary tag
-        id: primary_tag
-        run: |
-          # Convert multi-line output to a single line with the first tag
-          PRIMARY_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
-          echo "primary_tag=$PRIMARY_TAG" >> $GITHUB_OUTPUT
+          # Create a temporary Dockerfile for the slim build
+          cat > Dockerfile.slim << 'EOF'
+          # Start with our standard FAISSx image - use the full tagged image name
+          FROM ghcr.io/${{ github.repository }}:latest as source
 
-      # Run DockerSlim on the image
-      - name: Optimize with DockerSlim
-        run: |
-          # Pull the standard image
-          docker pull ${{ steps.primary_tag.outputs.primary_tag }}
+          # Create a minimal image with just the essentials
+          FROM python:3.11-slim
 
-          # Run DockerSlim - add probe=false to prevent HTTP probing
-          slim build --target ${{ steps.primary_tag.outputs.primary_tag }} --tag slim-temp --http-probe=false
+          # Copy only necessary files from the source image
+          WORKDIR /app
+          COPY --from=source /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+          COPY --from=source /usr/local/bin/faissx.server /usr/local/bin/
 
-      # Push optimized images to GHCR with appropriate tags
-      - name: Tag and push optimized images
-        run: |
-          # Convert multi-line output to space-separated list
-          TAGS=$(echo "${{ steps.meta.outputs.tags }}" | tr '\n' ' ')
+          # Create data directory
+          RUN mkdir -p /data
 
-          # Process each tag
-          for tag in $TAGS; do
-            if [ -n "$tag" ]; then
-              # Extract the tag part after the repository
-              TAG_SUFFIX=$(echo $tag | awk -F: '{print $2}')
+          # Set environment variables
+          ENV PYTHONUNBUFFERED=1
+          ENV FAISSX_DATA_DIR=/data
+          ENV FAISSX_PORT=45678
+          ENV FAISSX_BIND_ADDRESS=0.0.0.0
+          ENV FAISSX_ENABLE_AUTH=false
 
-              # Create corresponding slim tag
-              SLIM_TAG="ghcr.io/${{ github.repository }}:${TAG_SUFFIX}-slim"
+          # Expose the ZeroMQ port
+          EXPOSE 45678
 
-              echo "Tagging slim-temp as $SLIM_TAG"
-              # Tag the optimized image
-              docker tag slim-temp $SLIM_TAG
+          # Run the server using the CLI
+          CMD ["faissx.server", "run"]
+          EOF
 
-              echo "Pushing $SLIM_TAG"
-              # Push the slim image
-              docker push $SLIM_TAG
-            fi
-          done
+          # Build and push the latest-slim version explicitly
+          echo "Building and pushing slim image with tag: ghcr.io/${{ github.repository }}:latest-slim"
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --push \
+            -f Dockerfile.slim \
+            -t ghcr.io/${{ github.repository }}:latest-slim \
+            .
+
+          # Also create a SHA-tagged slim version
+          SHA_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -o 'ghcr.io/.*/sha-[a-z0-9]*' | head -1)
+          if [ -n "$SHA_TAG" ]; then
+            echo "Found SHA tag: $SHA_TAG"
+            echo "Tagging slim version with: ${SHA_TAG}-slim"
+            docker buildx imagetools create -t ${SHA_TAG}-slim ghcr.io/${{ github.repository }}:latest-slim
+          else
+            echo "No SHA tag found in the output"
+          fi
+
+          # If this is a version release, also tag the slim version accordingly
+          VERSION_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -o 'ghcr.io/.*:v[0-9.]*' | head -1)
+          if [ -n "$VERSION_TAG" ]; then
+            echo "Found version tag: $VERSION_TAG"
+            echo "Tagging slim version with: ${VERSION_TAG}-slim"
+            docker buildx imagetools create -t ${VERSION_TAG}-slim ghcr.io/${{ github.repository }}:latest-slim
+          fi
