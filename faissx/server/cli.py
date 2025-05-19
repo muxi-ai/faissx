@@ -15,10 +15,10 @@ def run_command(args):
     """Run the server with the specified arguments"""
     # Parse API keys if provided
     auth_keys = None
-    if args.api_keys:
+    if args.auth_keys:
         auth_keys = {}
         try:
-            for key_pair in args.api_keys.split(","):
+            for key_pair in args.auth_keys.split(","):
                 api_key, tenant_id = key_pair.strip().split(":")
                 auth_keys[api_key] = tenant_id
         except Exception as e:
@@ -26,7 +26,7 @@ def run_command(args):
             return 1
 
     # If both auth methods are provided, show an error
-    if args.api_keys and args.auth_file:
+    if args.auth_keys and args.auth_file:
         print("Error: Cannot provide both --auth-keys and --auth-file")
         return 1
 
