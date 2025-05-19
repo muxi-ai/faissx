@@ -1,42 +1,36 @@
-# FAISSx: Next Steps (0MQ Edition)
+# FAISSx: Next Steps
 
-> **Note:** The following checklist reflects the planned 0MQ-based architecture. Actual ZMQ implementation work has not started yet; most technical tasks below are pending.
+This document outlines the current status and next steps for the FAISSx project, which provides a high-performance vector database proxy using FAISS and ZeroMQ.
 
-This document outlines the next steps for the FAISSx project, now based on a high-performance 0MQ binary protocol. These items are organized by priority and component.
+## Current Status
 
-## Project Setup & Planning Completed
+### Project Infrastructure (Complete ✅)
+- [x] Project renamed from FAISS-Proxy to FAISSx
+- [x] Directory structure reorganized (faissx, client, server, examples, data)
+- [x] Build system configured (setup.py, MANIFEST.in)
+- [x] Documentation updated
+- [x] Basic Docker deployment
 
-### Server Implementation
-- [ ] Create 0MQ server application structure
-- [ ] Implement authentication with API keys (in message header)
-- [ ] Create FAISS manager for vector operations
-- [ ] Implement basic binary protocol for CRUD routes for indices
-- [ ] Implement vector addition and search operations
-- [ ] Add tenant isolation
-- [ ] Create Docker container setup
-- [ ] Configure PyOxidizer for standalone builds
+### Server Implementation (In Progress 🚧)
+- [x] Create ZeroMQ server application structure
+- [x] Implement authentication with API keys
+- [x] Create FAISS manager for vector operations
+- [x] Implement basic binary protocol for CRUD routes for indices
+- [x] Implement vector addition and search operations
+- [x] Add tenant isolation
+- [x] Create Docker container setup
 
-### Client Implementation
-- [ ] Create client package structure
+### Client Implementation (Planned 📋)
+- [x] Create client package structure
 - [ ] Implement configuration management
-- [ ] Implement remote API client using 0MQ
+- [ ] Implement remote API client using ZeroMQ
 - [ ] Create IndexFlatL2 implementation with API parity
 - [ ] Add documentation for client usage
-- [ ] Implement drop-in replacement behavior (import faissx as faiss, configure for remote, fallback to local)
+- [ ] Implement drop-in replacement behavior
 
-### Project Organization
-- [x] Split into server and client components
-- [x] Create comprehensive READMEs
-- [x] Define client-server binary protocol contract
+## Next Milestones
 
-## Server Implementation
-
-### High Priority
-- [ ] Implement server runtime with 0MQ protocol
-- [ ] Test basic index creation, vector addition, and search operations
-- [ ] Enable Docker container deployment
-
-### Medium Priority
+### Server Enhancements
 - [ ] Add support for additional FAISS index types:
   - [ ] IndexIVFFlat
   - [ ] IndexHNSW
@@ -44,88 +38,64 @@ This document outlines the next steps for the FAISSx project, now based on a hig
 - [ ] Implement index training endpoints
 - [ ] Add specialized search operations (range search, etc.)
 - [ ] Implement proper deletion through index rebuilding
+- [ ] Add benchmarking tools
 
-### Low Priority
-- [ ] Optimize persistence layer for large indices
-- [ ] Add GPU support via FAISS GPU indices
-- [ ] Implement caching for frequently accessed indices
-- [ ] Add monitoring dashboard
-
-## Client Library
-
-### High Priority
+### Client Library Development
 - [ ] Complete IndexFlatL2 implementation
 - [ ] Add basic configuration and error handling
 - [ ] Test with simple vector operations
 - [ ] Create comprehensive test suite
+- [ ] Implement additional FAISS index classes
+- [ ] Support for training indices
+
+### Packaging and Distribution
+- [ ] Publish to PyPI
+- [ ] Create standalone binaries
+- [ ] Publish Docker images to Docker Hub
+- [ ] Create automated build and test pipeline
+
+### Advanced Features
+- [ ] Optimize persistence layer for large indices
+- [ ] Add GPU support via FAISS GPU indices
+- [ ] Implement caching for frequently accessed indices
+- [ ] Add monitoring dashboard
+- [ ] Support for distributed indices
+- [ ] High availability configuration
+
+## Implementation Priorities
+
+### High Priority
+1. Complete client implementation for IndexFlatL2
+2. Add comprehensive test coverage
+3. Publish to PyPI
+4. Create detailed documentation
 
 ### Medium Priority
-- [ ] Implement additional FAISS index classes:
-  - [ ] IndexIVFFlat
-  - [ ] IndexHNSW
-  - [ ] IndexPQ
-- [ ] Support for training indices
-- [ ] Add full FAISS API compatibility layer
+1. Add support for more index types
+2. Implement index training
+3. Create benchmarking tools
+4. Add performance optimizations
 
 ### Low Priority
-- [ ] Add automatic reconnection on failure
-- [ ] Implement local caching to reduce network traffic
-- [ ] Add performance benchmarking tools
-- [ ] Create TypeScript client library
+1. GPU support
+2. Monitoring dashboard
+3. Additional language clients (TypeScript, Go, etc.)
 
-## Packaging
+## Get Involved
 
-### High Priority
-- [ ] Package server as Docker container
-- [ ] Create PyOxidizer build for server
-- [ ] Test server deployment
+We welcome contributions to the FAISSx project. Here are some ways to get started:
 
-### Medium Priority
-- [ ] Package client as PyPI package
-- [ ] Create automated build process
-- [ ] Generate documentation
-
-## Documentation
-
-### High Priority
-- [ ] Complete protocol/API reference for server
-- [ ] Create quickstart guide
-
-### Medium Priority
-- [ ] Add code examples
-- [ ] Create deployment guide
-
-## Performance Testing
-
-### High Priority
-- [ ] Measure baseline performance
-- [ ] Create load testing harness
-
-### Medium Priority
-- [ ] Benchmark with various index sizes
-- [ ] Optimize for high throughput
-- [ ] Test with multiple concurrent clients
-
-## Timeline
-
-1. **Phase 1**: ⬜ Complete high priority server and client implementation
-2. **Phase 2**: ⬜ Add support for additional index types
-3. **Phase 3**: ⬜ Package for deployment and create documentation
-4. **Phase 4**: ⬜ Performance testing and optimization
-
-## Getting Started
-
-The initial implementation tasks are:
-
-1. ⬜ Create 0MQ server implementation
-2. ⬜ Create client library structure
-3. ⬜ Test existing implementation
-4. ⬜ Create integration tests between server and client
+1. Try out the current implementation and provide feedback
+2. Help with client implementation
+3. Add support for additional FAISS index types
+4. Improve documentation
+5. Create examples
 
 ## Decision Log
 
 - **2023-05-18**: ✅ Decided to split the project into server and client components
-- **2023-05-18**: ✅ Selected 0MQ for the server implementation
+- **2023-05-18**: ✅ Selected ZeroMQ for the server implementation
 - **2023-05-18**: ✅ Chose to implement a drop-in replacement client library for FAISS
 - **2023-05-18**: ✅ Implemented tenant isolation for multi-application deployments
-- **2023-05-25**: ✅ Completed test implementation for server and client components (pre-ZMQ)
+- **2023-05-25**: ✅ Completed test implementation for server and client components
+- **2023-06-15**: ✅ Project renamed from FAISS-Proxy to FAISSx
