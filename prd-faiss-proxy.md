@@ -1,16 +1,52 @@
-# FAISS Proxy
+# FAISS Proxy (0MQ Edition)
 
-> Remote Vector Database Service
+> Ultra-Fast Remote Vector Database Service (0MQ-based)
+
+## Drop-In Replacement Behavior
+
+**Seamless Local/Remote Switching:**
+
+The `faiss_proxy` client library is designed to be a true drop-in replacement for the original FAISS library. The only difference is whether you call `faiss.configure()`:
+
+- **Remote Mode:**
+
+  ```python
+  import faiss_proxy as faiss
+  faiss.configure("tcp://remote-server:5555")
+  # All FAISS operations are transparently executed on the remote server
+
+  index = faiss.IndexFlatL2(128)
+  index.add(vectors)
+  D, I = index.search(query, k=10)
+  ```
+
+- **Local Mode (Default):**
+
+  ```python
+  import faiss_proxy as faiss
+  # No faiss.configure() called, so all operations use the local FAISS library
+
+  index = faiss.IndexFlatL2(128)
+  index.add(vectors)
+  D, I = index.search(query, k=10)
+  ```
+
+**Key Points:**
+
+- If `faiss.configure()` is not called, `faiss_proxy` will automatically use the local FAISS implementation.
+- The API and behavior are identical to the original FAISS library.
+- No need to change any other code—just swap the import and (optionally) call `faiss.configure()` to use remote.
+- This allows you to use the same codebase for both local and remote vector search, with zero friction.
 
 ## Overview
 
-FAISS Proxy is a lightweight microservice that provides remote access to FAISS vector indices. It enables multiple clients to store, retrieve, and search vector embeddings through a simple REST API. The proxy handles index management, tenant isolation, and basic authentication while leaving application-specific logic to the clients.
+FAISS Proxy is a high-performance microservice that provides remote access to FAISS vector indices using ZeroMQ (0MQ) for communication. It enables multiple clients to store, retrieve, and search vector embeddings through a persistent, binary protocol. The proxy handles index management, tenant isolation, and authentication, while maximizing throughput and minimizing latency—ideal for large-scale, real-time vector search workloads.
 
 ## Objectives
 
 - Enable shared access to FAISS indices across multiple clients
 - Provide tenant isolation for multi-application deployments
-- Keep the implementation simple and general-purpose
+- Achieve maximum speed and throughput (no HTTP/REST overhead)
 - Offer a ready-to-deploy Docker container
 - Support basic performance and scaling requirements
 - Provide a drop-in replacement Python client library for seamless integration
@@ -29,98 +65,55 @@ FAISS Proxy is a lightweight microservice that provides remote access to FAISS v
    - Support multiple indices per tenant
    - Automatic index optimization
 
-3. **API Interface**
-   - RESTful API for all operations
-   - Simple authentication mechanism
+3. **Binary Protocol Interface (0MQ)**
+   - All operations use persistent 0MQ sockets
+   - Messages are sent as binary blobs (numpy arrays, msgpack for metadata)
+   - Simple authentication mechanism (API key in message header)
    - Tenant identification for isolation
 
 4. **Python Client Library**
    - Drop-in replacement for FAISS Python library
    - Support for all major FAISS index types
    - Compatible API with the original FAISS library
-   - Transparent remote execution
+   - Transparent remote execution over 0MQ
 
-## API Design
+## Protocol Design
 
-### Endpoints
+### Message Structure
 
-1. **Index Management**
-   - `POST /v1/index` - Create a new index
-   - `GET /v1/index/{id}` - Get index information
-   - `DELETE /v1/index/{id}` - Delete an index
+All client-server communication happens over a persistent 0MQ REQ/REP socket. Each message consists of:
 
-2. **Vector Operations**
-   - `POST /v1/index/{id}/vectors` - Add vectors to index
-   - `GET /v1/index/{id}/search` - Search for similar vectors
-   - `DELETE /v1/index/{id}/vectors/{vector_id}` - Delete a vector
+- **Header** (msgpack):
+  - `operation`: string (e.g., `create_index`, `add_vectors`, `search`, ...)
+  - `api_key`: string
+  - `tenant_id`: string
+  - `index_id`: string (if applicable)
+  - `request_id`: string (for tracing)
+- **Payload** (binary):
+  - For vectors: raw numpy array bytes
+  - For metadata: msgpack
 
-3. **Advanced FAISS Operations**
-   - `POST /v1/index/{id}/train` - Train an index (for quantized indices)
-   - `GET /v1/index/{id}/ntotal` - Get total number of vectors
-   - `POST /v1/index/{id}/reset` - Reset an index
-   - `POST /v1/index/{id}/specialized_search` - Specialized search operations (range search, etc.)
+### Example Operations
 
-4. **Administration**
-   - `GET /v1/health` - Service health check
-   - `GET /v1/metrics` - Performance metrics
+1. **Create Index**
+   - Header: `{operation: "create_index", dimension: 1536, index_type: "IndexFlatL2", ...}`
+   - Payload: none
+   - Response: `{status: "ok", index_id: "..."}`
 
-### Data Models
+2. **Add Vectors**
+   - Header: `{operation: "add_vectors", index_id: "...", ...}`
+   - Payload: [vectors as numpy bytes] + [metadata as msgpack]
+   - Response: `{status: "ok", added_count: N, failed_count: M}`
 
-1. **Index Creation**
+3. **Search**
+   - Header: `{operation: "search", index_id: "...", k: 10, ...}`
+   - Payload: [query vector as numpy bytes] + [optional filter as msgpack]
+   - Response: `{status: "ok", results: [ ... ]}` (results as msgpack)
 
-```json
-{
-  "name": "my-index",
-  "dimension": 1536,
-  "index_type": "IndexFlatL2",
-  "tenant_id": "client-123"
-}
-```
-
-2. **Vector Addition**
-
-```json
-{
-  "vectors": [
-    {
-      "id": "vec1",
-      "values": [0.1, 0.2, ...],
-      "metadata": {
-        "source": "document-1",
-        "timestamp": 1645023489
-      }
-    },
-    // Additional vectors...
-  ]
-}
-```
-
-3. **Search Request**
-
-```json
-{
-  "vector": [0.1, 0.2, ...],
-  "k": 10,
-  "filter": {
-    "source": "document-1"
-  }
-}
-```
-
-4. **Search Response**
-
-```json
-{
-  "results": [
-    {
-      "id": "vec1",
-      "score": 0.85,
-      "metadata": { "source": "document-1", "timestamp": 1645023489 }
-    },
-    // Additional results...
-  ]
-}
-```
+4. **Delete Vector**
+   - Header: `{operation: "delete_vector", index_id: "...", vector_id: "..."}`
+   - Payload: none
+   - Response: `{status: "ok"}`
 
 ## Python Client Library
 
@@ -128,17 +121,17 @@ FAISS Proxy is a lightweight microservice that provides remote access to FAISS v
 
 1. **Drop-In Compatibility**
    - Match the FAISS API exactly for seamless migration
-   - Transparently handle remote calls
+   - Transparently handle remote calls over 0MQ
    - Support typical FAISS usage patterns
 
 2. **Authentication & Configuration**
-   - Simple configuration for API endpoint and authentication
+   - Simple configuration for 0MQ endpoint and authentication
    - Environment variable support
    - Default to local FAISS if no remote configured
 
 3. **Performance Optimization**
-   - Batch operations where possible
-   - Connection pooling
+   - Batch operations by default
+   - Persistent socket connection (no reconnect per operation)
    - Optional local caching
 
 ### Example Usage
@@ -146,6 +139,13 @@ FAISS Proxy is a lightweight microservice that provides remote access to FAISS v
 ```python
 # Standard FAISS import replaced with proxy import
 import faiss_proxy as faiss
+
+# Configure once at application startup
+faiss_proxy.configure(
+    zmq_url="tcp://faiss-service:5555",
+    api_key="your-api-key",
+    tenant_id="your-tenant-id"
+)
 
 # Create an index - transparently creates remote index
 index = faiss.IndexFlatL2(128)
@@ -157,60 +157,52 @@ index.add(vectors)
 D, I = index.search(query_vectors, k=10)
 ```
 
-### Configuration
+## Server Implementation
 
-```python
-# Configure once at application startup
-import faiss_proxy
-
-faiss_proxy.configure(
-    api_url="http://faiss-service:8000",
-    api_key="your-api-key",
-    tenant_id="your-tenant-id"
-)
-
-# Then use as normal FAISS
-import faiss_proxy as faiss
-```
+- Runs a 0MQ REP socket (e.g., `tcp://*:5555`)
+- Handles incoming binary messages, dispatches to FAISS manager
+- Uses numpy for vector serialization, msgpack for metadata
+- Supports multi-tenant isolation and API key authentication
+- Can be packaged as a Docker container
 
 ## Non-Functional Requirements
 
 1. **Performance**
-   - Support at least 100 vector searches per second
-   - Search latency under 50ms for indices with up to 10,000 vectors
-   - Support for at least 50 concurrent indices
+   - Support at least 1,000 vector searches per second (10x HTTP baseline)
+   - Search latency under 10ms for indices with up to 10,000 vectors
+   - Support for at least 100 concurrent indices
 
 2. **Security**
-   - API key authentication
+   - API key authentication in message header
    - Strict tenant isolation
-   - TLS for all communications
+   - (Optional) CurveZMQ or TLS for encrypted communication
 
 3. **Observability**
    - Basic logging of operations
    - Simple metrics for monitoring
-   - Health check endpoint
+   - Health check operation via protocol
 
 ## Implementation Plan
 
-### Phase 1: Core Server Implementation (1 day)
-1. Set up basic service structure and API endpoints
+### Phase 1: Core Server Implementation
+1. Set up 0MQ REP socket and message protocol
 2. Implement FAISS integration for vector operations
 3. Create index management system
 4. Add basic authentication and tenant isolation
 
-### Phase 2: Client Library Implementation (1 day)
+### Phase 2: Client Library Implementation
 1. Implement proxy classes for core FAISS types
-2. Create transparent remote call mechanism
+2. Create transparent remote call mechanism over 0MQ
 3. Add configuration and authentication
 4. Support basic error handling
 
-### Phase 3: Extended FAISS Capabilities (1-2 days)
+### Phase 3: Extended FAISS Capabilities
 1. Add support for additional index types
 2. Implement training methods
 3. Add specialized search operations
 4. Support advanced FAISS features
 
-### Phase 4: Testing & Packaging (1 day)
+### Phase 4: Testing & Packaging
 1. End-to-end testing
 2. Performance testing
 3. Package server as Docker container
@@ -218,11 +210,11 @@ import faiss_proxy as faiss
 
 ## Project Structure
 
-The project will be split into server and client components:
+The project is split into server and client components:
 
 ```
 faiss-proxy/
-├── server/           # FastAPI server implementation
+├── server/           # 0MQ server implementation
 │   ├── app/          # Server application code
 │   ├── requirements.txt
 │   ├── Dockerfile
@@ -251,7 +243,7 @@ faiss-proxy/
 
 1. **Server Documentation**
    - Docker-based setup instructions
-   - API reference
+   - 0MQ protocol reference
 
 2. **Client Library Documentation**
    - Installation instructions
@@ -260,6 +252,5 @@ faiss-proxy/
 
 ## Conclusion
 
-FAISS Proxy provides a simple, general-purpose remote vector database service with a drop-in replacement client library. This enables seamless migration from local FAISS to a distributed deployment, making it ideal for scaling applications that require consistent vector operations across multiple instances.
-
+FAISS Proxy (0MQ Edition) provides a blazing-fast, general-purpose remote vector database service with a drop-in replacement client library. By leveraging 0MQ and binary protocols, it enables seamless migration from local FAISS to a distributed, high-performance deployment—ideal for applications demanding maximum speed and scalability.
 

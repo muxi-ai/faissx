@@ -1,37 +1,40 @@
-# FAISS Proxy: Next Steps
+# FAISS Proxy: Next Steps (0MQ Edition)
 
-This document outlines the next steps for the FAISS Proxy project. These items are organized by priority and component.
+> **Note:** The following checklist reflects the planned 0MQ-based architecture. Actual ZMQ implementation work has not started yet; most technical tasks below are pending.
 
-## Completed Work
+This document outlines the next steps for the FAISS Proxy project, now based on a high-performance 0MQ binary protocol. These items are organized by priority and component.
+
+## Project Setup & Planning Completed
 
 ### Server Implementation
-- [x] Create FastAPI application structure
-- [x] Implement authentication with API keys
-- [x] Create FAISS manager for vector operations
-- [x] Implement basic CRUD routes for indices
-- [x] Implement vector addition and search operations
-- [x] Add tenant isolation
-- [x] Create Docker container setup
-- [x] Configure PyOxidizer for standalone builds
+- [ ] Create 0MQ server application structure
+- [ ] Implement authentication with API keys (in message header)
+- [ ] Create FAISS manager for vector operations
+- [ ] Implement basic binary protocol for CRUD routes for indices
+- [ ] Implement vector addition and search operations
+- [ ] Add tenant isolation
+- [ ] Create Docker container setup
+- [ ] Configure PyOxidizer for standalone builds
 
 ### Client Implementation
-- [x] Create client package structure
-- [x] Implement configuration management
-- [x] Implement remote API client
-- [x] Create IndexFlatL2 implementation with API parity
-- [x] Add documentation for client usage
+- [ ] Create client package structure
+- [ ] Implement configuration management
+- [ ] Implement remote API client using 0MQ
+- [ ] Create IndexFlatL2 implementation with API parity
+- [ ] Add documentation for client usage
+- [ ] Implement drop-in replacement behavior (import faiss_proxy as faiss, configure for remote, fallback to local)
 
 ### Project Organization
 - [x] Split into server and client components
 - [x] Create comprehensive READMEs
-- [x] Define client-server API contract
+- [x] Define client-server binary protocol contract
 
 ## Server Implementation
 
 ### High Priority
-- [x] Implement server runtime with basic routes
-- [x] Test basic index creation, vector addition, and search operations
-- [x] Enable Docker container deployment
+- [ ] Implement server runtime with 0MQ protocol
+- [ ] Test basic index creation, vector addition, and search operations
+- [ ] Enable Docker container deployment
 
 ### Medium Priority
 - [ ] Add support for additional FAISS index types:
@@ -51,9 +54,10 @@ This document outlines the next steps for the FAISS Proxy project. These items a
 ## Client Library
 
 ### High Priority
-- [x] Complete IndexFlatL2 implementation
-- [x] Add basic configuration and error handling
-- [x] Test with simple vector operations
+- [ ] Complete IndexFlatL2 implementation
+- [ ] Add basic configuration and error handling
+- [ ] Test with simple vector operations
+- [ ] Create comprehensive test suite
 
 ### Medium Priority
 - [ ] Implement additional FAISS index classes:
@@ -62,7 +66,6 @@ This document outlines the next steps for the FAISS Proxy project. These items a
   - [ ] IndexPQ
 - [ ] Support for training indices
 - [ ] Add full FAISS API compatibility layer
-- [x] Create comprehensive test suite
 
 ### Low Priority
 - [ ] Add automatic reconnection on failure
@@ -73,23 +76,23 @@ This document outlines the next steps for the FAISS Proxy project. These items a
 ## Packaging
 
 ### High Priority
-- [x] Package server as Docker container
-- [x] Create PyOxidizer build for server
-- [x] Test server deployment
+- [ ] Package server as Docker container
+- [ ] Create PyOxidizer build for server
+- [ ] Test server deployment
 
 ### Medium Priority
-- [x] Package client as PyPI package
+- [ ] Package client as PyPI package
 - [ ] Create automated build process
 - [ ] Generate documentation
 
 ## Documentation
 
 ### High Priority
-- [x] Complete API reference for server
-- [x] Create quickstart guide
+- [ ] Complete protocol/API reference for server
+- [ ] Create quickstart guide
 
 ### Medium Priority
-- [x] Add code examples
+- [ ] Add code examples
 - [ ] Create deployment guide
 
 ## Performance Testing
@@ -105,24 +108,24 @@ This document outlines the next steps for the FAISS Proxy project. These items a
 
 ## Timeline
 
-1. **Phase 1**: ✅ Complete high priority server and client implementation
-2. **Phase 2**: Add support for additional index types
-3. **Phase 3**: Package for deployment and create documentation
-4. **Phase 4**: Performance testing and optimization
+1. **Phase 1**: ⬜ Complete high priority server and client implementation
+2. **Phase 2**: ⬜ Add support for additional index types
+3. **Phase 3**: ⬜ Package for deployment and create documentation
+4. **Phase 4**: ⬜ Performance testing and optimization
 
 ## Getting Started
 
 The initial implementation tasks are:
 
-1. ✅ Create server implementation
-2. ✅ Create client library structure
-3. ✅ Test existing implementation
-4. ✅ Create integration tests between server and client
+1. ⬜ Create 0MQ server implementation
+2. ⬜ Create client library structure
+3. ⬜ Test existing implementation
+4. ⬜ Create integration tests between server and client
 
 ## Decision Log
 
 - **2023-05-18**: ✅ Decided to split the project into server and client components
-- **2023-05-18**: ✅ Selected FastAPI for the server implementation
+- **2023-05-18**: ✅ Selected 0MQ for the server implementation
 - **2023-05-18**: ✅ Chose to implement a drop-in replacement client library for FAISS
 - **2023-05-18**: ✅ Implemented tenant isolation for multi-application deployments
-- **2023-05-25**: ✅ Completed test implementation for server and client components
+- **2023-05-25**: ✅ Completed test implementation for server and client components (pre-ZMQ)
