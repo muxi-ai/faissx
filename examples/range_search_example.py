@@ -12,7 +12,6 @@ import numpy as np
 import psutil
 import faissx
 import matplotlib.pyplot as plt
-from typing import Dict, Any
 
 # Configuration
 dimension = 128  # Vector dimension
@@ -20,24 +19,29 @@ num_vectors = 10000  # Number of vectors to add
 num_queries = 10  # Number of query vectors to search for
 radius = 20.0  # Radius for range search
 
+
 # Function to measure memory usage
 def process_memory():
     """Get current process memory usage in MB"""
     process = psutil.Process()
     return process.memory_info().rss / (1024 * 1024)
 
+
 # Generate random data
 print(f"Generating {num_vectors} random vectors of dimension {dimension}...")
 np.random.seed(42)  # For reproducibility
-vectors = np.random.random((num_vectors, dimension)).astype('float32')
+vectors = np.random.random((num_vectors, dimension)).astype("float32")
 vectors = vectors / np.linalg.norm(vectors, axis=1)[:, np.newaxis]  # Normalize
 
 # Generate query vectors
-query_vectors = np.random.random((num_queries, dimension)).astype('float32')
-query_vectors = query_vectors / np.linalg.norm(query_vectors, axis=1)[:, np.newaxis]  # Normalize
+query_vectors = np.random.random((num_queries, dimension)).astype("float32")
+query_vectors = (
+    query_vectors / np.linalg.norm(query_vectors, axis=1)[:, np.newaxis]
+)  # Normalize
 
 # Results dictionary
 results = {}
+
 
 def test_flat_index():
     """Test range search with a flat index"""
@@ -86,8 +90,9 @@ def test_flat_index():
         "range_search_time": range_search_time,
         "memory": mem_usage,
         "results_per_query": results_per_query,
-        "total_results": len(distances)
+        "total_results": len(distances),
     }
+
 
 def test_ivf_index():
     """Test range search with an IVF index"""
@@ -104,7 +109,7 @@ def test_ivf_index():
     # Train the index
     print("Training IVF index...")
     start_time = time.time()
-    ivf_index.train(vectors[:min(2000, len(vectors))])  # Use subset for training
+    ivf_index.train(vectors[: min(2000, len(vectors))])  # Use subset for training
     train_time = time.time() - start_time
     print(f"Training time: {train_time:.4f} seconds")
 
@@ -146,8 +151,9 @@ def test_ivf_index():
         "range_search_time": range_search_time,
         "memory": mem_usage,
         "results_per_query": results_per_query,
-        "total_results": len(distances)
+        "total_results": len(distances),
     }
+
 
 def test_hnsw_index():
     """Test range search with HNSW index"""
@@ -197,8 +203,9 @@ def test_hnsw_index():
         "range_search_time": range_search_time,
         "memory": mem_usage,
         "results_per_query": results_per_query,
-        "total_results": len(distances)
+        "total_results": len(distances),
     }
+
 
 def test_pq_index():
     """Test range search with PQ index"""
@@ -215,7 +222,7 @@ def test_pq_index():
     # Train the index
     print("Training PQ index...")
     start_time = time.time()
-    pq_index.train(vectors[:min(2000, len(vectors))])  # Use subset for training
+    pq_index.train(vectors[: min(2000, len(vectors))])  # Use subset for training
     train_time = time.time() - start_time
     print(f"Training time: {train_time:.4f} seconds")
 
@@ -257,8 +264,9 @@ def test_pq_index():
         "range_search_time": range_search_time,
         "memory": mem_usage,
         "results_per_query": results_per_query,
-        "total_results": len(distances)
+        "total_results": len(distances),
     }
+
 
 def plot_results(results):
     """Plot performance comparison of the different index types"""
@@ -266,7 +274,9 @@ def plot_results(results):
 
     # Prepare data for plotting
     add_times = [results[idx].get("add_time", 0) for idx in index_types]
-    range_search_times = [results[idx].get("range_search_time", 0) for idx in index_types]
+    range_search_times = [
+        results[idx].get("range_search_time", 0) for idx in index_types
+    ]
     memory_usage = [results[idx].get("memory", 0) for idx in index_types]
 
     # Create plot with 3 subplots
@@ -274,30 +284,31 @@ def plot_results(results):
 
     # Add times
     ax1.bar(index_types, add_times)
-    ax1.set_title('Add Times (s)')
-    ax1.set_ylabel('Time (seconds)')
+    ax1.set_title("Add Times (s)")
+    ax1.set_ylabel("Time (seconds)")
     ax1.set_xticklabels(index_types, rotation=45)
 
     # Range search times
     ax2.bar(index_types, range_search_times)
-    ax2.set_title('Range Search Times (s)')
-    ax2.set_ylabel('Time (seconds)')
+    ax2.set_title("Range Search Times (s)")
+    ax2.set_ylabel("Time (seconds)")
     ax2.set_xticklabels(index_types, rotation=45)
 
     # Memory usage
     ax3.bar(index_types, memory_usage)
-    ax3.set_title('Memory Usage (MB)')
-    ax3.set_ylabel('Memory (MB)')
+    ax3.set_title("Memory Usage (MB)")
+    ax3.set_ylabel("Memory (MB)")
     ax3.set_xticklabels(index_types, rotation=45)
 
     plt.tight_layout()
-    plt.savefig('range_search_comparison.png')
+    plt.savefig("range_search_comparison.png")
     print("\nPerformance comparison chart saved as 'range_search_comparison.png'")
     plt.close()
 
+
 if __name__ == "__main__":
-    print(f"FAISSx Range Search Example")
-    print(f"===========================")
+    print("FAISSx Range Search Example")
+    print("===========================")
     print(f"Testing range search with radius={radius} across different index types")
 
     # Run tests
@@ -318,7 +329,9 @@ if __name__ == "__main__":
         for idx_type, res in results.items():
             print(f"{idx_type}:")
             print(f"  Range search time: {res.get('range_search_time', 0):.4f}s")
-            print(f"  Avg results per query: {np.mean(res.get('results_per_query', [0])):.1f}")
+            print(
+                f"  Avg results per query: {np.mean(res.get('results_per_query', [0])):.1f}"
+            )
             print(f"  Memory usage: {res.get('memory', 0):.2f} MB")
 
     except Exception as e:

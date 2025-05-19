@@ -24,7 +24,6 @@ import gc
 import os
 
 # Import FAISSx components
-import faissx
 from faissx import configure
 from faissx.client.index import IndexFlatL2, IndexScalarQuantizer
 
@@ -49,25 +48,57 @@ def get_memory_usage(obj):
 def get_process_memory():
     """Return the memory usage of the current process in MB"""
     import psutil
+
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / (1024 * 1024)
 
 
-def plot_results(data, query_point, indices, title):
-    """Plot the data points, query point, and search results"""
-    plt.figure(figsize=(10, 8))
-    plt.scatter(data[:, 0], data[:, 1], s=8, alpha=0.5, label='Database vectors')
-    plt.scatter(query_point[0], query_point[1], color='red', s=100, marker='*', label='Query vector')
+def plot_results(X, query, indices, title):
+    """
+    Plot the results of a vector search, showing the query vector and its nearest neighbors.
 
-    # Mark search results
-    results = data[indices]
-    plt.scatter(results[:, 0], results[:, 1], color='green', s=50, marker='o',
-                facecolors='none', label='Search results')
+    Args:
+        X (np.ndarray): The dataset vectors
+        query (np.ndarray): The query vector
+        indices (np.ndarray): Indices of the nearest neighbors
+        title (str): Title for the plot
+    """
+    # Skip plotting in dimensions higher than 2
+    if X.shape[1] > 2:
+        print(f"Cannot visualize results for dimension {X.shape[1]} > 2")
+        return
+
+    plt.figure(figsize=(10, 6))
+
+    # Ensure query is properly reshaped as a single vector
+    if len(query.shape) > 1 and query.shape[0] == 1:
+        query_point = query[0]  # Extract the first query if it's a batch
+    else:
+        query_point = query  # Use as is if it's already a single vector
+
+    # Plot all data points
+    plt.scatter(X[:, 0], X[:, 1], c="lightgrey", alpha=0.5, s=10)
+
+    # Plot query point
+    plt.scatter(
+        query_point[0],
+        query_point[1],
+        color="red",
+        s=100,
+        marker="*",
+        label="Query vector",
+    )
+
+    # Plot nearest neighbors
+    nearest = X[indices]
+    plt.scatter(
+        nearest[:, 0], nearest[:, 1], color="blue", s=50, label="Nearest neighbors"
+    )
 
     plt.title(title)
     plt.legend()
-    plt.savefig(f"{title.replace(' ', '_').lower()}.png")
-    plt.close()
+    plt.grid(True)
+    plt.show()
 
 
 def generate_data(n_samples=10000, n_features=128, n_clusters=10):
@@ -76,8 +107,9 @@ def generate_data(n_samples=10000, n_features=128, n_clusters=10):
 
     # Create clustered data for more realistic search scenarios
     centers = n_clusters
-    X, _ = make_blobs(n_samples=n_samples, centers=centers,
-                      n_features=n_features, random_state=42)
+    X, _ = make_blobs(
+        n_samples=n_samples, centers=centers, n_features=n_features, random_state=42
+    )
 
     # Scale to unit norm
     norms = np.linalg.norm(X, axis=1, keepdims=True)
@@ -119,18 +151,18 @@ def benchmark_scalar_quantizer_index(X, query, k=10):
     # Search for similar vectors
     print(f"Searching for {k} nearest neighbors...")
     t0 = time.time()
-    flat_D, flat_I = flat_index.search(query, k)
+    flat_distances, flat_indices = flat_index.search(query, k)
     search_time = time.time() - t0
     print(f"Search completed in {search_time:.4f} seconds")
 
     # Display results
     print("\nReference Search Results (Flat Index):")
     print(f"{'Index':<8} {'Distance':<12}")
-    for idx, (i, dist) in enumerate(zip(flat_I[0], flat_D[0])):
+    for idx, (i, dist) in enumerate(zip(flat_indices[0], flat_distances[0])):
         print(f"{i:<8} {dist:<12.6f}")
 
     if X.shape[1] == 2:
-        plot_results(X, query, flat_I[0], "IndexFlatL2 Reference Results")
+        plot_results(X, query, flat_indices[0], "IndexFlatL2 Reference Results")
 
     # Local mode (directly using FAISS)
     print("\n===== Local Mode: IndexScalarQuantizer =====")
@@ -154,25 +186,25 @@ def benchmark_scalar_quantizer_index(X, query, k=10):
     # Search for similar vectors
     print(f"Searching for {k} nearest neighbors...")
     t0 = time.time()
-    D, I = scalar_index.search(query, k)
+    distances, indices = scalar_index.search(query, k)
     search_time = time.time() - t0
     print(f"Search completed in {search_time:.4f} seconds")
 
     # Display results
     print("\nSearch Results (Local Mode):")
     print(f"{'Index':<8} {'Distance':<12}")
-    for idx, (i, dist) in enumerate(zip(I[0], D[0])):
+    for idx, (i, dist) in enumerate(zip(indices[0], distances[0])):
         print(f"{i:<8} {dist:<12.6f}")
 
     # Keep results for comparison
-    local_results = I[0]
+    local_results = indices[0]
 
     # If the dataset is 2D, visualize the results
     if X.shape[1] == 2:
-        plot_results(X, query, I[0], "IndexScalarQuantizer Local Mode Results")
+        plot_results(X, query, indices[0], "IndexScalarQuantizer Local Mode Results")
 
     # Compare the results with flat index
-    common_with_flat = np.intersect1d(flat_I[0], local_results)
+    common_with_flat = np.intersect1d(flat_indices[0], local_results)
     print(f"\nAccuracy comparison: {len(common_with_flat)}/{k} matches with flat index")
 
     # Remote mode (using FAISSx server)
@@ -196,22 +228,22 @@ def benchmark_scalar_quantizer_index(X, query, k=10):
     # Search for similar vectors
     print(f"Searching for {k} nearest neighbors...")
     t0 = time.time()
-    D, I = scalar_index.search(query, k)
+    distances, indices = scalar_index.search(query, k)
     search_time = time.time() - t0
     print(f"Search completed in {search_time:.4f} seconds")
 
     # Display results
     print("\nSearch Results (Remote Mode):")
     print(f"{'Index':<8} {'Distance':<12}")
-    for idx, (i, dist) in enumerate(zip(I[0], D[0])):
+    for idx, (i, dist) in enumerate(zip(indices[0], distances[0])):
         print(f"{i:<8} {dist:<12.6f}")
 
     # If the dataset is 2D, visualize the results
     if X.shape[1] == 2:
-        plot_results(X, query, I[0], "IndexScalarQuantizer Remote Mode Results")
+        plot_results(X, query, indices[0], "IndexScalarQuantizer Remote Mode Results")
 
     # Compare local and remote results for consistency
-    remote_results = I[0]
+    remote_results = indices[0]
     common_results = np.intersect1d(local_results, remote_results)
 
     print("\n===== Results Comparison =====")
@@ -221,7 +253,7 @@ def benchmark_scalar_quantizer_index(X, query, k=10):
     print(f"Common indices: {common_results}")
 
     # Compare with flat index for accuracy
-    common_with_flat = np.intersect1d(flat_I[0], remote_results)
+    common_with_flat = np.intersect1d(flat_indices[0], remote_results)
     print(f"Accuracy comparison: {len(common_with_flat)}/{k} matches with flat index")
 
 

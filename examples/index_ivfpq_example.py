@@ -23,7 +23,6 @@ import matplotlib.pyplot as plt
 from sklearn.datasets import make_blobs
 
 # Import FAISSx components
-import faissx
 from faissx import configure
 from faissx.client.index import IndexFlatL2, IndexIVFPQ
 
@@ -34,13 +33,27 @@ np.random.seed(42)
 def plot_results(data, query_point, indices, title):
     """Plot the data points, query point, and search results."""
     plt.figure(figsize=(10, 8))
-    plt.scatter(data[:, 0], data[:, 1], s=8, alpha=0.5, label='Database vectors')
-    plt.scatter(query_point[0], query_point[1], color='red', s=100, marker='*', label='Query vector')
+    plt.scatter(data[:, 0], data[:, 1], s=8, alpha=0.5, label="Database vectors")
+    plt.scatter(
+        query_point[0],
+        query_point[1],
+        color="red",
+        s=100,
+        marker="*",
+        label="Query vector",
+    )
 
     # Mark search results
     results = data[indices]
-    plt.scatter(results[:, 0], results[:, 1], color='green', s=50, marker='o',
-                facecolors='none', label='Search results')
+    plt.scatter(
+        results[:, 0],
+        results[:, 1],
+        color="green",
+        s=50,
+        marker="o",
+        facecolors="none",
+        label="Search results",
+    )
 
     plt.title(title)
     plt.legend()
@@ -54,8 +67,9 @@ def generate_data(n_samples=10000, n_features=128, n_clusters=10):
 
     # Create clustered data for more realistic search scenarios
     centers = n_clusters
-    X, _ = make_blobs(n_samples=n_samples, centers=centers,
-                      n_features=n_features, random_state=42)
+    X, _ = make_blobs(
+        n_samples=n_samples, centers=centers, n_features=n_features, random_state=42
+    )
 
     # Scale to unit norm
     norms = np.linalg.norm(X, axis=1, keepdims=True)
@@ -93,7 +107,9 @@ def benchmark_ivfpq_index(X, query, k=10):
     print("\n===== Local Mode: IndexIVFPQ =====")
 
     # Create the index
-    print(f"Creating IVFPQ index with {nlist} clusters, {M} subquantizers, {nbits} bits")
+    print(
+        f"Creating IVFPQ index with {nlist} clusters, {M} subquantizers, {nbits} bits"
+    )
     # Create a quantizer for clustering
     quantizer = IndexFlatL2(dim)
 
@@ -117,22 +133,22 @@ def benchmark_ivfpq_index(X, query, k=10):
     # Search for similar vectors
     print(f"Searching for {k} nearest neighbors...")
     t0 = time.time()
-    D, I = index.search(query, k)
+    distances, indices = index.search(query, k)
     search_time = time.time() - t0
     print(f"Search completed in {search_time:.4f} seconds")
 
     # Display results
     print("\nSearch Results (Local Mode):")
     print(f"{'Index':<8} {'Distance':<12}")
-    for idx, (i, dist) in enumerate(zip(I[0], D[0])):
+    for idx, (i, dist) in enumerate(zip(indices[0], distances[0])):
         print(f"{i:<8} {dist:<12.6f}")
 
     # Keep results for comparison with remote mode
-    local_results = I[0]
+    local_results = indices[0]
 
     # If the dataset is 2D, visualize the results
     if X.shape[1] == 2:
-        plot_results(X, query, I[0], "IndexIVFPQ Local Mode Results")
+        plot_results(X, query, indices[0], "IndexIVFPQ Local Mode Results")
 
     # Remote mode (using FAISSx server)
     print("\n===== Remote Mode: IndexIVFPQ =====")
@@ -142,7 +158,9 @@ def benchmark_ivfpq_index(X, query, k=10):
     configure(url="tcp://localhost:45678")
 
     # Create the remote index
-    print(f"Creating remote IVFPQ index with {nlist} clusters, {M} subquantizers, {nbits} bits")
+    print(
+        f"Creating remote IVFPQ index with {nlist} clusters, {M} subquantizers, {nbits} bits"
+    )
     quantizer = IndexFlatL2(dim)
     index = IndexIVFPQ(quantizer, dim, M, nbits, nlist)
 
@@ -163,22 +181,22 @@ def benchmark_ivfpq_index(X, query, k=10):
     # Search for similar vectors
     print(f"Searching for {k} nearest neighbors...")
     t0 = time.time()
-    D, I = index.search(query, k)
+    distances, indices = index.search(query, k)
     search_time = time.time() - t0
     print(f"Search completed in {search_time:.4f} seconds")
 
     # Display results
     print("\nSearch Results (Remote Mode):")
     print(f"{'Index':<8} {'Distance':<12}")
-    for idx, (i, dist) in enumerate(zip(I[0], D[0])):
+    for idx, (i, dist) in enumerate(zip(indices[0], distances[0])):
         print(f"{i:<8} {dist:<12.6f}")
 
     # If the dataset is 2D, visualize the results
     if X.shape[1] == 2:
-        plot_results(X, query, I[0], "IndexIVFPQ Remote Mode Results")
+        plot_results(X, query, indices[0], "IndexIVFPQ Remote Mode Results")
 
     # Compare local and remote results for consistency
-    remote_results = I[0]
+    remote_results = indices[0]
     common_results = np.intersect1d(local_results, remote_results)
 
     print("\n===== Results Comparison =====")
