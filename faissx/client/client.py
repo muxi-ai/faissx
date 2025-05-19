@@ -248,6 +248,31 @@ class FaissXClient:
 
         return self._send_request(request)
 
+    def train_index(self, index_id: str, training_vectors: np.ndarray) -> Dict[str, Any]:
+        """
+        Train an index with the provided vectors (required for IVF indices).
+
+        Args:
+            index_id: ID of the index to train
+            training_vectors: Vectors to use for training
+
+        Returns:
+            Dictionary containing training results
+        """
+        # Convert numpy array to list for serialization
+        vectors_list = (
+            training_vectors.tolist() if hasattr(training_vectors, 'tolist')
+            else training_vectors
+        )
+
+        request = {
+            "action": "train_index",
+            "index_id": index_id,
+            "training_vectors": vectors_list
+        }
+
+        return self._send_request(request)
+
     def close(self) -> None:
         """
         Clean up ZeroMQ resources and close the connection.

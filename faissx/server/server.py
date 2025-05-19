@@ -76,7 +76,22 @@ class FaissIndex:
         Args:
             index_id (str): Unique identifier for the index
             dimension (int): Dimension of vectors to be stored
-            index_type (str): Type of index ("L2" for Euclidean distance or "IP" for inner product)
+            index_type (str): Type of index:
+                - "L2" - Flat L2 index (Euclidean distance)
+                - "IP" - Flat IP index (inner product)
+                - "IVF" - IVF index with L2 distance
+                - "IVF_IP" - IVF index with inner product distance
+                - "HNSW" - HNSW index with L2 distance
+                - "HNSW_IP" - HNSW index with inner product distance
+                - "PQ" - Product Quantization index with L2 distance
+                - "PQ_IP" - Product Quantization index with inner product distance
+                Additional parameters can be specified:
+                - "IVF100" - IVF with 100 centroids
+                - "IVF100_IP" - IVF with 100 centroids and inner product distance
+                - "HNSW32" - HNSW with M=32 (connections per node)
+                - "HNSW32_IP" - HNSW with M=32 and inner product distance
+                - "PQ8x8" - PQ with 8 subquantizers, each with 8 bits
+                - "PQ8x8_IP" - PQ with 8 subquantizers, 8 bits, inner product
 
         Returns:
             dict: Response containing success status and index details or error message
@@ -85,11 +100,113 @@ class FaissIndex:
             return {"success": False, "error": f"Index {index_id} already exists"}
 
         try:
+            # Parse index parameters
+            index_params = {}
+            if "_" in index_type:
+                parts = index_type.split("_")
+                main_type = parts[0]
+
+                # Handle numeric parameters in IVF
+                if main_type.startswith("IVF"):
+                    try:
+                        nlist = int(main_type[3:])
+                        index_params["nlist"] = nlist
+                        main_type = "IVF"
+                    except ValueError:
+                        pass
+
+                # Handle HNSW parameters
+                elif main_type.startswith("HNSW"):
+                    try:
+                        M = int(main_type[4:])
+                        index_params["M"] = M
+                        main_type = "HNSW"
+                    except ValueError:
+                        index_params["M"] = 32  # Default M value
+
+                # Handle PQ parameters
+                elif main_type.startswith("PQ"):
+                    try:
+                        # Format is PQMxB where M is number of subquantizers and B is bits
+                        params = main_type[2:]
+                        if "x" in params:
+                            M, B = params.split("x")
+                            index_params["M"] = int(M)  # Number of subquantizers
+                            index_params["nbits"] = int(B)  # Bits per subquantizer
+                        else:
+                            index_params["M"] = int(params)  # Just number of subquantizers
+                            index_params["nbits"] = 8  # Default 8 bits
+                        main_type = "PQ"
+                    except ValueError:
+                        # Default PQ parameters
+                        index_params["M"] = 8  # Default 8 subquantizers
+                        index_params["nbits"] = 8  # Default 8 bits
+
+                # Check for distance metric
+                if parts[-1] == "IP":
+                    index_params["metric"] = "IP"
+                else:
+                    index_params["metric"] = "L2"
+            else:
+                main_type = index_type
+                index_params["metric"] = "L2"
+
             # Create appropriate index type
-            if index_type == "L2":
+            if main_type == "L2" or (main_type == index_type and index_params["metric"] == "L2"):
                 index = faiss.IndexFlatL2(dimension)
-            elif index_type == "IP":
+            elif main_type == "IP" or (main_type == index_type and index_params["metric"] == "IP"):
                 index = faiss.IndexFlatIP(dimension)
+            elif main_type == "IVF":
+                # Default number of centroids if not specified
+                nlist = index_params.get("nlist", 100)
+
+                # Create quantizer based on the metric
+                if index_params["metric"] == "IP":
+                    quantizer = faiss.IndexFlatIP(dimension)
+                else:
+                    quantizer = faiss.IndexFlatL2(dimension)
+
+                # Create IVF index
+                index = faiss.IndexIVFFlat(
+                    quantizer, dimension, nlist,
+                    faiss.METRIC_INNER_PRODUCT if index_params["metric"] == "IP"
+                    else faiss.METRIC_L2
+                )
+
+                # IVF indexes need to be trained before use
+                index.is_trained = False
+            elif main_type == "HNSW":
+                # HNSW parameters
+                M = index_params.get("M", 32)  # Default connections per node
+
+                # Create HNSW index
+                if index_params["metric"] == "IP":
+                    index = faiss.IndexHNSWFlat(dimension, M, faiss.METRIC_INNER_PRODUCT)
+                else:
+                    index = faiss.IndexHNSWFlat(dimension, M, faiss.METRIC_L2)
+
+                # HNSW doesn't require training
+                index.is_trained = True
+            elif main_type == "PQ":
+                # PQ parameters
+                M = index_params.get("M", 8)  # Number of subquantizers
+                nbits = index_params.get("nbits", 8)  # Bits per subquantizer
+
+                # PQ dimension must be a multiple of M
+                if dimension % M != 0:
+                    return {
+                        "success": False,
+                        "error": f"PQ requires dimension ({dimension}) to be a multiple of M ({M})"
+                    }
+
+                # Create PQ index
+                if index_params["metric"] == "IP":
+                    index = faiss.IndexPQ(dimension, M, nbits, faiss.METRIC_INNER_PRODUCT)
+                else:
+                    index = faiss.IndexPQ(dimension, M, nbits, faiss.METRIC_L2)
+
+                # PQ indexes need to be trained before use
+                index.is_trained = False
             else:
                 return {
                     "success": False,
@@ -99,14 +216,19 @@ class FaissIndex:
             # Store index and its dimension
             self.indexes[index_id] = index
             self.dimensions[index_id] = dimension
-            print(
-                f"Created index {index_id} with dimension {dimension}, type {index_type}"
-            )
-            return {
-                "success": True,
+
+            index_details = {
                 "index_id": index_id,
                 "dimension": dimension,
                 "type": index_type,
+                "is_trained": getattr(index, "is_trained", True),
+                "requires_training": main_type in ["IVF", "PQ"]
+            }
+
+            print(f"Created index {index_id} with dimension {dimension}, type {index_type}")
+            return {
+                "success": True,
+                **index_details
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -230,6 +352,51 @@ class FaissIndex:
                     }
                 )
             return {"success": True, "indexes": index_list}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def train_index(self, index_id, training_vectors):
+        """
+        Train an index with the provided vectors (required for IVF indices).
+
+        Args:
+            index_id (str): ID of the target index
+            training_vectors (list): List of vectors to use for training
+
+        Returns:
+            dict: Response containing success status or error message
+        """
+        if index_id not in self.indexes:
+            return {"success": False, "error": f"Index {index_id} does not exist"}
+
+        try:
+            index = self.indexes[index_id]
+
+            # Check if index requires training
+            if not hasattr(index, 'is_trained') or index.is_trained:
+                return {"success": False, "error": "This index type does not require training"}
+
+            # Convert vectors to numpy array and validate dimensions
+            vectors_np = np.array(training_vectors, dtype=np.float32)
+            if vectors_np.shape[1] != self.dimensions[index_id]:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Training vector dimension mismatch. "
+                        f"Expected {self.dimensions[index_id]}, got {vectors_np.shape[1]}"
+                    ),
+                }
+
+            # Train the index
+            index.train(vectors_np)
+
+            print(f"Trained index {index_id} with {len(training_vectors)} vectors")
+            return {
+                "success": True,
+                "index_id": index_id,
+                "trained_with": len(training_vectors),
+                "is_trained": index.is_trained
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -383,6 +550,12 @@ def run_server(
 
                 elif action == "list_indexes":
                     response = faiss_index.list_indexes()
+
+                elif action == "train_index":
+                    response = faiss_index.train_index(
+                        request.get("index_id", ""),
+                        request.get("training_vectors", []),
+                    )
 
                 elif action == "ping":
                     response = {"success": True, "message": "pong", "time": time.time()}

@@ -39,6 +39,16 @@ import uuid
 import numpy as np
 from typing import Tuple
 
+# Import faiss for constants and compatibility
+try:
+    import faiss
+except ImportError:
+    # Define constants for when faiss isn't available
+    class FaissConstants:
+        METRIC_L2 = 0
+        METRIC_INNER_PRODUCT = 1
+    faiss = FaissConstants()
+
 from .client import get_client
 
 
@@ -258,6 +268,862 @@ class IndexFlatL2:
                 dimension=self.d,
                 index_type="L2"
             )
+
+        # Reset all local state
+        self.ntotal = 0
+        self._vector_mapping = {}
+        self._next_idx = 0
+
+    def __del__(self) -> None:
+        """
+        Clean up resources when the index is deleted.
+        """
+        # Local index will be cleaned up by garbage collector
+        pass
+
+
+class IndexIVFFlat:
+    """
+    Proxy implementation of FAISS IndexIVFFlat
+
+    This class mimics the behavior of FAISS IndexIVFFlat, supporting IVF indices
+    with quantization to trade accuracy for speed and memory. It requires training
+    before vectors can be added.
+
+    Attributes:
+        d (int): Vector dimension
+        nlist (int): Number of centroids/clusters for the IVF
+        metric_type (str): Distance metric type ('L2' or 'IP')
+        is_trained (bool): Whether the index has been trained
+        ntotal (int): Total number of vectors in the index
+        name (str): Unique identifier for the index
+        index_id (str): Server-side index identifier (when in remote mode)
+        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _next_idx (int): Next available local index (remote mode only)
+        _local_index: Local FAISS index (local mode only)
+        _using_remote (bool): Whether we're using remote or local implementation
+    """
+
+    def __init__(self, quantizer, d: int, nlist: int, metric_type=faiss.METRIC_L2):
+        """
+        Initialize the IVF index with specified dimension and parameters.
+
+        Args:
+            quantizer: The quantizer object (typically a flat index)
+            d (int): Vector dimension
+            nlist (int): Number of clusters/cells for the IVF index
+            metric_type: Distance metric (faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT)
+        """
+        # Store dimension and initialize basic attributes
+        self.d = d
+        self.nlist = nlist
+        self.is_trained = False  # IVF indices need training
+        self.ntotal = 0  # Track total vectors
+
+        # Determine metric type from input
+        self.metric_type = "L2"
+        if metric_type == faiss.METRIC_INNER_PRODUCT:
+            self.metric_type = "IP"
+
+        # Generate unique name for the index
+        self.name = f"index-ivf-{nlist}-{self.metric_type.lower()}-{uuid.uuid4().hex[:8]}"
+
+        # Check if we should use remote implementation
+        try:
+            # Import here to avoid circular imports
+            import faissx
+
+            # Check if API key or server URL are set - this indicates configure() was called
+            configured = bool(faissx._API_KEY) or (
+                faissx._API_URL != "tcp://localhost:45678"
+            )
+
+            # If configure was explicitly called, use remote mode
+            if configured:
+                self._using_remote = True
+                self.client = get_client()
+                self._local_index = None
+
+                # Determine index type identifier
+                index_type = f"IVF{nlist}"
+                if self.metric_type == "IP":
+                    index_type = f"{index_type}_IP"
+
+                # Create index on server
+                response = self.client.create_index(
+                    name=self.name,
+                    dimension=self.d,
+                    index_type=index_type
+                )
+
+                self.index_id = response.get("index_id", self.name)
+                self.is_trained = response.get("is_trained", False)
+
+                # Initialize local tracking of vectors for remote mode
+                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._next_idx = 0  # Counter for local indices
+                return
+
+        except Exception as e:
+            import logging
+            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+
+        # Use local FAISS implementation by default
+        self._using_remote = False
+        self._local_index = None
+
+        # Import local FAISS here to avoid module-level dependency
+        try:
+            import faiss
+            self._local_index = faiss.IndexIVFFlat(quantizer, d, nlist, metric_type)
+            self.index_id = self.name  # Use name as ID for consistency
+        except ImportError as e:
+            raise ImportError(f"Failed to import FAISS for local mode: {e}")
+
+    def train(self, x: np.ndarray) -> None:
+        """
+        Train the index with the provided vectors.
+
+        Args:
+            x (np.ndarray): Training vectors, shape (n, d)
+
+        Raises:
+            ValueError: If vector shape doesn't match index dimension or already trained
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        # Convert to float32 if needed (FAISS requirement)
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            self._local_index.train(vectors)
+            self.is_trained = self._local_index.is_trained
+            return
+
+        # Train the remote index
+        result = self.client.train_index(self.index_id, vectors)
+
+        # Update local state based on training result
+        if result.get("success", False):
+            self.is_trained = result.get("is_trained", True)
+
+    def add(self, x: np.ndarray) -> None:
+        """
+        Add vectors to the index.
+
+        Args:
+            x (np.ndarray): Vectors to add, shape (n, d)
+
+        Raises:
+            ValueError: If vector shape doesn't match index dimension or index not trained
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        if not self.is_trained:
+            raise RuntimeError("Index must be trained before adding vectors")
+
+        # Convert to float32 if needed (FAISS requirement)
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            self._local_index.add(vectors)
+            self.ntotal = self._local_index.ntotal
+            return
+
+        # Add vectors to remote index (remote mode)
+        result = self.client.add_vectors(self.index_id, vectors)
+
+        # Update local tracking if addition was successful
+        if result.get("success", False):
+            added_count = result.get("count", 0)
+            # Create mapping for each added vector
+            for i in range(added_count):
+                self._vector_mapping[self._next_idx] = {
+                    "local_idx": self._next_idx,
+                    "server_idx": self.ntotal + i
+                }
+                self._next_idx += 1
+
+            self.ntotal += added_count
+
+    def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Search for k nearest neighbors for each query vector.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            k (int): Number of nearest neighbors to return
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]:
+                - Distances array of shape (n, k)
+                - Indices array of shape (n, k)
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        if not self.is_trained:
+            raise RuntimeError("Index must be trained before searching")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            return self._local_index.search(query_vectors, k)
+
+        # Perform search on remote index (remote mode)
+        result = self.client.search(
+            self.index_id,
+            query_vectors=query_vectors,
+            k=k
+        )
+
+        n = x.shape[0]  # Number of query vectors
+        search_results = result.get("results", [])
+
+        # Initialize output arrays with default values
+        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        idx = np.full((n, k), -1, dtype=np.int64)
+
+        # Process results for each query vector
+        for i in range(min(n, len(search_results))):
+            result_data = search_results[i]
+            result_distances = result_data.get("distances", [])
+            result_indices = result_data.get("indices", [])
+
+            # Fill in results for this query vector
+            for j in range(min(k, len(result_distances))):
+                distances[i, j] = result_distances[j]
+
+                # Map server index back to local index
+                server_idx = result_indices[j]
+                found = False
+                for local_idx, info in self._vector_mapping.items():
+                    if info["server_idx"] == server_idx:
+                        idx[i, j] = local_idx
+                        found = True
+                        break
+
+                # Keep -1 if mapping not found
+                if not found:
+                    idx[i, j] = -1
+
+        return distances, idx
+
+    def reset(self) -> None:
+        """
+        Reset the index to its initial state.
+        """
+        if not self._using_remote:
+            # Reset local FAISS index
+            self._local_index.reset()
+            self.ntotal = 0
+            self.is_trained = False
+            return
+
+        # Remote mode reset
+        try:
+            # Create new index with modified name
+            new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+
+            # Determine index type identifier
+            index_type = f"IVF{self.nlist}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=new_name,
+                dimension=self.d,
+                index_type=index_type
+            )
+
+            self.index_id = response.get("index_id", new_name)
+            self.name = new_name
+            self.is_trained = False
+        except Exception:
+            # Recreate with same name if error occurs
+            index_type = f"IVF{self.nlist}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=self.name,
+                dimension=self.d,
+                index_type=index_type
+            )
+
+            self.index_id = response.get("index_id", self.name)
+            self.is_trained = False
+
+        # Reset all local state
+        self.ntotal = 0
+        self._vector_mapping = {}
+        self._next_idx = 0
+
+    def __del__(self) -> None:
+        """
+        Clean up resources when the index is deleted.
+        """
+        # Local index will be cleaned up by garbage collector
+        pass
+
+
+class IndexHNSWFlat:
+    """
+    Proxy implementation of FAISS IndexHNSWFlat
+
+    This class mimics the behavior of FAISS IndexHNSWFlat, which implements the
+    Hierarchical Navigable Small World (HNSW) graph structure for efficient similarity search.
+    HNSW provides faster searches than flat indices for large datasets with minimal accuracy loss.
+
+    Attributes:
+        d (int): Vector dimension
+        M (int): Maximum number of connections per node in the HNSW graph
+        metric_type (str): Distance metric type ('L2' or 'IP')
+        is_trained (bool): Whether the index is trained (always True for HNSW)
+        ntotal (int): Total number of vectors in the index
+        name (str): Unique identifier for the index
+        index_id (str): Server-side index identifier (when in remote mode)
+        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _next_idx (int): Next available local index (remote mode only)
+        _local_index: Local FAISS index (local mode only)
+        _using_remote (bool): Whether we're using remote or local implementation
+    """
+
+    def __init__(self, d: int, M: int = 32, metric=faiss.METRIC_L2):
+        """
+        Initialize the HNSW index with specified dimension and parameters.
+
+        Args:
+            d (int): Vector dimension
+            M (int): Maximum number of connections per node in the HNSW graph
+            metric: Distance metric (faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT)
+        """
+        # Store dimension and initialize basic attributes
+        self.d = d
+        self.M = M
+        self.is_trained = True  # HNSW indices are always trained
+        self.ntotal = 0  # Track total vectors
+
+        # Determine metric type from input
+        self.metric_type = "L2"
+        if metric == faiss.METRIC_INNER_PRODUCT:
+            self.metric_type = "IP"
+
+        # Generate unique name for the index
+        self.name = f"index-hnsw-{M}-{self.metric_type.lower()}-{uuid.uuid4().hex[:8]}"
+
+        # Check if we should use remote implementation
+        try:
+            # Import here to avoid circular imports
+            import faissx
+
+            # Check if API key or server URL are set - this indicates configure() was called
+            configured = bool(faissx._API_KEY) or (
+                faissx._API_URL != "tcp://localhost:45678"
+            )
+
+            # If configure was explicitly called, use remote mode
+            if configured:
+                self._using_remote = True
+                self.client = get_client()
+                self._local_index = None
+
+                # Determine index type identifier
+                index_type = f"HNSW{M}"
+                if self.metric_type == "IP":
+                    index_type = f"{index_type}_IP"
+
+                # Create index on server
+                response = self.client.create_index(
+                    name=self.name,
+                    dimension=self.d,
+                    index_type=index_type
+                )
+
+                self.index_id = response.get("index_id", self.name)
+
+                # Initialize local tracking of vectors for remote mode
+                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._next_idx = 0  # Counter for local indices
+                return
+
+        except Exception as e:
+            import logging
+            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+
+        # Use local FAISS implementation by default
+        self._using_remote = False
+        self._local_index = None
+
+        # Import local FAISS here to avoid module-level dependency
+        try:
+            import faiss
+            self._local_index = faiss.IndexHNSWFlat(d, M, metric)
+            self.index_id = self.name  # Use name as ID for consistency
+        except ImportError as e:
+            raise ImportError(f"Failed to import FAISS for local mode: {e}")
+
+    def add(self, x: np.ndarray) -> None:
+        """
+        Add vectors to the index.
+
+        Args:
+            x (np.ndarray): Vectors to add, shape (n, d)
+
+        Raises:
+            ValueError: If vector shape doesn't match index dimension
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        # Convert to float32 if needed (FAISS requirement)
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            self._local_index.add(vectors)
+            self.ntotal = self._local_index.ntotal
+            return
+
+        # Add vectors to remote index (remote mode)
+        result = self.client.add_vectors(self.index_id, vectors)
+
+        # Update local tracking if addition was successful
+        if result.get("success", False):
+            added_count = result.get("count", 0)
+            # Create mapping for each added vector
+            for i in range(added_count):
+                self._vector_mapping[self._next_idx] = {
+                    "local_idx": self._next_idx,
+                    "server_idx": self.ntotal + i
+                }
+                self._next_idx += 1
+
+            self.ntotal += added_count
+
+    def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Search for k nearest neighbors for each query vector.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            k (int): Number of nearest neighbors to return
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]:
+                - Distances array of shape (n, k)
+                - Indices array of shape (n, k)
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            return self._local_index.search(query_vectors, k)
+
+        # Perform search on remote index (remote mode)
+        result = self.client.search(
+            self.index_id,
+            query_vectors=query_vectors,
+            k=k
+        )
+
+        n = x.shape[0]  # Number of query vectors
+        search_results = result.get("results", [])
+
+        # Initialize output arrays with default values
+        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        idx = np.full((n, k), -1, dtype=np.int64)
+
+        # Process results for each query vector
+        for i in range(min(n, len(search_results))):
+            result_data = search_results[i]
+            result_distances = result_data.get("distances", [])
+            result_indices = result_data.get("indices", [])
+
+            # Fill in results for this query vector
+            for j in range(min(k, len(result_distances))):
+                distances[i, j] = result_distances[j]
+
+                # Map server index back to local index
+                server_idx = result_indices[j]
+                found = False
+                for local_idx, info in self._vector_mapping.items():
+                    if info["server_idx"] == server_idx:
+                        idx[i, j] = local_idx
+                        found = True
+                        break
+
+                # Keep -1 if mapping not found
+                if not found:
+                    idx[i, j] = -1
+
+        return distances, idx
+
+    def reset(self) -> None:
+        """
+        Reset the index to its initial state.
+        """
+        if not self._using_remote:
+            # Reset local FAISS index
+            self._local_index.reset()
+            self.ntotal = 0
+            return
+
+        # Remote mode reset
+        try:
+            # Create new index with modified name
+            new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+
+            # Determine index type identifier
+            index_type = f"HNSW{self.M}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=new_name,
+                dimension=self.d,
+                index_type=index_type
+            )
+
+            self.index_id = response.get("index_id", new_name)
+            self.name = new_name
+        except Exception:
+            # Recreate with same name if error occurs
+            index_type = f"HNSW{self.M}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=self.name,
+                dimension=self.d,
+                index_type=index_type
+            )
+
+            self.index_id = response.get("index_id", self.name)
+
+        # Reset all local state
+        self.ntotal = 0
+        self._vector_mapping = {}
+        self._next_idx = 0
+
+    def __del__(self) -> None:
+        """
+        Clean up resources when the index is deleted.
+        """
+        # Local index will be cleaned up by garbage collector
+        pass
+
+
+class IndexPQ:
+    """
+    Proxy implementation of FAISS IndexPQ
+
+    This class mimics the behavior of FAISS IndexPQ, which uses Product Quantization
+    for efficient vector compression and similarity search. PQ significantly reduces
+    the memory footprint of vectors while maintaining reasonable search accuracy.
+
+    Attributes:
+        d (int): Vector dimension
+        M (int): Number of subquantizers
+        nbits (int): Number of bits per subquantizer (default 8)
+        metric_type (str): Distance metric type ('L2' or 'IP')
+        is_trained (bool): Whether the index has been trained
+        ntotal (int): Total number of vectors in the index
+        name (str): Unique identifier for the index
+        index_id (str): Server-side index identifier (when in remote mode)
+        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _next_idx (int): Next available local index (remote mode only)
+        _local_index: Local FAISS index (local mode only)
+        _using_remote (bool): Whether we're using remote or local implementation
+    """
+
+    def __init__(self, d: int, M: int = 8, nbits: int = 8, metric=faiss.METRIC_L2):
+        """
+        Initialize the PQ index with specified dimension and parameters.
+
+        Args:
+            d (int): Vector dimension
+            M (int): Number of subquantizers (must be a divisor of d)
+            nbits (int): Number of bits per subquantizer (typically 8)
+            metric: Distance metric (faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT)
+        """
+        # Verify dimension is compatible with the number of subquantizers
+        if d % M != 0:
+            raise ValueError(f"Dimension {d} must be a multiple of M={M}")
+
+        # Store dimension and initialize basic attributes
+        self.d = d
+        self.M = M
+        self.nbits = nbits
+        self.is_trained = False  # PQ indices need training
+        self.ntotal = 0  # Track total vectors
+
+        # Determine metric type from input
+        self.metric_type = "L2"
+        if metric == faiss.METRIC_INNER_PRODUCT:
+            self.metric_type = "IP"
+
+        # Generate unique name for the index
+        self.name = f"index-pq-{M}x{nbits}-{self.metric_type.lower()}-{uuid.uuid4().hex[:8]}"
+
+        # Check if we should use remote implementation
+        try:
+            # Import here to avoid circular imports
+            import faissx
+
+            # Check if API key or server URL are set - this indicates configure() was called
+            configured = bool(faissx._API_KEY) or (
+                faissx._API_URL != "tcp://localhost:45678"
+            )
+
+            # If configure was explicitly called, use remote mode
+            if configured:
+                self._using_remote = True
+                self.client = get_client()
+                self._local_index = None
+
+                # Determine index type identifier
+                index_type = f"PQ{M}x{nbits}"
+                if self.metric_type == "IP":
+                    index_type = f"{index_type}_IP"
+
+                # Create index on server
+                response = self.client.create_index(
+                    name=self.name,
+                    dimension=self.d,
+                    index_type=index_type
+                )
+
+                self.index_id = response.get("index_id", self.name)
+                self.is_trained = response.get("is_trained", False)
+
+                # Initialize local tracking of vectors for remote mode
+                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._next_idx = 0  # Counter for local indices
+                return
+
+        except Exception as e:
+            import logging
+            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+
+        # Use local FAISS implementation by default
+        self._using_remote = False
+        self._local_index = None
+
+        # Import local FAISS here to avoid module-level dependency
+        try:
+            import faiss
+            self._local_index = faiss.IndexPQ(d, M, nbits, metric)
+            self.index_id = self.name  # Use name as ID for consistency
+        except ImportError as e:
+            raise ImportError(f"Failed to import FAISS for local mode: {e}")
+
+    def train(self, x: np.ndarray) -> None:
+        """
+        Train the index with the provided vectors.
+
+        Args:
+            x (np.ndarray): Training vectors, shape (n, d)
+
+        Raises:
+            ValueError: If vector shape doesn't match index dimension or already trained
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        # Convert to float32 if needed (FAISS requirement)
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            self._local_index.train(vectors)
+            self.is_trained = self._local_index.is_trained
+            return
+
+        # Train the remote index
+        result = self.client.train_index(self.index_id, vectors)
+
+        # Update local state based on training result
+        if result.get("success", False):
+            self.is_trained = result.get("is_trained", True)
+
+    def add(self, x: np.ndarray) -> None:
+        """
+        Add vectors to the index.
+
+        Args:
+            x (np.ndarray): Vectors to add, shape (n, d)
+
+        Raises:
+            ValueError: If vector shape doesn't match index dimension or index not trained
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        if not self.is_trained:
+            raise RuntimeError("Index must be trained before adding vectors")
+
+        # Convert to float32 if needed (FAISS requirement)
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            self._local_index.add(vectors)
+            self.ntotal = self._local_index.ntotal
+            return
+
+        # Add vectors to remote index (remote mode)
+        result = self.client.add_vectors(self.index_id, vectors)
+
+        # Update local tracking if addition was successful
+        if result.get("success", False):
+            added_count = result.get("count", 0)
+            # Create mapping for each added vector
+            for i in range(added_count):
+                self._vector_mapping[self._next_idx] = {
+                    "local_idx": self._next_idx,
+                    "server_idx": self.ntotal + i
+                }
+                self._next_idx += 1
+
+            self.ntotal += added_count
+
+    def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Search for k nearest neighbors for each query vector.
+
+        Args:
+            x (np.ndarray): Query vectors, shape (n, d)
+            k (int): Number of nearest neighbors to return
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]:
+                - Distances array of shape (n, k)
+                - Indices array of shape (n, k)
+
+        Raises:
+            ValueError: If query vector shape doesn't match index dimension
+        """
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+
+        if not self.is_trained:
+            raise RuntimeError("Index must be trained before searching")
+
+        # Convert query vectors to float32
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        if not self._using_remote:
+            # Use local FAISS implementation directly
+            return self._local_index.search(query_vectors, k)
+
+        # Perform search on remote index (remote mode)
+        result = self.client.search(
+            self.index_id,
+            query_vectors=query_vectors,
+            k=k
+        )
+
+        n = x.shape[0]  # Number of query vectors
+        search_results = result.get("results", [])
+
+        # Initialize output arrays with default values
+        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        idx = np.full((n, k), -1, dtype=np.int64)
+
+        # Process results for each query vector
+        for i in range(min(n, len(search_results))):
+            result_data = search_results[i]
+            result_distances = result_data.get("distances", [])
+            result_indices = result_data.get("indices", [])
+
+            # Fill in results for this query vector
+            for j in range(min(k, len(result_distances))):
+                distances[i, j] = result_distances[j]
+
+                # Map server index back to local index
+                server_idx = result_indices[j]
+                found = False
+                for local_idx, info in self._vector_mapping.items():
+                    if info["server_idx"] == server_idx:
+                        idx[i, j] = local_idx
+                        found = True
+                        break
+
+                # Keep -1 if mapping not found
+                if not found:
+                    idx[i, j] = -1
+
+        return distances, idx
+
+    def reset(self) -> None:
+        """
+        Reset the index to its initial state.
+        """
+        if not self._using_remote:
+            # Reset local FAISS index
+            self._local_index.reset()
+            self.ntotal = 0
+            self.is_trained = False
+            return
+
+        # Remote mode reset
+        try:
+            # Create new index with modified name
+            new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+
+            # Determine index type identifier
+            index_type = f"PQ{self.M}x{self.nbits}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=new_name,
+                dimension=self.d,
+                index_type=index_type
+            )
+
+            self.index_id = response.get("index_id", new_name)
+            self.name = new_name
+            self.is_trained = False
+        except Exception:
+            # Recreate with same name if error occurs
+            index_type = f"PQ{self.M}x{self.nbits}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=self.name,
+                dimension=self.d,
+                index_type=index_type
+            )
+
+            self.index_id = response.get("index_id", self.name)
+            self.is_trained = False
 
         # Reset all local state
         self.ntotal = 0
