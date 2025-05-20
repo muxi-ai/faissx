@@ -57,7 +57,11 @@ This document outlines the current status and next steps for the FAISSx project,
 - [x] Improve code quality and linter compliance
 
 ### Advanced Features
-- [x] Optimize persistence layer for large indices
+- [✓] Basic persistence layer optimizations (client-side):
+  - Memory mapping support
+  - Basic memory management
+  - I/O flags for improved performance
+- [ ] Advanced persistence layer optimizations (server-side) - deferred to future release
 - [x] Add GPU support via FAISS GPU indices (Client side; local mode)
 - [ ] Add GPU support via FAISS GPU indices (Server side) - deferred to future release
 
@@ -94,18 +98,28 @@ This document outlines the current status and next steps for the FAISSx project,
    - [x] Optimization controls:
      - [x] Fine-grained parameters
      - [x] Memory management options
+   - [x] Error recovery and reconnection capabilities
 2. ~~Create benchmarking tools~~ ✅ Done
 3. ~~Add performance optimizations~~ ✅ Done
 
 ### Future Work (Low Priority)
 The following items are deferred to future releases:
+
+#### Server-Side Enhancements
 1. GPU support for server-side operations
-2. Monitoring dashboard
-3. Additional language clients (TypeScript, Go, etc.)
-4. Add error recovery and reconnection
-5. Implement caching for frequently accessed indices
+2. Advanced persistence optimizations for large indices:
+   - Progressive/lazy loading
+   - Optimized metadata storage with MessagePack
+   - Index chunking and sharding
+   - Compression for stored indices
+   - Adaptive chunk sizing
+3. Monitoring dashboard and performance metrics
+4. Implement caching for frequently accessed indices
+5. High availability configuration
 6. Support for distributed indices
-7. High availability configuration
+
+#### Ecosystem Extensions
+1. Additional language clients (TypeScript, Go, etc.)
 
 ### Completed Project v0.0.3 ✅
 As of version 0.0.3, FAISSx has successfully implemented all high and medium priority features, providing a complete drop-in replacement for FAISS with remote execution capabilities.
@@ -151,6 +165,8 @@ We welcome contributions to the FAISSx project. Here are some ways to get starte
 - **2023-11-27**: ✅ Implemented index modification features for merging and splitting indices
 - **2023-11-28**: ✅ Added optimization controls for fine-grained parameters and memory management
 - **2023-11-29**: ✗ Decided not to implement metadata filtering to maintain strict compatibility with the FAISS API
+- **2023-11-30**: ✓ Implemented basic client-side persistence optimizations while deferring advanced server-side persistence features to future releases
+- **2023-12-01**: ✅ Added error recovery and reconnection capabilities with automatic retries
 
 ## Docker and Container Support
 

@@ -122,6 +122,7 @@ distances, indices = index.search(np.random.rand(1, 128).astype(np.float32), k=5
 | **🔧 Optimization controls** | Fine-grained parameters for performance tuning |
 | **💾 Memory management** | Advanced memory usage control and monitoring |
 | **🔀 Index modification** | Merge and split indices for flexible organization |
+| **🔌 Error recovery** | Automatic retries and reconnection with exponential backoff |
 
 ---
 
@@ -268,6 +269,52 @@ You can configure the client using environment variables:
 - `FAISSX_SERVER`: ZeroMQ server address (default: `tcp://localhost:45678`)
 - `FAISSX_API_KEY`: API key for authentication
 - `FAISSX_TENANT_ID`: Tenant ID for multi-tenant isolation
+
+### Optimization Controls
+
+FAISSx provides fine-grained parameter controls for optimizing search quality, speed, and resource usage:
+
+```python
+# Create an index
+index = faiss.IndexIVFFlat(dimensions, nlist=100)
+
+# Set nprobe parameter to control search quality vs. speed
+index.set_parameter('nprobe', 20)
+
+# Set batch size for operations
+index.set_parameter('batch_size', 5000)
+
+# Configure memory management
+from faissx.client.optimization import memory_manager
+memory_manager.set_option('max_memory_usage_mb', 1024)  # 1GB limit
+memory_manager.set_option('use_memory_mapping', True)   # Use mmap for large indices
+```
+
+These controls allow you to fine-tune performance for different workloads and hardware configurations.
+
+### Error Recovery and Reconnection
+
+FAISSx provides robust error recovery and automatic reconnection capabilities:
+
+```python
+# Import recovery utilities
+from faissx.client.recovery import configure_recovery, on_reconnect, with_retry
+
+# Configure recovery behavior
+configure_recovery(
+    max_retries=5,           # Maximum retry attempts
+    initial_backoff=1.0,     # Initial backoff in seconds
+    backoff_factor=2.0       # Exponential backoff factor
+)
+
+# Register a callback for successful reconnection
+on_reconnect(lambda: print("Reconnected to server!"))
+
+# Use automatic retry for operations
+with_retry(index.add, vectors)
+```
+
+This makes client applications more resilient to network issues and temporary server outages.
 
 ### Supported Index Types
 

@@ -9,8 +9,24 @@
 - Added factory pattern (index_factory) for creating indices from string descriptions
 - Implemented direct index persistence (write_index/read_index)
 - Added index modification capabilities (merging and splitting indices)
-- Created optimization controls with fine-grained parameters
-- Implemented memory management options for efficient resource usage
+- Created optimization controls with fine-grained parameters:
+  - Search parameters: nprobe, efSearch, k_factor
+  - Training parameters: n_iter, min_points_per_centroid
+  - HNSW specific parameters: efConstruction
+  - Batch operation parameters: batch_size
+  - Quality vs speed tradeoff parameters
+- Implemented memory management options for efficient resource usage:
+  - Memory mapping for large indices
+  - Memory usage limits and tracking
+  - Index caching with configurable thresholds
+  - Automatic unloading of unused indices
+  - I/O buffer size controls
+- Added error recovery and reconnection capabilities with automatic retries and exponential backoff:
+  - Configurable retry attempts and backoff strategy
+  - Automatic reconnection on network failures
+  - Event callbacks for disconnect/reconnect events
+  - Connection monitoring with health checks
+  - Manual and automatic recovery options
 
 #### Core Improvements
 - Enhanced modular architecture with consistent interfaces
