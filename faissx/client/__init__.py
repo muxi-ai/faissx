@@ -80,16 +80,13 @@ from .indices import (
     read_index
 )
 
-# Module version
-__version__ = "0.1.0"
-
-# Global configuration variables with environment variable fallbacks
-# These control the client's connection and authentication settings
-_API_URL: Optional[str] = os.environ.get(
-    "FAISSX_SERVER", ""  # Default to empty, which enables local mode
-)
-_API_KEY: Optional[str] = os.environ.get("FAISSX_API_KEY", "")  # API key for authentication
-_TENANT_ID: Optional[str] = os.environ.get("FAISSX_TENANT_ID", "")  # Tenant ID for multi-tenancy
+# # Global configuration variables with environment variable fallbacks
+# # These control the client's connection and authentication settings
+# _API_URL: Optional[str] = os.environ.get(
+#     "FAISSX_SERVER", ""  # Default to empty, which enables local mode
+# )
+# _API_KEY: Optional[str] = os.environ.get("FAISSX_API_KEY", "")  # API key for authentication
+# _TENANT_ID: Optional[str] = os.environ.get("FAISSX_TENANT_ID", "")  # Tenant ID for multi-tenancy
 
 # Attempt to import local FAISS for local mode
 try:
