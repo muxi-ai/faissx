@@ -49,7 +49,7 @@ import sys
 from typing import Optional
 
 # Import core client functionality
-from .client import configure, FaissXClient, get_client
+from .client import configure, FaissXClient, get_client, set_api_key, set_api_url
 from .index import (
     IndexFlatL2,
     IndexIVFFlat,
@@ -58,6 +58,8 @@ from .index import (
     IndexIVFPQ,
     IndexScalarQuantizer,
 )
+from . import indices
+from .optimization import IndexParameters, MemoryManager, memory_manager
 
 # Module version
 __version__ = "0.1.0"
