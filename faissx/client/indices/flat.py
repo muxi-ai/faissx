@@ -28,13 +28,11 @@ import uuid
 import numpy as np
 from typing import Tuple
 
-import faiss
-import logging
+# Import the base module which provides access to FAISS
+from .base import logger
 
 from ..client import get_client
 from .base import FAISSxBaseIndex
-
-logger = logging.getLogger(__name__)
 
 
 class IndexFlatL2(FAISSxBaseIndex):
@@ -54,6 +52,9 @@ class IndexFlatL2(FAISSxBaseIndex):
             d: Vector dimension
             use_gpu: Whether to use GPU acceleration (local mode only)
         """
+        # Import the actual faiss module at the top-level scope to ensure it's available
+        import faiss as native_faiss
+
         super().__init__()  # Initialize base class
 
         self.d = d
@@ -67,15 +68,15 @@ class IndexFlatL2(FAISSxBaseIndex):
         client = get_client()
         if client is None:
             # Local mode - create a FAISS index directly
-            self._local_index = faiss.IndexFlatL2(d)
+            self._local_index = native_faiss.IndexFlatL2(d)
 
             # Move to GPU if requested
             if use_gpu:
                 try:
                     import faiss.contrib.gpu   # type: ignore
-                    if faiss.get_num_gpus() > 0:
-                        self._gpu_resources = faiss.StandardGpuResources()
-                        self._local_index = faiss.index_cpu_to_gpu(
+                    if native_faiss.get_num_gpus() > 0:
+                        self._gpu_resources = native_faiss.StandardGpuResources()
+                        self._local_index = native_faiss.index_cpu_to_gpu(
                             self._gpu_resources, 0, self._local_index
                         )
                 except (ImportError, AttributeError):

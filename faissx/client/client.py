@@ -83,9 +83,10 @@ class FaissXClient:
         self.api_key = api_key or _API_KEY
         self.tenant_id = tenant_id or _TENANT_ID
 
-        # Ensure server address is provided
+        # If server address is empty, this is an error - it should be caught by get_client
+        # to enable local mode
         if not self.server:
-            raise ValueError("Server address must be provided")
+            raise ValueError("Server address is empty, using local mode instead")
 
         # Set up ZeroMQ connection
         self.context = zmq.Context()
@@ -522,15 +523,39 @@ def get_client() -> FaissXClient:
     Get or create the singleton client instance.
 
     Returns:
-        Configured FaissXClient instance
+        Configured FaissXClient instance or None if local mode is required
+            - Returns None when server URL is empty or not configured
+            - Returns None when FAISSX_FALLBACK_TO_LOCAL=1 and connection fails
 
-    Raises:
-        RuntimeError: If connection fails or authentication is missing
+    This enables automatic fallback to local mode when:
+    1. No server URL is set
+    2. An empty string is set as the server URL
+    3. Connection to the server fails and fallback is enabled
     """
     global _client
 
+    # Import here to avoid circular imports
+    from . import _API_URL, _FALLBACK_TO_LOCAL
+
+    # Check if server URL is empty or None - force local mode
+    if not _API_URL or _API_URL == "":
+        return None
+
+    # Only create client if not already existing
     if _client is None:
-        _client = FaissXClient()
+        try:
+            _client = FaissXClient()
+        except Exception as e:
+            # If fallback is enabled, return None to use local mode
+            if _FALLBACK_TO_LOCAL:
+                import logging
+                logging.warning(
+                    f"Failed to connect to FAISSx server: {e}, "
+                    f"falling back to local mode"
+                )
+                return None
+            # Otherwise, re-raise the exception
+            raise
 
     return _client
 

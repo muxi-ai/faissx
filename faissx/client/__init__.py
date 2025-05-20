@@ -50,13 +50,20 @@ from typing import Optional
 
 # Import core client functionality
 from .client import configure, FaissXClient, get_client
-from .index import (
+
+# Import index classes directly to expose them at the module level
+from .indices import (
     IndexFlatL2,
     IndexIVFFlat,
     IndexHNSWFlat,
     IndexPQ,
     IndexIVFPQ,
     IndexScalarQuantizer,
+    IndexIDMap,
+    IndexIDMap2,
+    index_factory,
+    write_index,
+    read_index
 )
 
 # Module version
@@ -65,7 +72,7 @@ __version__ = "0.1.0"
 # Global configuration variables with environment variable fallbacks
 # These control the client's connection and authentication settings
 _API_URL: Optional[str] = os.environ.get(
-    "FAISSX_SERVER", "tcp://localhost:45678"  # Default to localhost
+    "FAISSX_SERVER", ""  # Default to empty, which enables local mode
 )
 _API_KEY: Optional[str] = os.environ.get("FAISSX_API_KEY", "")  # API key for authentication
 _TENANT_ID: Optional[str] = os.environ.get("FAISSX_TENANT_ID", "")  # Tenant ID for multi-tenancy
@@ -95,6 +102,11 @@ __all__ = [
     "IndexPQ",  # PQ index implementation
     "IndexIVFPQ",  # IVF PQ index implementation
     "IndexScalarQuantizer",  # Scalar quantizer index implementation
+    "IndexIDMap",  # ID mapping index
+    "IndexIDMap2",  # Extended ID mapping index
+    "index_factory",  # Factory function for creating indices
+    "write_index",  # Write index to disk
+    "read_index",  # Read index from disk
 ]
 
 # Set version to match local FAISS version for compatibility
