@@ -22,11 +22,14 @@ from faissx.client.optimization import memory_manager
 
 # Set up logging to see what's happening
 import logging
-logging.basicConfig(level=logging.INFO,
-                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 # Set random seed for reproducibility
 np.random.seed(42)
+
 
 def generate_data(n_vectors=10000, n_dimensions=128, n_clusters=10):
     """Generate sample vector data for indexing and searching."""
@@ -37,7 +40,7 @@ def generate_data(n_vectors=10000, n_dimensions=128, n_clusters=10):
         n_samples=n_vectors,
         n_features=n_dimensions,
         centers=n_clusters,
-        cluster_std=10.0
+        cluster_std=10.0,
     )
 
     # Normalize vectors (optional but recommended for some distance metrics)
@@ -45,8 +48,8 @@ def generate_data(n_vectors=10000, n_dimensions=128, n_clusters=10):
     vectors = vectors / norms
 
     # Split into database and query vectors
-    db_vectors = vectors[:n_vectors-100].astype(np.float32)
-    query_vectors = vectors[n_vectors-100:].astype(np.float32)
+    db_vectors = vectors[: n_vectors - 100].astype(np.float32)
+    query_vectors = vectors[n_vectors - 100:].astype(np.float32)
 
     return db_vectors, query_vectors
 
@@ -67,11 +70,11 @@ def test_flat_index_parameters():
     print(f"Added {index.ntotal} vectors to the index")
 
     # Set k_factor parameter (for oversampling)
-    index.set_parameter('k_factor', 2.0)
+    index.set_parameter("k_factor", 2.0)
     print(f"Set k_factor to {index.get_parameter('k_factor')}")
 
     # Set batch size parameter
-    index.set_parameter('batch_size', 500)
+    index.set_parameter("batch_size", 500)
     print(f"Set batch_size to {index.get_parameter('batch_size')}")
 
     # Check all parameters
@@ -103,7 +106,9 @@ def compare_ivf_parameters():
     print("\n===== Comparing IVF Index with Different nprobe Settings =====")
 
     # Generate data
-    db_vectors, query_vectors = generate_data(n_vectors=20000, n_dimensions=128, n_clusters=100)
+    db_vectors, query_vectors = generate_data(
+        n_vectors=20000, n_dimensions=128, n_clusters=100
+    )
     n_dimensions = db_vectors.shape[1]
 
     # Create an IVF index with 100 centroids
@@ -133,7 +138,7 @@ def compare_ivf_parameters():
     print("\nTesting different nprobe values:")
     for nprobe in nprobe_values:
         # Set nprobe parameter
-        index.set_parameter('nprobe', nprobe)
+        index.set_parameter("nprobe", nprobe)
 
         # Perform search
         start_time = time.time()
@@ -155,19 +160,19 @@ def compare_ivf_parameters():
     # Plot the results
     plt.figure(figsize=(10, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(nprobe_values, times, 'o-')
-    plt.xlabel('nprobe')
-    plt.ylabel('Search time (s)')
-    plt.title('Search Time vs nprobe')
+    plt.plot(nprobe_values, times, "o-")
+    plt.xlabel("nprobe")
+    plt.ylabel("Search time (s)")
+    plt.title("Search Time vs nprobe")
 
     plt.subplot(1, 2, 2)
-    plt.plot(nprobe_values, recall_rates, 'o-')
-    plt.xlabel('nprobe')
-    plt.ylabel('Recall@10')
-    plt.title('Recall vs nprobe')
+    plt.plot(nprobe_values, recall_rates, "o-")
+    plt.xlabel("nprobe")
+    plt.ylabel("Recall@10")
+    plt.title("Recall vs nprobe")
 
     plt.tight_layout()
-    plt.savefig('ivf_parameter_comparison.png')
+    plt.savefig("ivf_parameter_comparison.png")
     print("Saved plot to 'ivf_parameter_comparison.png'")
 
 
@@ -177,10 +182,10 @@ def test_memory_management():
 
     # Set memory management options
     print("Setting memory management options...")
-    memory_manager.set_option('max_memory_usage_mb', 1024)  # 1GB limit
-    memory_manager.set_option('use_memory_mapping', True)
-    memory_manager.set_option('index_cache_size', 50)
-    memory_manager.set_option('auto_unload_unused_indices', True)
+    memory_manager.set_option("max_memory_usage_mb", 1024)  # 1GB limit
+    memory_manager.set_option("use_memory_mapping", True)
+    memory_manager.set_option("index_cache_size", 50)
+    memory_manager.set_option("auto_unload_unused_indices", True)
 
     # Display all options
     print("\nCurrent memory management settings:")
@@ -237,7 +242,7 @@ def test_hnsw_parameters():
 
     # Set parameters before adding vectors
     print("Setting efConstruction parameter...")
-    index.set_parameter('efConstruction', efConstruction)
+    index.set_parameter("efConstruction", efConstruction)
 
     # Add vectors
     print("Adding vectors...")
@@ -259,7 +264,7 @@ def test_hnsw_parameters():
     print("\nTesting different efSearch values:")
     for ef in ef_search_values:
         # Set efSearch parameter
-        index.set_parameter('efSearch', ef)
+        index.set_parameter("efSearch", ef)
 
         # Perform search
         start_time = time.time()
@@ -281,19 +286,19 @@ def test_hnsw_parameters():
     # Plot the results
     plt.figure(figsize=(10, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(ef_search_values, times, 'o-')
-    plt.xlabel('efSearch')
-    plt.ylabel('Search time (s)')
-    plt.title('Search Time vs efSearch')
+    plt.plot(ef_search_values, times, "o-")
+    plt.xlabel("efSearch")
+    plt.ylabel("Search time (s)")
+    plt.title("Search Time vs efSearch")
 
     plt.subplot(1, 2, 2)
-    plt.plot(ef_search_values, recall_rates, 'o-')
-    plt.xlabel('efSearch')
-    plt.ylabel('Recall@10')
-    plt.title('Recall vs efSearch')
+    plt.plot(ef_search_values, recall_rates, "o-")
+    plt.xlabel("efSearch")
+    plt.ylabel("Recall@10")
+    plt.title("Recall vs efSearch")
 
     plt.tight_layout()
-    plt.savefig('hnsw_parameter_comparison.png')
+    plt.savefig("hnsw_parameter_comparison.png")
     print("Saved plot to 'hnsw_parameter_comparison.png'")
 
 
