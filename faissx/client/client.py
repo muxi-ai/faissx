@@ -244,6 +244,7 @@ class FaissXClient:
         index_id: str,
         query_vectors: np.ndarray,
         k: int = 10,
+        params: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         Search for similar vectors in an index.
@@ -252,6 +253,7 @@ class FaissXClient:
             index_id: ID of the index to search
             query_vectors: Query vectors to find matches for
             k: Number of nearest neighbors to return
+            params: Additional search parameters (e.g., nprobe for IVF indices)
 
         Returns:
             Dictionary containing search results and distances
@@ -268,6 +270,10 @@ class FaissXClient:
             "k": k
         }
 
+        # Add search parameters if provided
+        if params:
+            request["params"] = params
+
         return self._send_request(request)
 
     def batch_search(
@@ -275,7 +281,8 @@ class FaissXClient:
         index_id: str,
         query_vectors: np.ndarray,
         k: int = 10,
-        batch_size: int = 100
+        batch_size: int = 100,
+        params: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         Search for similar vectors in batches for improved performance.
@@ -288,6 +295,7 @@ class FaissXClient:
             query_vectors: Query vectors to find matches for
             k: Number of nearest neighbors to return
             batch_size: Size of each batch (default: 100 queries)
+            params: Additional search parameters (e.g., nprobe for IVF indices)
 
         Returns:
             Dictionary containing combined search results and distances
@@ -303,7 +311,7 @@ class FaissXClient:
             batch = query_vectors[i:min(i+batch_size, total_queries)]
 
             # Search this batch
-            batch_result = self.search(index_id, batch, k)
+            batch_result = self.search(index_id, batch, k, params)
 
             # Check for errors
             if not batch_result.get("success", False):

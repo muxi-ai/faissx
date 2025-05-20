@@ -32,6 +32,9 @@ from .hnsw_flat import IndexHNSWFlat
 from .pq import IndexPQ
 from .ivf_pq import IndexIVFPQ
 from .scalar_quantizer import IndexScalarQuantizer
+# IndexIDMap provides custom IDs for vectors
+# IndexIDMap2 extends it with vector update functionality
+from .id_map import IndexIDMap, IndexIDMap2
 
 __all__ = [
     'IndexFlatL2',
@@ -40,4 +43,6 @@ __all__ = [
     'IndexPQ',
     'IndexIVFPQ',
     'IndexScalarQuantizer',
+    'IndexIDMap',
+    'IndexIDMap2',
 ]

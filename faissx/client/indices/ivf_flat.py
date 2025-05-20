@@ -37,6 +37,7 @@ class IndexIVFFlat:
         _using_remote (bool): Whether we're using remote or local implementation
         _gpu_resources: GPU resources if using GPU (local mode only)
         _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
+        _nprobe (int): Number of clusters to search (default: 1)
     """
 
     def __init__(self, quantizer, d: int, nlist: int, metric_type=faiss.METRIC_L2):
@@ -58,6 +59,7 @@ class IndexIVFFlat:
         # Initialize state variables
         self.is_trained = False
         self.ntotal = 0
+        self._nprobe = 1  # Default number of probes
 
         # Initialize GPU-related attributes
         self._use_gpu = False
@@ -227,6 +229,30 @@ class IndexIVFFlat:
 
             self.ntotal += added_count
 
+    def set_nprobe(self, nprobe: int) -> None:
+        """
+        Set the number of clusters to visit during search (nprobe).
+
+        Higher values of nprobe will give more accurate results at the cost of
+        slower search. For IVF indices, nprobe should be between 1 and nlist.
+
+        Args:
+            nprobe (int): Number of clusters to search (between 1 and nlist)
+
+        Raises:
+            ValueError: If nprobe is less than 1 or greater than nlist
+        """
+        if nprobe < 1:
+            raise ValueError(f"nprobe must be at least 1, got {nprobe}")
+        if nprobe > self.nlist:
+            raise ValueError(f"nprobe must not exceed nlist ({self.nlist}), got {nprobe}")
+
+        self._nprobe = nprobe
+
+        # If using local implementation, update the index directly
+        if not self._using_remote and self._local_index is not None:
+            self._local_index.nprobe = nprobe
+
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Search for k nearest neighbors for each query vector.
@@ -254,14 +280,18 @@ class IndexIVFFlat:
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
         if not self._using_remote:
+            # Set nprobe for local index before searching
+            self._local_index.nprobe = self._nprobe
             # Use local FAISS implementation directly
             return self._local_index.search(query_vectors, k)
 
         # Perform search on remote index (remote mode)
+        # Include nprobe parameter in the search request
         result = self.client.search(
             self.index_id,
             query_vectors=query_vectors,
-            k=k
+            k=k,
+            params={"nprobe": self._nprobe}  # Send nprobe parameter to server
         )
 
         n = x.shape[0]  # Number of query vectors
