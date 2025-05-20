@@ -77,7 +77,9 @@ class IndexIVFFlat:
         self.d = d
         self.nlist = nlist
         # Convert metric type to string representation for remote mode
-        self.metric_type = "IP" if metric_type == faiss_local.METRIC_INNER_PRODUCT else "L2"
+        self.metric_type = (
+            "IP" if metric_type == faiss_local.METRIC_INNER_PRODUCT else "L2"
+        )
 
         # Initialize state variables
         self.is_trained = False
@@ -142,7 +144,8 @@ class IndexIVFFlat:
             try:
                 # Import GPU-specific module
                 try:
-                    import faiss_local.contrib.gpu
+                    import faiss_local.contrib.gpu  # type: ignore
+
                     ngpus = faiss_local.get_num_gpus()
                 except (ImportError, AttributeError):
                     ngpus = 0
@@ -155,7 +158,9 @@ class IndexIVFFlat:
                     # Create CPU index first
                     if isinstance(quantizer, IndexFlatL2) and quantizer._use_gpu:
                         # If the quantizer is already on GPU, get the CPU version
-                        cpu_quantizer = faiss_local.index_gpu_to_cpu(quantizer._local_index)
+                        cpu_quantizer = faiss_local.index_gpu_to_cpu(
+                            quantizer._local_index
+                        )
                     else:
                         # Otherwise, use the provided quantizer directly
                         cpu_quantizer = (
@@ -165,7 +170,9 @@ class IndexIVFFlat:
                         )
 
                     # Create CPU index and convert to GPU
-                    cpu_index = faiss_local.IndexIVFFlat(cpu_quantizer, d, nlist, metric_type)
+                    cpu_index = faiss_local.IndexIVFFlat(
+                        cpu_quantizer, d, nlist, metric_type
+                    )
                     self._local_index = faiss_local.index_cpu_to_gpu(
                         self._gpu_resources, 0, cpu_index
                     )
@@ -174,14 +181,26 @@ class IndexIVFFlat:
                 else:
                     # No GPUs available, use CPU version
                     self._local_index = faiss_local.IndexIVFFlat(
-                        quantizer._local_index if hasattr(quantizer, "_local_index") else quantizer,
-                        d, nlist, metric_type
+                        (
+                            quantizer._local_index
+                            if hasattr(quantizer, "_local_index")
+                            else quantizer
+                        ),
+                        d,
+                        nlist,
+                        metric_type,
                     )
             except (ImportError, AttributeError):
                 # GPU support not available in this FAISS build
                 self._local_index = faiss_local.IndexIVFFlat(
-                    quantizer._local_index if hasattr(quantizer, "_local_index") else quantizer,
-                    d, nlist, metric_type
+                    (
+                        quantizer._local_index
+                        if hasattr(quantizer, "_local_index")
+                        else quantizer
+                    ),
+                    d,
+                    nlist,
+                    metric_type,
                 )
 
             self.index_id = self.name  # Use name as ID for consistency
@@ -529,7 +548,12 @@ class IndexIVFFlat:
         Clean up resources when the index is deleted.
         """
         # Clean up GPU resources if used
-        if hasattr(self, '_use_gpu') and hasattr(self, '_gpu_resources') and self._use_gpu and self._gpu_resources is not None:
+        if (
+            hasattr(self, "_use_gpu")
+            and hasattr(self, "_gpu_resources")
+            and self._use_gpu
+            and self._gpu_resources is not None
+        ):
             # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
             self._gpu_resources = None
 

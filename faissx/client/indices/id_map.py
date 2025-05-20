@@ -276,7 +276,7 @@ class IndexIDMap:
         Reconstruct multiple vectors from their IDs.
         This function handles both calling formats:
         - reconstruct_n(ids, n) - where ids is a list/array of IDs and n is number to reconstruct
-        - reconstruct_n(offset, n) - where offset is the starting index and n is how many to reconstruct
+        - reconstruct_n(offset, n) - offset = starting index and n is how many to reconstruct
 
         Args:
             ids: Array of IDs to reconstruct or starting index
@@ -405,7 +405,7 @@ class IndexIDMap2(IndexIDMap):
         id_array = np.array([id_val], dtype=np.int64)
 
         # Delegate to local FAISS index
-        self._local_index.add_with_ids(vector, id_array)  # IndexIDMap2 will replace existing vectors
+        self._local_index.add_with_ids(vector, id_array)  # IndexIDMap2 replaces existing vectors
 
     def update_vectors(self, ids: np.ndarray, vectors: np.ndarray) -> None:
         """
