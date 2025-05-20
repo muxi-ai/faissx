@@ -676,7 +676,7 @@ class FaissIndex:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def search(self, index_id, query_vectors, k=10):
+    def search(self, index_id, query_vectors, k=10, params=None):
         """
         Search for similar vectors in an index.
 
@@ -684,6 +684,7 @@ class FaissIndex:
             index_id (str): ID of the target index
             query_vectors (list): List of query vectors
             k (int): Number of nearest neighbors to return
+            params (dict, optional): Additional search parameters like nprobe for IVF indices
 
         Returns:
             dict: Response containing search results or error message
@@ -702,6 +703,23 @@ class FaissIndex:
                         f"Expected {self.dimensions[index_id]}, got {query_np.shape[1]}"
                     ),
                 }
+
+            # Check for specialized parameters for IVF indices
+            index = self.indexes[index_id]
+            is_ivf_index = (
+                isinstance(index, faiss.IndexIVFFlat) or
+                hasattr(index, 'nprobe')
+            )
+
+            # Set nprobe parameter if provided in search params
+            if is_ivf_index and params and 'nprobe' in params:
+                nprobe_value = params['nprobe']
+                try:
+                    index.nprobe = int(nprobe_value)
+                    print(f"Set nprobe={nprobe_value} for index {index_id}")
+                except (ValueError, AttributeError) as e:
+                    # Log warning but continue with default nprobe
+                    print(f"Warning: Failed to set nprobe={nprobe_value}: {e}")
 
             # Perform search
             distances, indices = self.indexes[index_id].search(query_np, k)
@@ -985,17 +1003,17 @@ def run_server(
     auth_status = "enabled" if enable_auth else "disabled"
 
     print("\n---------------------------------------------\n")
-    print("███████╗█████╗ ██╗███████╗███████╗ ██╗  ██╗")
-    print("██╔════██╔══██╗██║██╔════╝██╔════╝ ╚██╗██╔╝")
-    print("█████╗ ███████║██║███████╗███████╗  ╚███╔╝")
-    print("██╔══╝ ██╔══██║██║╚════██║╚════██║  ██╔██╗")
-    print("██║    ██║  ██║██║███████║███████║ ██╔╝ ██╗")
-    print("╚═╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝ ╚═╝  ╚═╝")
+    print("███████╗█████╗ ██╗███████╗███████╗")
+    print("██╔════██╔══██╗██║██╔════╝██╔════╝")
+    print("█████╗ ███████║██║███████╗███████╗ ██╗ ██╗")
+    print("██╔══╝ ██╔══██║██║╚════██║╚════██║ ╚═██╔╝")
+    print("██║    ██║  ██║██║███████║███████║ ██╔╝██╗")
+    print("╚═╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝ ╚═╝ ╚═╝")
     print("\n---------------------------------------------")
-    print(f"FAISSx Server v{faissx_version} (c) 2025 Ran Aroussi")
+    print(f"* FAISSx {faissx_version} (c) Ran Aroussi")
+    print(f"* FAISS {faiss.__version__} (c) Meta Platforms, Inc.")
     print("---------------------------------------------")
     print("\nStarting using:")
-    print(f"  - FAISS version: {faiss.__version__}")
     print(f"  - Storage: {storage_mode}")
     print(f"  - Authentication: {auth_status}")
     # print("---------------------------------------------")

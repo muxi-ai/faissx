@@ -242,6 +242,7 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If vector shape doesn't match index dimension or already trained
+            RuntimeError: If remote training operation fails
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -259,11 +260,19 @@ class IndexIVFFlat:
             return
 
         # Train the remote index
-        result = self.client.train_index(self.index_id, vectors)
+        try:
+            result = self.client.train_index(self.index_id, vectors)
 
-        # Update local state based on training result
-        if result.get("success", False):
+            # Check for explicit error response
+            if not result.get("success", False):
+                error_msg = result.get("error", "Unknown error")
+                raise RuntimeError(f"Remote training failed: {error_msg}")
+
+            # Update local state based on training result
             self.is_trained = result.get("is_trained", True)
+        except Exception as e:
+            # Ensure all errors are properly propagated, never fall back to local mode
+            raise RuntimeError(f"Remote training operation failed: {e}")
 
     def add(self, x: np.ndarray) -> None:
         """
@@ -274,6 +283,7 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If vector shape doesn't match index dimension or index not trained
+            RuntimeError: If remote add operation fails
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -294,10 +304,15 @@ class IndexIVFFlat:
             return
 
         # Add vectors to remote index (remote mode)
-        result = self.client.add_vectors(self.index_id, vectors)
+        try:
+            result = self.client.add_vectors(self.index_id, vectors)
 
-        # Update local tracking if addition was successful
-        if result.get("success", False):
+            # Check for explicit error response
+            if not result.get("success", False):
+                error_msg = result.get("error", "Unknown error")
+                raise RuntimeError(f"Remote add operation failed: {error_msg}")
+
+            # Update local tracking if addition was successful
             added_count = result.get("count", 0)
             # Create mapping for each added vector
             for i in range(added_count):
@@ -308,6 +323,9 @@ class IndexIVFFlat:
                 self._next_idx += 1
 
             self.ntotal += added_count
+        except Exception as e:
+            # Ensure all errors are properly propagated, never fall back to local mode
+            raise RuntimeError(f"Remote add operation failed: {e}")
 
     def set_nprobe(self, nprobe: int) -> None:
         """
@@ -350,6 +368,7 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If index is not trained or remote operation fails
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -371,12 +390,21 @@ class IndexIVFFlat:
 
         # Perform search on remote index (remote mode)
         # Include nprobe parameter in the search request
-        result = self.client.search(
-            self.index_id,
-            query_vectors=query_vectors,
-            k=k,
-            params={"nprobe": self._nprobe},  # Send nprobe parameter to server
-        )
+        try:
+            result = self.client.search(
+                self.index_id,
+                query_vectors=query_vectors,
+                k=k,
+                params={"nprobe": self._nprobe}  # Send nprobe parameter to server
+            )
+
+            if not result.get("success", False):
+                error_msg = result.get("error", "Unknown error")
+                raise RuntimeError(f"Remote search failed: {error_msg}")
+
+        except Exception as e:
+            # Ensure all errors are properly propagated, never fall back to local mode
+            raise RuntimeError(f"Remote search operation failed: {e}")
 
         n = x.shape[0]  # Number of query vectors
         search_results = result.get("results", [])
@@ -428,7 +456,7 @@ class IndexIVFFlat:
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
-            RuntimeError: If range search fails or isn't supported by the index type
+            RuntimeError: If range search fails or isn't supported in remote mode
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -447,61 +475,73 @@ class IndexIVFFlat:
                 raise RuntimeError("Local FAISS index does not support range_search")
 
         # Search via remote index
-        result = self.client.range_search(self.index_id, query_vectors, radius)
+        try:
+            # Add nprobe parameter to the search request if possible
+            params = {"nprobe": self._nprobe} if hasattr(self, "_nprobe") else None
 
-        if not result.get("success", False):
-            error = result.get("error", "Unknown error")
-            raise RuntimeError(f"Range search failed: {error}")
+            result = self.client.range_search(
+                self.index_id,
+                query_vectors,
+                radius,
+                params=params
+            )
 
-        # Process results
-        search_results = result.get("results", [])
-        n_queries = len(search_results)
+            if not result.get("success", False):
+                error = result.get("error", "Unknown error")
+                raise RuntimeError(f"Range search failed in remote mode: {error}")
 
-        # Calculate total number of results across all queries
-        total_results = sum(res.get("count", 0) for res in search_results)
+            # Process results
+            search_results = result.get("results", [])
+            n_queries = len(search_results)
 
-        # Initialize arrays
-        lims = np.zeros(n_queries + 1, dtype=np.int64)
-        distances = np.zeros(total_results, dtype=np.float32)
-        indices = np.zeros(total_results, dtype=np.int64)
+            # Calculate total number of results across all queries
+            total_results = sum(res.get("count", 0) for res in search_results)
 
-        # Fill arrays with results
-        offset = 0
-        for i, res in enumerate(search_results):
-            # Set limit boundary for this query
-            lims[i] = offset
+            # Initialize arrays
+            lims = np.zeros(n_queries + 1, dtype=np.int64)
+            distances = np.zeros(total_results, dtype=np.float32)
+            indices = np.zeros(total_results, dtype=np.int64)
 
-            # Get results for this query
-            result_distances = res.get("distances", [])
-            result_indices = res.get("indices", [])
-            count = len(result_distances)
+            # Fill arrays with results
+            offset = 0
+            for i, res in enumerate(search_results):
+                # Set limit boundary for this query
+                lims[i] = offset
 
-            # Copy data to output arrays
-            if count > 0:
-                distances[offset:offset + count] = np.array(
-                    result_distances, dtype=np.float32
-                )
+                # Get results for this query
+                result_distances = res.get("distances", [])
+                result_indices = res.get("indices", [])
+                count = len(result_distances)
 
-                # Map server indices back to local indices
-                mapped_indices = np.zeros(count, dtype=np.int64)
-                for j, server_idx in enumerate(result_indices):
-                    found = False
-                    for local_idx, info in self._vector_mapping.items():
-                        if info["server_idx"] == server_idx:
-                            mapped_indices[j] = local_idx
-                            found = True
-                            break
+                # Copy data to output arrays
+                if count > 0:
+                    distances[offset:offset + count] = np.array(
+                        result_distances, dtype=np.float32
+                    )
 
-                    if not found:
-                        mapped_indices[j] = -1
+                    # Map server indices back to local indices
+                    mapped_indices = np.zeros(count, dtype=np.int64)
+                    for j, server_idx in enumerate(result_indices):
+                        found = False
+                        for local_idx, info in self._vector_mapping.items():
+                            if info["server_idx"] == server_idx:
+                                mapped_indices[j] = local_idx
+                                found = True
+                                break
 
-                indices[offset:offset + count] = mapped_indices
-                offset += count
+                        if not found:
+                            mapped_indices[j] = -1
 
-        # Set final boundary
-        lims[n_queries] = offset
+                    indices[offset:offset + count] = mapped_indices
+                    offset += count
 
-        return lims, distances, indices
+            # Set final boundary
+            lims[n_queries] = offset
+
+            return lims, distances, indices
+        except Exception as e:
+            # Ensure all errors are properly propagated, never fall back to local mode
+            raise RuntimeError(f"Range search failed in remote mode: {e}")
 
     def reset(self) -> None:
         """
@@ -509,6 +549,9 @@ class IndexIVFFlat:
 
         This method removes all vectors from the index but preserves the training state.
         After calling reset(), you don't need to retrain the index.
+
+        Raises:
+            RuntimeError: If remote reset operation fails
         """
         # Remember if the index was trained before reset
         was_trained = self.is_trained
@@ -535,28 +578,22 @@ class IndexIVFFlat:
                 name=new_name, dimension=self.d, index_type=index_type
             )
 
+            if not response.get("success", False):
+                error_msg = response.get("error", "Unknown error")
+                raise RuntimeError(f"Failed to create new index during reset: {error_msg}")
+
             self.index_id = response.get("index_id", new_name)
             self.name = new_name
             # Don't reset training state
             self.is_trained = was_trained
-        except Exception:
-            # Recreate with same name if error occurs
-            index_type = f"IVF{self.nlist}"
-            if self.metric_type == "IP":
-                index_type = f"{index_type}_IP"
 
-            response = self.client.create_index(
-                name=self.name, dimension=self.d, index_type=index_type
-            )
-
-            self.index_id = response.get("index_id", self.name)
-            # Don't reset training state
-            self.is_trained = was_trained
-
-        # Reset all local state
-        self.ntotal = 0
-        self._vector_mapping = {}
-        self._next_idx = 0
+            # Reset all local state
+            self.ntotal = 0
+            self._vector_mapping = {}
+            self._next_idx = 0
+        except Exception as e:
+            # Ensure all errors are properly propagated, never fall back to local mode
+            raise RuntimeError(f"Remote reset operation failed: {e}")
 
     def __del__(self) -> None:
         """
