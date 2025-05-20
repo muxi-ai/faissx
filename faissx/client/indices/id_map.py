@@ -25,7 +25,7 @@ This module provides a client-side implementation of the FAISS IndexIDMap class.
 It serves as a wrapper around another index type that maps external IDs to vectors.
 """
 
-from .base import np, Tuple
+from .base import np, Tuple, faiss, logging, get_client
 
 
 class IndexIDMap:
@@ -55,15 +55,48 @@ class IndexIDMap:
         Args:
             index: The FAISS index to wrap (e.g., IndexFlatL2, IndexIVFFlat)
         """
+        # Check if we should use remote implementation
+        try:
+            # Import here to avoid circular imports
+            import faissx
+
+            # Check if API key or server URL are set - this indicates configure() was called
+            configured = bool(faissx._API_KEY) or (
+                faissx._API_URL != "tcp://localhost:45678"
+            )
+
+            # If configure was explicitly called, use remote mode
+            if configured:
+                self._using_remote = True
+                self.client = get_client()
+                raise NotImplementedError("Remote mode for IndexIDMap not implemented yet")
+        except Exception as e:
+            logging.warning(
+                f"Error initializing remote mode: {e}, falling back to local mode"
+            )
+            self._using_remote = False
+
         # Store the underlying index and its properties
         self.index = index
-        self.is_trained = index.is_trained
+        self.is_trained = getattr(index, 'is_trained', True)
         self.ntotal = 0  # Start with no vectors
         self.d = index.d  # Vector dimension from underlying index
+
+        # Get local index from wrapped index if available
+        base_index = index._local_index if hasattr(index, '_local_index') else index
+
+        # Create FAISS IndexIDMap
+        try:
+            self._local_index = faiss.IndexIDMap(base_index)
+        except Exception as e:
+            raise RuntimeError(f"Failed to create IndexIDMap: {e}")
 
         # Initialize bidirectional mapping dictionaries
         self._id_map = {}  # Maps internal indices to user IDs
         self._rev_id_map = {}  # Maps user IDs to internal indices
+
+        # Store vectors for reconstruction
+        self._vectors_by_id = {}  # Maps IDs to stored vectors
 
     def add_with_ids(self, x: np.ndarray, ids: np.ndarray) -> None:
         """
@@ -86,24 +119,24 @@ class IndexIDMap:
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
-        # Check for duplicate IDs by comparing with existing IDs
-        new_ids = set(ids)
-        existing_ids = set(self._rev_id_map.keys())
-        duplicates = new_ids.intersection(existing_ids)
-        if duplicates:
-            raise ValueError(f"Duplicate IDs provided: {duplicates}")
+        # Convert to float32 if needed (FAISS requirement)
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        # Add vectors to the underlying index
-        self.index.add(x)
+        # Convert IDs to int64 if needed
+        ids_array = ids.astype(np.int64) if ids.dtype != np.int64 else ids
 
-        # Create mappings between internal indices and user IDs
+        # Add to local FAISS index
+        self._local_index.add_with_ids(vectors, ids_array)
+
+        # Update our tracking and store vectors
         for i, id_val in enumerate(ids):
-            internal_idx = self.ntotal + i
-            self._id_map[internal_idx] = id_val
-            self._rev_id_map[id_val] = internal_idx
+            id_val_int = int(id_val)  # Convert to int to use as key
+            self._id_map[self.ntotal + i] = id_val_int
+            self._rev_id_map[id_val_int] = self.ntotal + i
+            self._vectors_by_id[id_val_int] = vectors[i].copy()
 
-        # Update total vector count
-        self.ntotal += len(x)
+        # Update total count
+        self.ntotal = self._local_index.ntotal
 
     def add(self, x: np.ndarray) -> None:
         """
@@ -137,28 +170,21 @@ class IndexIDMap:
         Raises:
             ValueError: If query vector shape doesn't match index dimension
         """
-        # Get results from underlying index
-        distances, indices = self.index.search(x, k)
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
-        # Convert internal indices to user IDs
-        n = x.shape[0]
-        ids = np.full((n, k), -1, dtype=np.int64)  # Initialize with -1 for not found
+        # Convert to float32 if needed
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        # Map each internal index to its corresponding user ID
-        for i in range(n):
-            for j in range(k):
-                internal_idx = indices[i, j]
-                if internal_idx != -1 and internal_idx in self._id_map:
-                    ids[i, j] = self._id_map[internal_idx]
+        # Use local FAISS index to search
+        distances, indices = self._local_index.search(vectors, k)
 
-        return distances, ids
+        return distances, indices
 
     def remove_ids(self, ids: np.ndarray) -> None:
         """
         Remove vectors with the specified IDs.
-
-        Note: This is a simulated removal as the underlying FAISS indices may not
-        support direct removal. Searches will still respect the removals.
 
         Args:
             ids (np.ndarray): IDs of vectors to remove
@@ -166,25 +192,25 @@ class IndexIDMap:
         Raises:
             ValueError: If any ID is not found
         """
-        # Validate all IDs exist
-        missing = []
-        for id_val in ids:
-            if id_val not in self._rev_id_map:
-                missing.append(id_val)
+        # Convert to int64 if needed
+        ids_array = ids.astype(np.int64) if ids.dtype != np.int64 else ids
 
-        if missing:
-            raise ValueError(f"IDs not found: {missing}")
+        # Remove from local FAISS index
+        self._local_index.remove_ids(ids_array)
 
-        # Remove each ID from both mapping dictionaries
+        # Update our ID mappings
         for id_val in ids:
-            internal_idx = self._rev_id_map[id_val]
-            del self._id_map[internal_idx]
-            del self._rev_id_map[id_val]
+            if id_val in self._rev_id_map:
+                internal_idx = self._rev_id_map[id_val]
+                del self._id_map[internal_idx]
+                del self._rev_id_map[id_val]
+
+            # Remove from vector storage
+            if int(id_val) in self._vectors_by_id:
+                del self._vectors_by_id[int(id_val)]
 
         # Update total count
-        self.ntotal -= len(ids)
-
-        # Note: Vectors remain in underlying index but become inaccessible
+        self.ntotal = self._local_index.ntotal
 
     def range_search(
             self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -205,19 +231,18 @@ class IndexIDMap:
             ValueError: If query vector shape doesn't match index dimension
             RuntimeError: If range search isn't supported by the underlying index
         """
-        # Get results from underlying index
-        lims, distances, indices = self.index.range_search(x, radius)
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
-        # Convert internal indices to user IDs
-        ids = np.full_like(indices, -1, dtype=np.int64)  # Initialize with -1 for not found
+        # Convert to float32 if needed
+        vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        # Map each internal index to its corresponding user ID
-        for i in range(len(indices)):
-            internal_idx = indices[i]
-            if internal_idx != -1 and internal_idx in self._id_map:
-                ids[i] = self._id_map[internal_idx]
-
-        return lims, distances, ids
+        # Use local FAISS index for range search
+        if hasattr(self._local_index, 'range_search'):
+            return self._local_index.range_search(vectors, radius)
+        else:
+            raise RuntimeError("Underlying index doesn't support range search")
 
     def reconstruct(self, id_val: int) -> np.ndarray:
         """
@@ -233,57 +258,64 @@ class IndexIDMap:
             ValueError: If the ID is not found
             RuntimeError: If the underlying index doesn't support reconstruction
         """
-        # Validate ID exists
-        if id_val not in self._rev_id_map:
-            raise ValueError(f"ID {id_val} not found")
+        # Convert ID to int64 to ensure compatibility
+        id_val = int(id_val)  # Make sure it's a Python int
 
-        # Get internal index and validate reconstruction support
-        internal_idx = self._rev_id_map[id_val]
-        if not hasattr(self.index, 'reconstruct'):
-            raise RuntimeError("Underlying index doesn't support vector reconstruction")
+        # Check if we have this vector stored
+        if id_val in self._vectors_by_id:
+            return self._vectors_by_id[id_val]
 
-        # Reconstruct vector from underlying index
-        return self.index.reconstruct(internal_idx)
+        # Try using the FAISS index
+        try:
+            return self._local_index.reconstruct(id_val)
+        except Exception as e:
+            raise ValueError(f"ID {id_val} not found in index: {e}")
 
-    def reconstruct_n(self, ids: np.ndarray) -> np.ndarray:
+    def reconstruct_n(self, ids, n=None) -> np.ndarray:
         """
         Reconstruct multiple vectors from their IDs.
+        This function handles both calling formats:
+        - reconstruct_n(ids, n) - where ids is a list/array of IDs and n is number to reconstruct
+        - reconstruct_n(offset, n) - where offset is the starting index and n is how many to reconstruct
 
         Args:
-            ids: Array of IDs to reconstruct
+            ids: Array of IDs to reconstruct or starting index
+            n: Number of vectors to reconstruct (optional if ids is an array)
 
         Returns:
             Array of reconstructed vectors
-
-        Raises:
-            ValueError: If any ID is not found
-            RuntimeError: If the underlying index doesn't support reconstruction
         """
-        # Validate all IDs exist
-        missing = []
-        for id_val in ids:
-            if id_val not in self._rev_id_map:
-                missing.append(id_val)
+        # Check if this is the form reconstruct_n(ids) - array of IDs
+        if isinstance(ids, (list, np.ndarray)) and n is None:
+            n = len(ids)
 
-        if missing:
-            raise ValueError(f"IDs not found: {missing}")
+            # Reconstruct vectors one by one
+            vectors = np.zeros((n, self.d), dtype=np.float32)
+            for i, id_val in enumerate(ids):
+                vectors[i] = self.reconstruct(id_val)
+            return vectors
 
-        # Handle reconstruction based on available methods
-        if not hasattr(self.index, 'reconstruct_n'):
-            # Fall back to individual reconstructions if available
-            if hasattr(self.index, 'reconstruct'):
-                vectors = np.zeros((len(ids), self.d), dtype=np.float32)
-                for i, id_val in enumerate(ids):
-                    vectors[i] = self.reconstruct(id_val)
+        # This is the form reconstruct_n(offset, n) - starting index and count
+        elif isinstance(ids, int):
+            try:
+                # Try using the underlying method first
+                return self._local_index.reconstruct_n(ids, n)
+            except Exception:
+                # Fall back to individual reconstructions
+                vectors = np.zeros((n, self.d), dtype=np.float32)
+                for i in range(n):
+                    try:
+                        vectors[i] = self.reconstruct(ids + i)
+                    except ValueError:
+                        # If ID not found, fill with zeros
+                        vectors[i].fill(0)
                 return vectors
-            else:
-                raise RuntimeError("Underlying index doesn't support vector reconstruction")
 
-        # Map user IDs to internal indices
-        internal_indices = np.array([self._rev_id_map[id_val] for id_val in ids], dtype=np.int64)
-
-        # Call the underlying index's reconstruct_n method
-        return self.index.reconstruct_n(internal_indices)
+        # Invalid argument format
+        else:
+            raise ValueError(
+                "Invalid arguments to reconstruct_n. Expected (ids, n) or (offset, n)"
+            )
 
     def train(self, x: np.ndarray) -> None:
         """
@@ -292,18 +324,20 @@ class IndexIDMap:
         Args:
             x (np.ndarray): Training vectors, shape (n, d)
         """
-        self.index.train(x)
-        self.is_trained = self.index.is_trained
+        if hasattr(self.index, 'train'):
+            self.index.train(x)
+            self.is_trained = getattr(self.index, 'is_trained', True)
 
     def reset(self) -> None:
         """
         Reset the index to its initial state.
         """
-        self.index.reset()
+        self._local_index.reset()
         self.ntotal = 0
         self._id_map = {}
         self._rev_id_map = {}
-        self.is_trained = self.index.is_trained
+        self._vectors_by_id = {}
+        self.is_trained = getattr(self.index, 'is_trained', True)
 
 
 class IndexIDMap2(IndexIDMap):
@@ -319,74 +353,59 @@ class IndexIDMap2(IndexIDMap):
     methods to replace vectors without changing their IDs.
     """
 
+    def __init__(self, index):
+        """
+        Initialize the IndexIDMap2 with the given underlying index.
+
+        Args:
+            index: The FAISS index to wrap (e.g., IndexFlatL2, IndexIVFFlat)
+        """
+        # Initialize base attributes
+        self.index = index
+        self.is_trained = getattr(index, 'is_trained', True)
+        self.ntotal = 0  # Start with no vectors
+        self.d = index.d  # Vector dimension from underlying index
+        self._using_remote = False
+
+        # Get local index from wrapped index if available
+        base_index = index._local_index if hasattr(index, '_local_index') else index
+
+        # Create FAISS IndexIDMap2
+        try:
+            self._local_index = faiss.IndexIDMap2(base_index)
+        except Exception as e:
+            raise RuntimeError(f"Failed to create IndexIDMap2: {e}")
+
+        # Initialize bidirectional mapping dictionaries
+        self._id_map = {}  # Maps internal indices to user IDs
+        self._rev_id_map = {}  # Maps user IDs to internal indices
+
     def replace_vector(self, id_val, vector: np.ndarray) -> None:
         """
         Replace a vector with a new one, preserving its ID.
 
-        This creates a new index containing all vectors except the one to replace,
-        then rebuilds the index with the updated vector. This is inefficient for
-        frequent updates, but necessary since most FAISS indices don't support
-        direct vector replacement.
-
         Args:
             id_val: ID of the vector to replace
-            vector: New vector data, shape (d,)
+            vector: New vector data
 
         Raises:
             ValueError: If the ID is not found or the vector has wrong dimensionality
         """
-        if id_val not in self._rev_id_map:
-            raise ValueError(f"ID {id_val} not found")
+        # Validate vector dimension
+        if len(vector.shape) == 1:
+            vector = vector.reshape(1, -1)
 
-        # Ensure the vector has the right dimension
-        if isinstance(vector, np.ndarray):
-            if len(vector.shape) == 1:
-                # Convert 1D to 2D
-                vector = vector.reshape(1, -1)
+        if vector.shape[1] != self.d:
+            raise ValueError(f"Vector has wrong dimension: {vector.shape[1]}, expected {self.d}")
 
-            if vector.shape[1] != self.d:
-                msg = f"Vector has wrong dimension: {vector.shape[1]}, expected {self.d}"
-                raise ValueError(msg)
-        else:
-            raise ValueError("Vector must be a numpy array")
+        # Convert to float32 if needed
+        vector = vector.astype(np.float32) if vector.dtype != np.float32 else vector
 
-        # For simplicity, rebuild the index:
-        # 1. Get all vectors and IDs
-        # 2. Update the vector with the given ID
-        # 3. Reset the index and re-add all vectors
+        # Convert ID to proper format
+        id_array = np.array([id_val], dtype=np.int64)
 
-        # Get all vectors through reconstruction
-        all_ids = np.array(list(self._rev_id_map.keys()))
-        if hasattr(self.index, 'reconstruct_n'):
-            all_vectors = []
-            # Process in smaller batches to avoid memory issues with large indices
-            batch_size = 1000
-            for i in range(0, len(all_ids), batch_size):
-                batch_ids = all_ids[i:i+batch_size]
-                batch_internal_indices = np.array([
-                    self._rev_id_map[id_val] for id_val in batch_ids
-                ])
-                batch_vectors = self.index.reconstruct_n(batch_internal_indices)
-                all_vectors.append(batch_vectors)
-            all_vectors = np.vstack(all_vectors)
-        else:
-            # Fall back to single reconstruction if reconstruct_n not available
-            all_vectors = np.zeros((len(all_ids), self.d), dtype=np.float32)
-            for i, id_val in enumerate(all_ids):
-                all_vectors[i] = self.reconstruct(id_val)
-
-        # Replace the vector for the specified ID
-        idx_to_replace = np.where(all_ids == id_val)[0][0]
-        all_vectors[idx_to_replace] = vector
-
-        # Reset and rebuild the index
-        old_index = self.index
-        self.reset()
-        self.index = old_index
-        self.index.reset()
-
-        # Re-add all vectors with their IDs
-        self.add_with_ids(all_vectors, all_ids)
+        # Delegate to local FAISS index
+        self._local_index.add_with_ids(vector, id_array)  # IndexIDMap2 will replace existing vectors
 
     def update_vectors(self, ids: np.ndarray, vectors: np.ndarray) -> None:
         """

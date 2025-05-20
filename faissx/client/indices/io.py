@@ -242,11 +242,11 @@ def write_index(index: Any, fname: str) -> None:
 
 def read_index(fname: str, gpu: bool = False) -> Any:
     """
-    Read a FAISSx index from disk.
+    Read a saved FAISSx index from disk.
 
     Args:
-        fname: Input file name containing the saved index
-        gpu: Whether to load the index onto GPU if available
+        fname: Path to the input index file
+        gpu: Whether to try loading the index on GPU if available
 
     Returns:
         The loaded FAISSx index object
@@ -254,6 +254,9 @@ def read_index(fname: str, gpu: bool = False) -> Any:
     Raises:
         ValueError: If the file cannot be read or is not a valid index
     """
+    # Import faiss here to avoid circular imports
+    import faiss
+
     if not os.path.isfile(fname):
         raise ValueError(f"File not found: {fname}")
 

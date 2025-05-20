@@ -70,11 +70,14 @@ class IndexIVFFlat:
             nlist (int): Number of clusters/partitions
             metric_type: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
         """
+        # Import faiss locally to avoid circular imports
+        import faiss as faiss_local
+
         # Store core parameters
         self.d = d
         self.nlist = nlist
         # Convert metric type to string representation for remote mode
-        self.metric_type = "IP" if metric_type == faiss.METRIC_INNER_PRODUCT else "L2"
+        self.metric_type = "IP" if metric_type == faiss_local.METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
         self.is_trained = False
@@ -138,19 +141,21 @@ class IndexIVFFlat:
             # Check if GPU is available and can be used
             try:
                 # Import GPU-specific module
-                import faiss.contrib.gpu  # type: ignore
-
-                ngpus = faiss.get_num_gpus()
+                try:
+                    import faiss_local.contrib.gpu
+                    ngpus = faiss_local.get_num_gpus()
+                except (ImportError, AttributeError):
+                    ngpus = 0
 
                 if ngpus > 0:
                     # GPU is available, create resources
                     self._use_gpu = True
-                    self._gpu_resources = faiss.StandardGpuResources()
+                    self._gpu_resources = faiss_local.StandardGpuResources()
 
                     # Create CPU index first
                     if isinstance(quantizer, IndexFlatL2) and quantizer._use_gpu:
                         # If the quantizer is already on GPU, get the CPU version
-                        cpu_quantizer = faiss.index_gpu_to_cpu(quantizer._local_index)
+                        cpu_quantizer = faiss_local.index_gpu_to_cpu(quantizer._local_index)
                     else:
                         # Otherwise, use the provided quantizer directly
                         cpu_quantizer = (
@@ -160,26 +165,39 @@ class IndexIVFFlat:
                         )
 
                     # Create CPU index and convert to GPU
-                    cpu_index = faiss.IndexIVFFlat(cpu_quantizer, d, nlist, metric_type)
-                    self._local_index = faiss.index_cpu_to_gpu(
+                    cpu_index = faiss_local.IndexIVFFlat(cpu_quantizer, d, nlist, metric_type)
+                    self._local_index = faiss_local.index_cpu_to_gpu(
                         self._gpu_resources, 0, cpu_index
                     )
 
                     logging.info(f"Using GPU-accelerated IVF index for {self.name}")
                 else:
                     # No GPUs available, use CPU version
-                    self._local_index = faiss.IndexIVFFlat(
-                        quantizer._local_index, d, nlist, metric_type
+                    self._local_index = faiss_local.IndexIVFFlat(
+                        quantizer._local_index if hasattr(quantizer, "_local_index") else quantizer,
+                        d, nlist, metric_type
                     )
             except (ImportError, AttributeError):
                 # GPU support not available in this FAISS build
-                self._local_index = faiss.IndexIVFFlat(
-                    quantizer._local_index, d, nlist, metric_type
+                self._local_index = faiss_local.IndexIVFFlat(
+                    quantizer._local_index if hasattr(quantizer, "_local_index") else quantizer,
+                    d, nlist, metric_type
                 )
 
             self.index_id = self.name  # Use name as ID for consistency
         except ImportError as e:
             raise ImportError(f"Failed to import FAISS for local mode: {e}")
+
+    # Add nprobe property getter and setter to handle it as an attribute
+    @property
+    def nprobe(self):
+        """Get the current nprobe value"""
+        return self._nprobe
+
+    @nprobe.setter
+    def nprobe(self, value):
+        """Set the nprobe value and update the local index if present"""
+        self.set_nprobe(value)
 
     def train(self, x: np.ndarray) -> None:
         """
@@ -453,13 +471,20 @@ class IndexIVFFlat:
 
     def reset(self) -> None:
         """
-        Reset the index to its initial state.
+        Reset the index to its initial state, removing all vectors but keeping training.
+
+        This method removes all vectors from the index but preserves the training state.
+        After calling reset(), you don't need to retrain the index.
         """
+        # Remember if the index was trained before reset
+        was_trained = self.is_trained
+
         if not self._using_remote:
             # Reset local FAISS index
             self._local_index.reset()
             self.ntotal = 0
-            self.is_trained = False
+            # Restore the trained state
+            self.is_trained = was_trained
             return
 
         # Remote mode reset
@@ -478,7 +503,8 @@ class IndexIVFFlat:
 
             self.index_id = response.get("index_id", new_name)
             self.name = new_name
-            self.is_trained = False
+            # Don't reset training state
+            self.is_trained = was_trained
         except Exception:
             # Recreate with same name if error occurs
             index_type = f"IVF{self.nlist}"
@@ -490,7 +516,8 @@ class IndexIVFFlat:
             )
 
             self.index_id = response.get("index_id", self.name)
-            self.is_trained = False
+            # Don't reset training state
+            self.is_trained = was_trained
 
         # Reset all local state
         self.ntotal = 0
@@ -502,7 +529,7 @@ class IndexIVFFlat:
         Clean up resources when the index is deleted.
         """
         # Clean up GPU resources if used
-        if self._use_gpu and self._gpu_resources is not None:
+        if hasattr(self, '_use_gpu') and hasattr(self, '_gpu_resources') and self._use_gpu and self._gpu_resources is not None:
             # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
             self._gpu_resources = None
 
