@@ -1,43 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
-# Unified interface for LLM providers using OpenAI format
-# https://github.com/muxi-ai/faissx
-#
-# Copyright (C) 2025 Ran Aroussi
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 """
-FAISSx IndexIDMap implementation.
+IndexIDMap and IndexIDMap2 implementations for FAISSx.
 
-This module provides a client-side implementation of the FAISS IndexIDMap class.
-It serves as a wrapper around another index type that maps external IDs to vectors.
+These classes provide a drop-in replacement for FAISS IndexIDMap and IndexIDMap2,
+supporting both local and remote execution modes.
 """
 
-from .base import np, Tuple, faiss, uuid, get_client, logging
+import logging
+import numpy as np
+import uuid
+from typing import Tuple
+
+# Import the client utilities
+from faissx.client.client import get_client
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 class IndexIDMap:
     """
-    Proxy implementation of FAISS IndexIDMap.
+    A drop-in replacement for FAISS IndexIDMap supporting both local and remote execution.
 
-    This class wraps another index and adds support for mapping between user-provided IDs
-    and the internal indices used by the wrapped index. This enables operations using
-    custom identifiers instead of sequential indices.
-
-    When adding vectors, the caller can provide explicit IDs. When searching, the results
-    will contain these user-provided IDs instead of internal indices.
+    IndexIDMap allows associating custom IDs with vectors, which can be useful
+    when vectors represent entities with existing identifiers.
 
     Attributes:
         index: The wrapped index object
@@ -58,9 +46,12 @@ class IndexIDMap:
         Raises:
             RuntimeError: If there's an error creating the index
         """
+        # Import the actual faiss module
+        import faiss as native_faiss
+
         # Store the underlying index and its properties
         self.index = index
-        self.is_trained = getattr(index, 'is_trained', True)
+        self.is_trained = getattr(index, "is_trained", True)
         self.ntotal = 0  # Start with no vectors
         self.d = index.d  # Vector dimension from underlying index
 
@@ -71,41 +62,19 @@ class IndexIDMap:
         # Store vectors for reconstruction
         self._vectors_by_id = {}
 
-        # Check if we should use remote implementation
-        try:
-            # Import here to avoid circular imports
-            import faissx
+        # Default to local mode
+        self._using_remote = False
 
-            # Check if API key or server URL are set - this indicates configure() was called
-            configured = faissx._API_URL and faissx._API_URL != ""
-
-            # If configure was explicitly called, use remote mode
-            if configured:
+        # Check if client exists (remote mode)
+        client = get_client()
+        if client is not None:
+            try:
+                # Remote mode is active
                 self._using_remote = True
-
-                # Get client - this might return None even if URL is configured
-                # due to connection issues with get_client()
-                self.client = get_client()
-
-                # If client is None but URL is configured, create a client directly
-                if self.client is None:
-                    try:
-                        # Import FaissXClient and create an instance directly
-                        from faissx.client.client import FaissXClient
-                        self.client = FaissXClient(
-                            server=faissx._API_URL,
-                            api_key=faissx._API_KEY,
-                            tenant_id=faissx._TENANT_ID
-                        )
-                        logging.info(f"Created direct client with URL {faissx._API_URL}")
-                    except Exception as direct_error:
-                        raise RuntimeError(
-                            f"Remote mode was configured but connection to server failed. "
-                            f"Check server URL and connectivity. Error: {direct_error}"
-                        )
+                self.client = client
 
                 # Get the base index ID
-                if hasattr(index, 'index_id'):
+                if hasattr(index, "index_id"):
                     self.base_index_id = index.index_id
                 else:
                     raise ValueError("Base index must have an index_id for remote mode")
@@ -118,7 +87,7 @@ class IndexIDMap:
                     response = self.client.create_index(
                         name=self.name,
                         dimension=self.d,
-                        index_type=f"IDMap:{self.base_index_id}"
+                        index_type=f"IDMap:{self.base_index_id}",
                     )
 
                     self.index_id = response.get("index_id", self.name)
@@ -133,22 +102,21 @@ class IndexIDMap:
                         )
                     # For other errors, re-raise them
                     raise
-        except (ValueError, RuntimeError):
-            # Re-raise runtime errors without fallback
-            raise
-        except Exception as e:
-            # Any other exception should result in local mode
-            logging.warning(f"Using local mode for IndexIDMap due to error: {e}")
+            except (ValueError, RuntimeError):
+                # Re-raise runtime errors without fallback
+                raise
+            except Exception as e:
+                # Any other exception should result in local mode
+                logging.warning(f"Using local mode for IndexIDMap due to error: {e}")
+                self._using_remote = False
 
         # If we get here, we're in local mode
-        self._using_remote = False
-
         # Get local index from wrapped index if available
-        base_index = index._local_index if hasattr(index, '_local_index') else index
+        base_index = index._local_index if hasattr(index, "_local_index") else index
 
         # Create FAISS IndexIDMap
         try:
-            self._local_index = faiss.IndexIDMap(base_index)
+            self._local_index = native_faiss.IndexIDMap(base_index)
         except Exception as e:
             raise RuntimeError(f"Failed to create IndexIDMap: {e}")
 
@@ -171,7 +139,9 @@ class IndexIDMap:
 
         # Validate vector dimensions
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert to float32 if needed (FAISS requirement)
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -190,7 +160,7 @@ class IndexIDMap:
                     "action": "add_with_ids",
                     "index_id": self.index_id,
                     "vectors": vectors_list,
-                    "ids": ids_list
+                    "ids": ids_list,
                 }
 
                 response = self.client._send_request(request)
@@ -260,7 +230,9 @@ class IndexIDMap:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert to float32 if needed
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -286,7 +258,9 @@ class IndexIDMap:
                     # Fill in results for this query vector
                     for j in range(min(k, len(result_distances))):
                         distances[i, j] = result_distances[j]
-                        indices[i, j] = result_indices[j]  # Server returns user IDs directly
+                        indices[i, j] = result_indices[
+                            j
+                        ]  # Server returns user IDs directly
 
                 return distances, indices
             except Exception as e:
@@ -314,7 +288,7 @@ class IndexIDMap:
                 request = {
                     "action": "remove_ids",
                     "index_id": self.index_id,
-                    "ids": ids_array.tolist()
+                    "ids": ids_array.tolist(),
                 }
 
                 response = self.client._send_request(request)
@@ -358,7 +332,8 @@ class IndexIDMap:
             self.ntotal = self._local_index.ntotal
 
     def range_search(
-            self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        self, x: np.ndarray, radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 
@@ -378,7 +353,9 @@ class IndexIDMap:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert to float32 if needed
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -412,14 +389,21 @@ class IndexIDMap:
 
                     # Get results for this query
                     result_distances = res.get("distances", [])
-                    result_indices = res.get("indices", [])  # These are user IDs from server
+                    result_indices = res.get(
+                        "indices", []
+                    )  # These are user IDs from server
                     count = len(result_distances)
 
                     # Copy data to output arrays
-                    if count > 0:
-                        distances[offset:offset + count] = np.array(result_distances, dtype=np.float32)
-                        indices[offset:offset + count] = np.array(result_indices, dtype=np.int64)
-                        offset += count
+                if count > 0:
+                    # Convert to numpy array and assign to output
+                    distances[offset:offset + count] = np.array(
+                        result_distances, dtype=np.float32
+                    )
+                    indices[offset:offset + count] = np.array(
+                        result_indices, dtype=np.int64
+                    )
+                offset += count
 
                 # Set final boundary
                 lims[n_queries] = offset
@@ -429,7 +413,7 @@ class IndexIDMap:
                 raise RuntimeError(f"Range search failed in remote mode: {e}")
         else:
             # Use local FAISS index for range search
-            if hasattr(self._local_index, 'range_search'):
+            if hasattr(self._local_index, "range_search"):
                 return self._local_index.range_search(vectors, radius)
             else:
                 raise RuntimeError("Underlying index doesn't support range search")
@@ -461,7 +445,7 @@ class IndexIDMap:
                 request = {
                     "action": "reconstruct",
                     "index_id": self.index_id,
-                    "id": id_val
+                    "id": id_val,
                 }
 
                 response = self.client._send_request(request)
@@ -557,13 +541,13 @@ class IndexIDMap:
         """
         if self._using_remote:
             # Training should be done on the base index, not the IDMap wrapper
-            if hasattr(self.index, 'train'):
+            if hasattr(self.index, "train"):
                 self.index.train(x)
                 self.is_trained = self.index.is_trained
         else:
-            if hasattr(self.index, 'train'):
+            if hasattr(self.index, "train"):
                 self.index.train(x)
-                self.is_trained = getattr(self.index, 'is_trained', True)
+                self.is_trained = getattr(self.index, "is_trained", True)
 
     def reset(self) -> None:
         """
@@ -578,7 +562,7 @@ class IndexIDMap:
                 response = self.client.create_index(
                     name=new_name,
                     dimension=self.d,
-                    index_type=f"IDMap:{self.base_index_id}"
+                    index_type=f"IDMap:{self.base_index_id}",
                 )
 
                 self.index_id = response.get("index_id", new_name)
@@ -597,20 +581,14 @@ class IndexIDMap:
             self._id_map = {}
             self._rev_id_map = {}
             self._vectors_by_id = {}
-            self.is_trained = getattr(self.index, 'is_trained', True)
+            self.is_trained = getattr(self.index, "is_trained", True)
 
 
 class IndexIDMap2(IndexIDMap):
     """
-    Proxy implementation of FAISS IndexIDMap2.
+    A drop-in replacement for FAISS IndexIDMap2 supporting both local and remote execution.
 
-    IndexIDMap2 is an extension of IndexIDMap that allows replacing
-    vector content while keeping the same IDs. This is useful when
-    vectors need to be updated or when the indexed vectors are based on
-    objects (like images or documents) that change over time.
-
-    This class inherits most functionality from IndexIDMap but adds
-    methods to replace vectors without changing their IDs.
+    IndexIDMap2 is a variant of IndexIDMap that supports replacement of existing vectors.
     """
 
     def __init__(self, index):
@@ -620,41 +598,33 @@ class IndexIDMap2(IndexIDMap):
         Args:
             index: The FAISS index to wrap (e.g., IndexFlatL2, IndexIVFFlat)
         """
-        # Check if we should use remote implementation
-        try:
-            # Import here to avoid circular imports
-            import faissx
+        # Import the actual faiss module
+        import faiss as native_faiss
 
-            # Check if API key or server URL are set - this indicates configure() was called
-            configured = faissx._API_URL and faissx._API_URL != ""
+        # Initialize base attributes
+        self.index = index
+        self.is_trained = getattr(index, "is_trained", True)
+        self.ntotal = 0  # Start with no vectors
+        self.d = index.d  # Vector dimension from underlying index
 
-            # If configure was explicitly called, use remote mode
-            if configured:
+        # Initialize mapping dictionaries and vector cache
+        self._id_map = {}  # Maps internal indices to user IDs
+        self._rev_id_map = {}  # Maps user IDs to internal indices
+        self._vectors_by_id = {}  # Cache for vector reconstruction
+
+        # Default to local mode
+        self._using_remote = False
+
+        # Check if client exists (remote mode)
+        client = get_client()
+        if client is not None:
+            try:
+                # Remote mode is active
                 self._using_remote = True
-
-                # Get client - this might return None even if URL is configured
-                # due to connection issues with get_client()
-                self.client = get_client()
-
-                # If client is None but URL is configured, create a client directly
-                if self.client is None:
-                    try:
-                        # Import FaissXClient and create an instance directly
-                        from faissx.client.client import FaissXClient
-                        self.client = FaissXClient(
-                            server=faissx._API_URL,
-                            api_key=faissx._API_KEY,
-                            tenant_id=faissx._TENANT_ID
-                        )
-                        logging.info(f"Created direct client with URL {faissx._API_URL}")
-                    except Exception as direct_error:
-                        raise RuntimeError(
-                            f"Remote mode was configured but connection to server failed. "
-                            f"Check server URL and connectivity. Error: {direct_error}"
-                        )
+                self.client = client
 
                 # Get the base index ID
-                if hasattr(index, 'index_id'):
+                if hasattr(index, "index_id"):
                     self.base_index_id = index.index_id
                 else:
                     raise ValueError("Base index must have an index_id for remote mode")
@@ -666,21 +636,11 @@ class IndexIDMap2(IndexIDMap):
                 try:
                     response = self.client.create_index(
                         name=self.name,
-                        dimension=index.d,
-                        index_type=f"IDMap2:{self.base_index_id}"
+                        dimension=self.d,
+                        index_type=f"IDMap2:{self.base_index_id}",
                     )
 
                     self.index_id = response.get("index_id", self.name)
-                    self.d = index.d
-                    self.index = index
-                    self.is_trained = getattr(index, 'is_trained', True)
-                    self.ntotal = 0
-
-                    # Initialize mapping dicts
-                    self._id_map = {}
-                    self._rev_id_map = {}
-                    self._vectors_by_id = {}
-
                     logging.info(f"Created remote IndexIDMap2 with ID {self.index_id}")
                     return
                 except Exception as e:
@@ -692,26 +652,21 @@ class IndexIDMap2(IndexIDMap):
                         )
                     # For other errors, re-raise them
                     raise
-        except (ValueError, RuntimeError):
-            # Re-raise runtime errors without fallback
-            raise
-        except Exception as e:
-            # Any other exception should result in local mode
-            logging.warning(f"Using local mode for IndexIDMap2 due to error: {e}")
+            except (ValueError, RuntimeError):
+                # Re-raise runtime errors without fallback
+                raise
+            except Exception as e:
+                # Any other exception should result in local mode
+                logging.warning(f"Using local mode for IndexIDMap2 due to error: {e}")
+                self._using_remote = False
 
-        # Initialize base attributes for local mode
-        self.index = index
-        self.is_trained = getattr(index, 'is_trained', True)
-        self.ntotal = 0  # Start with no vectors
-        self.d = index.d  # Vector dimension from underlying index
-        self._using_remote = False
-
+        # If we get here, we're in local mode
         # Get local index from wrapped index if available
-        base_index = index._local_index if hasattr(index, '_local_index') else index
+        base_index = index._local_index if hasattr(index, "_local_index") else index
 
         # Create FAISS IndexIDMap2
         try:
-            self._local_index = faiss.IndexIDMap2(base_index)
+            self._local_index = native_faiss.IndexIDMap2(base_index)
         except Exception as e:
             raise RuntimeError(f"Failed to create IndexIDMap2: {e}")
 
@@ -736,7 +691,9 @@ class IndexIDMap2(IndexIDMap):
             vector = vector.reshape(1, -1)
 
         if vector.shape[1] != self.d:
-            raise ValueError(f"Vector has wrong dimension: {vector.shape[1]}, expected {self.d}")
+            raise ValueError(
+                f"Vector has wrong dimension: {vector.shape[1]}, expected {self.d}"
+            )
 
         # Convert to float32 if needed
         vector = vector.astype(np.float32) if vector.dtype != np.float32 else vector
@@ -751,7 +708,7 @@ class IndexIDMap2(IndexIDMap):
                     "action": "replace_vector",
                     "index_id": self.index_id,
                     "id": int(id_val),
-                    "vector": vector.reshape(-1).tolist()
+                    "vector": vector.reshape(-1).tolist(),
                 }
 
                 response = self.client._send_request(request)
@@ -764,7 +721,8 @@ class IndexIDMap2(IndexIDMap):
                 raise RuntimeError(f"Failed to replace vector: {e}")
         else:
             # Delegate to local FAISS index
-            self._local_index.add_with_ids(vector, id_array)  # IndexIDMap2 replaces existing vectors
+            # IndexIDMap2 replaces vectors with the same ID
+            self._local_index.add_with_ids(vector, id_array)
 
             # Update local cache
             self._vectors_by_id[int(id_val)] = vector.reshape(-1)
@@ -789,7 +747,7 @@ class IndexIDMap2(IndexIDMap):
             # Update vectors one by one for now
             # This could be optimized with a batch update API in the future
             for i, id_val in enumerate(ids):
-                self.replace_vector(id_val, vectors[i:i+1])
+                self.replace_vector(id_val, vectors[i:i + 1])
         else:
             # Check if all IDs exist
             missing = []
@@ -816,10 +774,10 @@ class IndexIDMap2(IndexIDMap):
 
             # Get all vectors through reconstruction
             if len(keep_ids) > 0:
-                if hasattr(self.index, 'reconstruct_n'):
-                    keep_internal_indices = np.array([
-                        self._rev_id_map[id_val] for id_val in keep_ids
-                    ])
+                if hasattr(self.index, "reconstruct_n"):
+                    keep_internal_indices = np.array(
+                        [self._rev_id_map[id_val] for id_val in keep_ids]
+                    )
                     keep_vectors = self.index.reconstruct_n(keep_internal_indices)
                 else:
                     # Fall back to single reconstruction

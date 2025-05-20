@@ -579,7 +579,8 @@ def get_client() -> Optional[FaissXClient]:
                     logger.info(f"Successfully connected to FAISSx server at {_API_URL}")
                     return _client
                 else:
-                    raise RuntimeError(f"Server returned error: {result.get('error', 'Unknown error')}")
+                    raise RuntimeError(
+                        f"Server returned error: {result.get('error', 'Unknown error')}")
             except Exception as e:
                 last_error = e
                 retry_count += 1

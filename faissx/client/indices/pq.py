@@ -96,32 +96,19 @@ class IndexPQ:
         self._vector_mapping = {}  # Initialize for use in remote mode
         self._next_idx = 0
 
+        # Default to local mode
+        self._using_remote = False
+
         # Generate unique name for the index
         self.name = f"index-pq-{uuid.uuid4().hex[:8]}"
 
-        # Check if we should use remote implementation
-        try:
-            # Import here to avoid circular imports
-            import faissx
-
-            # Check if API key or server URL are set - this indicates configure() was called
-            configured = bool(faissx._API_KEY) or (
-                faissx._API_URL != ""
-            )
-
-            # If configure was explicitly called, use remote mode
-            if configured:
+        # Check if client exists (remote mode)
+        client = get_client()
+        if client is not None:
+            try:
+                # Remote mode is active
                 self._using_remote = True
-                self.client = get_client()
-
-                # If client is None, that means remote mode was requested but connection failed
-                if self.client is None:
-                    raise RuntimeError(
-                        "Remote mode was configured but connection to server failed. "
-                        "Check server URL and connectivity."
-                    )
-
-                self._local_index = None
+                self.client = client
 
                 # Determine index type identifier for server
                 index_type = f"PQ{M}x{nbits}"
@@ -147,16 +134,15 @@ class IndexPQ:
                 self._vector_mapping = {}  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
+            except RuntimeError:
+                # Re-raise runtime errors without fallback
+                raise
+            except Exception as e:
+                # Any other exception should result in local mode
+                logging.warning(f"Using local mode for PQ index due to error: {e}")
+                self._using_remote = False
 
-        except RuntimeError:
-            # Re-raise runtime errors without fallback
-            raise
-        except Exception as e:
-            # Only generic exceptions should result in an error, not fallback
-            raise RuntimeError(f"Error initializing remote mode: {e}")
-
-        # Use local FAISS implementation by default
-        self._using_remote = False
+        # If we get here, we're in local mode
         self._local_index = None
 
         # Import local FAISS here to avoid module-level dependency
