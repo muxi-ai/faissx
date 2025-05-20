@@ -462,6 +462,14 @@ cd server
 
 ---
 
+## Remote Mode Policy: No Fallbacks
+
+**IMPORTANT**: When remote mode is explicitly configured (`configure()` is called), FAISSx should NEVER fall back to local mode for any operations.
+
+Our goal is to ensure 100% remote mode support with no silent fallbacks for any index type or operation.
+
+---
+
 ## 📄 License
 
 FAISSx is licensed under the [Apache 2.0 license](./LICENSE).
@@ -489,22 +497,3 @@ If you find FAISSx useful in your work:
 
 ~ **Ran Aroussi**
 
-## Remote Mode Policy: No Fallbacks
-
-**IMPORTANT**: When remote mode is explicitly configured (`configure()` is called), FAISSx should NEVER fall back to local mode for any operations.
-
-### Current Implementation Status:
-
-1. **IndexFlatL2**: Fully implemented in remote mode with no fallbacks
-2. **IndexIDMap/IndexIDMap2**: Fully implemented in remote mode as of v0.0.4
-3. **IndexIVFFlat**: ✅ Now fully implemented with proper error handling and nprobe support
-4. **Server Connection Issues**: Now properly raise connection errors instead of silently falling back
-5. **Range Search Operations**: Implemented with proper parameter passing and error reporting
-
-In v0.0.5, we've completed the implementation of strict no-fallback behavior:
-- ✅ **Consistent Error Handling**: All index types now have consistent error reporting
-- ✅ **Parameter Support**: Implementation of nprobe and other parameters in remote operations
-- ✅ **No Silent Fallbacks**: All operations either work remotely or raise clear errors
-- ✅ **Comprehensive Testing**: New test suite specifically for no-fallback behavior
-
-Our goal is to ensure 100% remote mode support with no silent fallbacks for any index type or operation.
