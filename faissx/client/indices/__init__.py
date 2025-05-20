@@ -35,6 +35,8 @@ from .scalar_quantizer import IndexScalarQuantizer
 # IndexIDMap provides custom IDs for vectors
 # IndexIDMap2 extends it with vector update functionality
 from .id_map import IndexIDMap, IndexIDMap2
+# Factory function for creating indices from string descriptions (FAISS-compatible)
+from .factory import index_factory
 
 __all__ = [
     'IndexFlatL2',
@@ -45,4 +47,5 @@ __all__ = [
     'IndexScalarQuantizer',
     'IndexIDMap',
     'IndexIDMap2',
+    'index_factory',
 ]
