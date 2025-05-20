@@ -1,27 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
-# Unified interface for LLM providers using OpenAI format
-# https://github.com/muxi-ai/faissx
-#
-# Copyright (C) 2025 Ran Aroussi
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 """
-FAISSx IndexIVFPQ implementation.
+FAISSx IndexIVFScalarQuantizer implementation.
 
-This module provides a client-side implementation of the FAISS IndexIVFPQ class.
+This module provides a client-side implementation of the FAISS IndexIVFScalarQuantizer class.
 It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
 """
@@ -32,69 +15,56 @@ from .base import uuid, np, Tuple, faiss, logging, get_client
 from .flat import IndexFlatL2
 
 
-class IndexIVFPQ:
+class IndexIVFScalarQuantizer:
     """
-    Proxy implementation of FAISS IndexIVFPQ.
+    Proxy implementation of FAISS IndexIVFScalarQuantizer.
 
-    This class mimics the behavior of FAISS IndexIVFPQ, which combines inverted file
-    indexing with product quantization for efficient similarity search. It offers
-    both excellent search performance and memory efficiency, particularly for large
-    high-dimensional datasets.
+    This class mimics the behavior of FAISS IndexIVFScalarQuantizer, which combines
+    inverted file indexing with scalar quantization for efficient similarity search.
 
     When running in local mode with CUDA-capable GPUs, it will automatically use
     GPU acceleration if available.
 
     Attributes:
         d (int): Vector dimension
-        nlist (int): Number of clusters/partitions for IVF
-        M (int): Number of subquantizers for PQ
-        nbits (int): Number of bits per subquantizer
+        nlist (int): Number of clusters/partitions
+        qtype (int): Quantizer type (see faiss.ScalarQuantizer constants)
         metric_type (str): Distance metric type ('L2' or 'IP')
         is_trained (bool): Whether the index has been trained
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
         index_id (str): Server-side index identifier (when in remote mode)
-        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
-        _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _using_remote (bool): Whether we're using remote or local implementation
-        _gpu_resources: GPU resources if using GPU (local mode only)
-        _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
+        _nprobe (int): Number of clusters to search (default: 1)
     """
 
-    def __init__(
-        self,
-        quantizer,
-        d: int,
-        nlist: int,
-        m: int,
-        nbits: int,
-        metric_type=faiss.METRIC_L2,
-    ):
+    def __init__(self, quantizer, d: int, nlist: int, qtype=None, metric_type=None):
         """
-        Initialize the IVF-PQ index with specified parameters.
+        Initialize the index with specified parameters.
 
         Args:
             quantizer: Quantizer object that defines the centroids (usually IndexFlatL2)
             d (int): Vector dimension
-            nlist (int): Number of clusters/partitions for IVF
-            m (int): Number of subquantizers for PQ (must be a divisor of d)
-            nbits (int): Number of bits per subquantizer (typically 8)
+            nlist (int): Number of clusters/partitions
+            qtype: Scalar quantizer type (if None, uses default QT_8bit)
             metric_type: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
         """
         # Import the actual faiss module
         import faiss as faiss_local
 
-        # Validate that d is a multiple of M (required by FAISS)
-        if d % m != 0:
-            raise ValueError(f"The dimension ({d}) must be a multiple of M ({m})")
+        # Set default metric if not provided
+        if metric_type is None:
+            metric_type = faiss_local.METRIC_L2
+
+        # Set default qtype if not specified
+        if qtype is None:
+            qtype = faiss_local.ScalarQuantizer.QT_8bit
 
         # Store core parameters
         self.d = d
-        self.M = m  # FAISS uses capital M in the property name
-        self.nbits = nbits
         self.nlist = nlist
-
+        self.qtype = qtype
         # Convert metric type to string representation for remote mode
         self.metric_type = (
             "IP" if metric_type == faiss_local.METRIC_INNER_PRODUCT else "L2"
@@ -105,17 +75,11 @@ class IndexIVFPQ:
         self.ntotal = 0
         self._nprobe = 1  # Default number of probes
 
-        # Initialize GPU-related attributes
-        self._use_gpu = False
-        self._gpu_resources = None
-        self._vector_mapping = {}  # Initialize for use in remote mode
-        self._next_idx = 0
-
         # Default to local mode
         self._using_remote = False
 
         # Generate unique name for the index
-        self.name = f"index-ivf-pq-{uuid.uuid4().hex[:8]}"
+        self.name = f"index-ivf-sq-{uuid.uuid4().hex[:8]}"
 
         # Check if client exists (remote mode)
         client = get_client()
@@ -126,7 +90,8 @@ class IndexIVFPQ:
                 self.client = client
 
                 # Determine index type identifier for remote server
-                index_type = f"IVF{nlist},PQ{m}x{nbits}"
+                qtype_str = "SQ8" if qtype is None else f"SQ{qtype}"
+                index_type = f"IVF{nlist}_{qtype_str}"
                 if self.metric_type == "IP":
                     index_type = f"{index_type}_IP"
 
@@ -141,8 +106,8 @@ class IndexIVFPQ:
                 except Exception as e:
                     # Raise a clear error instead of falling back to local mode
                     raise RuntimeError(
-                        f"Failed to create remote IVF-PQ index: {e}. "
-                        f"Server may not support IVF-PQ indices with type {index_type}."
+                        f"Failed to create remote IVF SQ index: {e}. "
+                        f"Server may not support IVF SQ indices with type {index_type}."
                     )
 
                 return
@@ -151,7 +116,7 @@ class IndexIVFPQ:
                 raise
             except Exception as e:
                 # Any other exception should result in local mode
-                logging.warning(f"Using local mode for IVF-PQ index due to error: {e}")
+                logging.warning(f"Using local mode for IVF SQ index due to error: {e}")
                 self._using_remote = False
 
         # If we get here, we're in local mode
@@ -162,14 +127,51 @@ class IndexIVFPQ:
             # Get local index from wrapped quantizer if available
             base_quantizer = quantizer._local_index if hasattr(quantizer, "_local_index") else quantizer
 
-            # Create the IVFPQ index
-            self._local_index = faiss_local.IndexIVFPQ(
-                base_quantizer, d, nlist, m, nbits, metric_type
+            # Create the local index
+            self._local_index = faiss_local.IndexIVFScalarQuantizer(
+                base_quantizer, d, nlist, qtype, metric_type
             )
 
             self.index_id = self.name  # Use name as ID for consistency
         except Exception as e:
-            raise RuntimeError(f"Failed to create IndexIVFPQ: {e}")
+            raise RuntimeError(f"Failed to create IndexIVFScalarQuantizer: {e}")
+
+    # Add nprobe property getter and setter to handle it as an attribute
+    @property
+    def nprobe(self):
+        """Get the current nprobe value"""
+        return self._nprobe
+
+    @nprobe.setter
+    def nprobe(self, value):
+        """Set the nprobe value and update the local index if present"""
+        self.set_nprobe(value)
+
+    def set_nprobe(self, nprobe: int) -> None:
+        """
+        Set the number of clusters to visit during search (nprobe).
+
+        Higher values of nprobe will give more accurate results at the cost of
+        slower search. For IVF indices, nprobe should be between 1 and nlist.
+
+        Args:
+            nprobe (int): Number of clusters to search (between 1 and nlist)
+
+        Raises:
+            ValueError: If nprobe is less than 1 or greater than nlist
+        """
+        if nprobe < 1:
+            raise ValueError(f"nprobe must be at least 1, got {nprobe}")
+        if nprobe > self.nlist:
+            raise ValueError(
+                f"nprobe must not exceed nlist ({self.nlist}), got {nprobe}"
+            )
+
+        self._nprobe = nprobe
+
+        # If using local implementation, update the index directly
+        if not self._using_remote and self._local_index is not None:
+            self._local_index.nprobe = nprobe
 
     def train(self, x: np.ndarray) -> None:
         """
@@ -180,6 +182,7 @@ class IndexIVFPQ:
 
         Raises:
             ValueError: If vector shape doesn't match index dimension or already trained
+            RuntimeError: If remote training operation fails
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
@@ -329,84 +332,57 @@ class IndexIVFPQ:
             # Ensure all errors are properly propagated, never fall back to local mode
             raise RuntimeError(f"Remote search operation failed: {e}")
 
-    def range_search(
-        self, x: np.ndarray, radius: float
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Search for all vectors within the specified radius.
-
-        Args:
-            x (np.ndarray): Query vectors, shape (n, d)
-            radius (float): Maximum distance threshold
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                - lims: array of shape (n+1) giving the boundaries of results for each query
-                - distances: array of shape (sum_of_results) containing all distances
-                - indices: array of shape (sum_of_results) containing all indices
-
-        Raises:
-            ValueError: If query vector shape doesn't match index dimension
-            RuntimeError: If range search fails or isn't supported by the index type
-        """
-        # Implementation omitted for brevity
-        pass
-
     def reset(self) -> None:
         """
-        Reset the index to its initial state.
+        Reset the index to its initial state, removing all vectors but keeping training.
+
+        This method removes all vectors from the index but preserves the training state.
+        After calling reset(), you don't need to retrain the index.
         """
-        # Implementation omitted for brevity
-        pass
+        # Remember if the index was trained before reset
+        was_trained = self.is_trained
+
+        if not self._using_remote:
+            # Reset local FAISS index
+            self._local_index.reset()
+            self.ntotal = 0
+            # Restore the trained state
+            self.is_trained = was_trained
+            return
+
+        # Remote mode reset
+        try:
+            # Create new index with modified name
+            new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+
+            # Determine index type identifier
+            qtype_str = "SQ8" if self.qtype is None else f"SQ{self.qtype}"
+            index_type = f"IVF{self.nlist}_{qtype_str}"
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            response = self.client.create_index(
+                name=new_name, dimension=self.d, index_type=index_type
+            )
+
+            if not response.get("success", False):
+                error_msg = response.get("error", "Unknown error")
+                raise RuntimeError(f"Failed to create new index during reset: {error_msg}")
+
+            self.index_id = response.get("index_id", new_name)
+            self.name = new_name
+            # Don't reset training state
+            self.is_trained = was_trained
+
+            # Reset all local state
+            self.ntotal = 0
+        except Exception as e:
+            # Ensure all errors are properly propagated, never fall back to local mode
+            raise RuntimeError(f"Remote reset operation failed: {e}")
 
     def __del__(self) -> None:
         """
         Clean up resources when the index is deleted.
         """
-        # Clean up GPU resources if used
-        if self._use_gpu and self._gpu_resources is not None:
-            # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
-            self._gpu_resources = None
-
         # Local index will be cleaned up by garbage collector
         pass
-
-    # Add nprobe property getter and setter to handle it as an attribute
-    @property
-    def nprobe(self):
-        """Get the current nprobe value"""
-        return self._nprobe
-
-    @nprobe.setter
-    def nprobe(self, value):
-        """Set the nprobe value and update the local index if present"""
-        if value < 1:
-            raise ValueError(f"nprobe must be at least 1, got {value}")
-        if value > self.nlist:
-            raise ValueError(f"nprobe must not exceed nlist ({self.nlist}), got {value}")
-
-        self._nprobe = value
-
-        # If using local implementation, update the index directly
-        if not self._using_remote and self._local_index is not None:
-            self._local_index.nprobe = value
-
-    @property
-    def pq(self):
-        """Access to the ProductQuantizer (PQ) component of the index"""
-        # This is a read-only property to match the FAISS API
-        class PQProxy:
-            def __init__(self, parent):
-                self.parent = parent
-
-            @property
-            def M(self):
-                """Get the number of subquantizers (M)"""
-                return self.parent.M
-
-            @property
-            def nbits(self):
-                """Get the number of bits per subquantizer"""
-                return self.parent.nbits
-
-        return PQProxy(self)

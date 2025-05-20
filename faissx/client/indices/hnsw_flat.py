@@ -29,6 +29,57 @@ It can operate in either local mode (using FAISS directly) or remote mode
 from .base import uuid, np, Tuple, logging, get_client
 
 
+# Create a class to hold HNSW parameters with the same API as FAISS
+class HNSWParameters:
+    """
+    Proxy for FAISS HNSW parameters.
+
+    This class mimics the behavior of FAISS HNSW parameter access.
+    """
+    def __init__(self, parent_index):
+        self.parent_index = parent_index
+        self._efSearch = 16  # Default in FAISS
+        self._efConstruction = 40  # Default in FAISS
+        self._M = parent_index.M if hasattr(parent_index, 'M') else 32  # Should match parent's M
+
+    @property
+    def efSearch(self):
+        """Get the efSearch parameter"""
+        if not self.parent_index._using_remote and self.parent_index._local_index is not None:
+            # Pass through to the real FAISS index if in local mode
+            return self.parent_index._local_index.hnsw.efSearch
+        return self._efSearch
+
+    @efSearch.setter
+    def efSearch(self, value):
+        """Set the efSearch parameter"""
+        self._efSearch = value
+        if not self.parent_index._using_remote and self.parent_index._local_index is not None:
+            self.parent_index._local_index.hnsw.efSearch = value
+
+    @property
+    def efConstruction(self):
+        """Get the efConstruction parameter"""
+        if not self.parent_index._using_remote and self.parent_index._local_index is not None:
+            # Pass through to the real FAISS index if in local mode
+            return self.parent_index._local_index.hnsw.efConstruction
+        return self._efConstruction
+
+    @efConstruction.setter
+    def efConstruction(self, value):
+        """Set the efConstruction parameter"""
+        self._efConstruction = value
+        if not self.parent_index._using_remote and self.parent_index._local_index is not None:
+            self.parent_index._local_index.hnsw.efConstruction = value
+
+    @property
+    def M(self):
+        """Get the M parameter (read-only like in FAISS)"""
+        # Simply return the M value from the parent index
+        # This is more reliable than trying to access it through the local index
+        return self.parent_index.M
+
+
 class IndexHNSWFlat:
     """
     Proxy implementation of FAISS IndexHNSWFlat.
@@ -55,6 +106,7 @@ class IndexHNSWFlat:
         _using_remote (bool): Whether we're using remote or local implementation
         _gpu_resources: GPU resources if using GPU (local mode only)
         _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
+        hnsw: Access to HNSW-specific parameters
     """
 
     def __init__(self, d: int, M: int = 32, metric=None):
@@ -182,6 +234,9 @@ class IndexHNSWFlat:
             self.index_id = self.name  # Use name as ID for consistency
         except ImportError as e:
             raise ImportError(f"Failed to import FAISS for local mode: {e}")
+
+        # Initialize hnsw property
+        self.hnsw = HNSWParameters(self)
 
     def add(self, x: np.ndarray) -> None:
         """

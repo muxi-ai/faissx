@@ -144,6 +144,11 @@ class IndexFlatL2(FAISSxBaseIndex):
         if k <= 0:
             raise ValueError(f"k must be positive, got {k}")
 
+        # Handle empty index case
+        if self.ntotal == 0:
+            n = x.shape[0]
+            return np.full((n, k), float('inf'), dtype=np.float32), np.full((n, k), -1, dtype=np.int64)
+
         # Apply k_factor parameter if set
         k_factor = self.get_parameter('k_factor')
         internal_k = min(int(k * k_factor), self.ntotal)

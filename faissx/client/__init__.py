@@ -51,6 +51,19 @@ from typing import Optional
 # Import core client functionality
 from .client import configure, FaissXClient, get_client
 
+# Define a ScalarQuantizer class to match FAISS API
+class ScalarQuantizer:
+    """
+    Provides the same scalar quantizer types as in FAISS.
+    """
+    QT_8bit = 1  # 8 bits per component
+    QT_4bit = 2  # 4 bits per component
+    QT_8bit_uniform = 3  # 8 bits per component, uniform
+    QT_4bit_uniform = 4  # 4 bits per component, uniform
+    QT_fp16 = 5  # half-precision float
+    QT_8bit_direct = 6  # 8 bits direct embedded
+    QT_6bit = 7  # 6 bits per component
+
 # Import index classes directly to expose them at the module level
 from .indices import (
     IndexFlatL2,
@@ -59,6 +72,7 @@ from .indices import (
     IndexPQ,
     IndexIVFPQ,
     IndexScalarQuantizer,
+    IndexIVFScalarQuantizer,
     IndexIDMap,
     IndexIDMap2,
     index_factory,
@@ -98,11 +112,13 @@ __all__ = [
     "IndexPQ",  # PQ index implementation
     "IndexIVFPQ",  # IVF PQ index implementation
     "IndexScalarQuantizer",  # Scalar quantizer index implementation
+    "IndexIVFScalarQuantizer",  # IVF Scalar quantizer index implementation
     "IndexIDMap",  # ID mapping index
     "IndexIDMap2",  # Extended ID mapping index
     "index_factory",  # Factory function for creating indices
     "write_index",  # Write index to disk
     "read_index",  # Read index from disk
+    "ScalarQuantizer",  # Scalar quantizer constants
 ]
 
 # Set version to match local FAISS version for compatibility

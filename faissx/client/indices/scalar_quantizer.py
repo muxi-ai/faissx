@@ -217,6 +217,11 @@ class IndexScalarQuantizer:
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
         if not self._using_remote:
+            # Make sure the index is trained before adding vectors
+            if not self._local_index.is_trained:
+                # For scalar quantizer, some require training
+                self._local_index.train(vectors)
+
             # Use local FAISS implementation directly
             self._local_index.add(vectors)
             self.ntotal = self._local_index.ntotal

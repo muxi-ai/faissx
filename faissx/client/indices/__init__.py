@@ -33,6 +33,7 @@ from .hnsw_flat import IndexHNSWFlat  # Hierarchical navigable small world graph
 from .pq import IndexPQ  # Product quantization for memory efficiency
 from .ivf_pq import IndexIVFPQ  # Combined IVF and PQ for large-scale search
 from .scalar_quantizer import IndexScalarQuantizer  # Scalar quantization
+from .ivf_scalar_quantizer import IndexIVFScalarQuantizer  # Scalar quantization
 
 # ID mapping implementations for custom vector identification
 # IndexIDMap: Basic ID mapping functionality
@@ -61,6 +62,7 @@ __all__ = [
     'IndexPQ',  # Product quantization
     'IndexIVFPQ',  # IVF with product quantization
     'IndexScalarQuantizer',  # Scalar quantization
+    'IndexIVFScalarQuantizer',  # Scalar quantization
     'IndexIDMap',  # Basic ID mapping
     'IndexIDMap2',  # Extended ID mapping
     'index_factory',  # Index creation factory
