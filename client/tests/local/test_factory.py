@@ -20,23 +20,26 @@ import sys
 # Get the absolute path to the fix_imports module
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
-import fix_imports
+import fix_imports  # noqa: E402
 
 # Define constants directly
 METRIC_L2 = fix_imports.METRIC_L2
 METRIC_INNER_PRODUCT = fix_imports.METRIC_INNER_PRODUCT
 
 # Add parent directory to path to import faissx
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
-from faissx import client as faiss
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+)
+from faissx import client as faiss  # noqa: E402
 
 # Add metrics constants to faiss module
 faiss.METRIC_L2 = METRIC_L2
 faiss.METRIC_INNER_PRODUCT = METRIC_INNER_PRODUCT
 
 # Add IndexFlatIP class if it doesn't exist
-if not hasattr(faiss, 'IndexFlatIP'):
+if not hasattr(faiss, "IndexFlatIP"):
     from test_index_flat import IndexFlatIP
+
     faiss.IndexFlatIP = IndexFlatIP
 
 
@@ -46,11 +49,7 @@ class TestIndexFactory(unittest.TestCase):
     def setUp(self):
         """Clear any existing environment variables that might affect the test"""
         self.original_env = {}
-        env_vars = [
-            'FAISSX_SERVER',
-            'FAISSX_API_KEY',
-            'FAISSX_TENANT_ID'
-        ]
+        env_vars = ["FAISSX_SERVER", "FAISSX_API_KEY", "FAISSX_TENANT_ID"]
         for key in env_vars:
             self.original_env[key] = os.environ.get(key)
             if key in os.environ:
@@ -91,7 +90,9 @@ class TestIndexFactory(unittest.TestCase):
         self.assertFalse(index.is_trained)
 
         # Train the index
-        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype('float32')
+        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype(
+            "float32"
+        )
         index.train(train_vectors)
 
         self.assertTrue(index.is_trained)
@@ -108,7 +109,9 @@ class TestIndexFactory(unittest.TestCase):
         self.assertFalse(index.is_trained)
 
         # Train the index
-        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype('float32')
+        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype(
+            "float32"
+        )
         index.train(train_vectors)
 
         self.assertTrue(index.is_trained)
@@ -125,7 +128,9 @@ class TestIndexFactory(unittest.TestCase):
         self.assertFalse(index.is_trained)
 
         # Train the index
-        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype('float32')
+        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype(
+            "float32"
+        )
         index.train(train_vectors)
 
         self.assertTrue(index.is_trained)
@@ -146,13 +151,13 @@ class TestIndexFactory(unittest.TestCase):
         index_ip = faiss.IndexFlatIP(self.dimension)
 
         # Create vectors with known inner products
-        v1 = np.zeros(self.dimension, dtype='float32')
+        v1 = np.zeros(self.dimension, dtype="float32")
         v1[0] = 1.0  # Unit vector along first dimension
 
-        v2 = np.zeros(self.dimension, dtype='float32')
+        v2 = np.zeros(self.dimension, dtype="float32")
         v2[0] = 0.5  # Half-magnitude vector along first dimension
 
-        v3 = np.zeros(self.dimension, dtype='float32')
+        v3 = np.zeros(self.dimension, dtype="float32")
         v3[1] = 1.0  # Orthogonal to v1
 
         # Add vectors to index
@@ -173,7 +178,7 @@ class TestIndexFactory(unittest.TestCase):
         # Ensure distances reflect inner products (note: distances are negated for inner product)
         self.assertAlmostEqual(distances[0, 0], -1.0, places=4)  # v1 · v1 = 1
         self.assertAlmostEqual(distances[0, 1], -0.5, places=4)  # v1 · v2 = 0.5
-        self.assertAlmostEqual(distances[0, 2], 0.0, places=4)   # v1 · v3 = 0
+        self.assertAlmostEqual(distances[0, 2], 0.0, places=4)  # v1 · v3 = 0
 
     def test_complex_factory_string(self):
         """Test creating a complex index with multiple components"""
@@ -187,20 +192,22 @@ class TestIndexFactory(unittest.TestCase):
         self.assertFalse(index.is_trained)
 
         # Train the index
-        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype('float32')
+        train_vectors = np.random.random((self.num_vectors, self.dimension)).astype(
+            "float32"
+        )
         index.train(train_vectors)
 
         self.assertTrue(index.is_trained)
 
         # Add some vectors
-        vectors = np.random.random((100, self.dimension)).astype('float32')
+        vectors = np.random.random((100, self.dimension)).astype("float32")
         index.add(vectors)
 
         # Verify vectors were added
         self.assertEqual(index.ntotal, 100)
 
         # Search should work
-        query = np.random.random((1, self.dimension)).astype('float32')
+        query = np.random.random((1, self.dimension)).astype("float32")
         distances, indices = index.search(query, 5)
 
         # Search results should have correct shape

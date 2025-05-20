@@ -20,20 +20,23 @@ import sys
 # Get the absolute path to the fix_imports module
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
-import fix_imports
+import fix_imports  # noqa: E402
 
 # Define constants directly
 METRIC_L2 = fix_imports.METRIC_L2
 METRIC_INNER_PRODUCT = fix_imports.METRIC_INNER_PRODUCT
 
 # Add parent directory to path to import faissx
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+)
 # Import client as faiss to test drop-in replacement capability
-from faissx import client as faiss
+from faissx import client as faiss  # noqa: E402
 
 # Add metrics constants to faiss module
 faiss.METRIC_L2 = METRIC_L2
 faiss.METRIC_INNER_PRODUCT = METRIC_INNER_PRODUCT
+
 
 # Add IndexFlatIP class since it's missing in client
 class IndexFlatIP:
@@ -41,6 +44,7 @@ class IndexFlatIP:
     Temporary IndexFlatIP class for testing Inner Product similarity.
     This directly calculates inner products between vectors for tests.
     """
+
     def __init__(self, d):
         self.d = d
         self._metric_type = METRIC_INNER_PRODUCT
@@ -73,7 +77,11 @@ class IndexFlatIP:
 
         # Calculate inner products directly
         n_queries = x.shape[0]
-        vectors_array = np.vstack(self.vectors) if self.vectors else np.empty((0, self.d), dtype=np.float32)
+        vectors_array = (
+            np.vstack(self.vectors)
+            if self.vectors
+            else np.empty((0, self.d), dtype=np.float32)
+        )
 
         # Initialize results
         distances = np.full((n_queries, k), 0, dtype=np.float32)
@@ -95,8 +103,8 @@ class IndexFlatIP:
             else:
                 # If k > ntotal, fill available results
                 idx = np.argsort(-dots)
-                distances[i, :len(idx)] = -dots[idx]
-                indices[i, :len(idx)] = idx
+                distances[i, : len(idx)] = -dots[idx]
+                indices[i, : len(idx)] = idx
 
         return distances, indices
 
@@ -115,11 +123,7 @@ class TestIndexFlatL2(unittest.TestCase):
     def setUp(self):
         """Clear any existing environment variables that might affect the test"""
         self.original_env = {}
-        env_vars = [
-            'FAISSX_SERVER',
-            'FAISSX_API_KEY',
-            'FAISSX_TENANT_ID'
-        ]
+        env_vars = ["FAISSX_SERVER", "FAISSX_API_KEY", "FAISSX_TENANT_ID"]
         for key in env_vars:
             self.original_env[key] = os.environ.get(key)
             if key in os.environ:
@@ -149,7 +153,7 @@ class TestIndexFlatL2(unittest.TestCase):
         self.assertEqual(index.ntotal, 0)
 
         # Verify this is the local implementation
-        self.assertTrue(hasattr(index, '_local_index'))
+        self.assertTrue(hasattr(index, "_local_index"))
 
     def test_add_vectors(self):
         """Test adding vectors to the index"""
@@ -158,7 +162,7 @@ class TestIndexFlatL2(unittest.TestCase):
         num_vectors = 100
 
         # Create vectors
-        vectors = np.random.random((num_vectors, dimension)).astype('float32')
+        vectors = np.random.random((num_vectors, dimension)).astype("float32")
 
         # Create an index
         index = faiss.IndexFlatL2(dimension)
@@ -176,7 +180,7 @@ class TestIndexFlatL2(unittest.TestCase):
         num_vectors = 100
 
         # Create vectors
-        vectors = np.random.random((num_vectors, dimension)).astype('float32')
+        vectors = np.random.random((num_vectors, dimension)).astype("float32")
 
         # Create an index and add vectors
         index = faiss.IndexFlatL2(dimension)
@@ -203,10 +207,10 @@ class TestIndexFlatL2(unittest.TestCase):
         dimension = 64
 
         # Create normal vectors
-        v1 = np.zeros(dimension, dtype='float32')
+        v1 = np.zeros(dimension, dtype="float32")
         v1[0] = 1.0  # Unit vector along first dimension
 
-        v2 = np.zeros(dimension, dtype='float32')
+        v2 = np.zeros(dimension, dtype="float32")
         v2[1] = 1.0  # Unit vector along second dimension (orthogonal to v1)
 
         # Create L2 index
@@ -229,8 +233,12 @@ class TestIndexFlatL2(unittest.TestCase):
         self.assertEqual(indices_ip[0, 0], 0)  # v1 is most similar to itself
 
         # But the distances will be different (L2 = distance, IP = -similarity)
-        self.assertAlmostEqual(distances_l2[0, 0], 0.0, places=5)  # Distance to self = 0
-        self.assertAlmostEqual(distances_ip[0, 0], -1.0, places=5)  # Similarity to self = -1
+        self.assertAlmostEqual(
+            distances_l2[0, 0], 0.0, places=5
+        )  # Distance to self = 0
+        self.assertAlmostEqual(
+            distances_ip[0, 0], -1.0, places=5
+        )  # Similarity to self = -1
 
     def test_reset(self):
         """Test index reset functionality"""
@@ -239,7 +247,7 @@ class TestIndexFlatL2(unittest.TestCase):
         num_vectors = 100
 
         # Create vectors
-        vectors = np.random.random((num_vectors, dimension)).astype('float32')
+        vectors = np.random.random((num_vectors, dimension)).astype("float32")
 
         # Create an index and add vectors
         index = faiss.IndexFlatL2(dimension)

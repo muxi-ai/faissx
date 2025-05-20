@@ -20,15 +20,17 @@ import sys
 # Get the absolute path to the fix_imports module
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
-import fix_imports
+import fix_imports  # noqa: E402
 
 # Define constants directly
 METRIC_L2 = fix_imports.METRIC_L2
 METRIC_INNER_PRODUCT = fix_imports.METRIC_INNER_PRODUCT
 
 # Add parent directory to path to import faissx
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
-from faissx import client as faiss
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+)
+from faissx import client as faiss  # noqa: E402
 
 # Add metrics constants to faiss module
 faiss.METRIC_L2 = METRIC_L2
@@ -41,11 +43,7 @@ class TestIndexIDMap(unittest.TestCase):
     def setUp(self):
         """Clear any existing environment variables that might affect the test"""
         self.original_env = {}
-        env_vars = [
-            'FAISSX_SERVER',
-            'FAISSX_API_KEY',
-            'FAISSX_TENANT_ID'
-        ]
+        env_vars = ["FAISSX_SERVER", "FAISSX_API_KEY", "FAISSX_TENANT_ID"]
         for key in env_vars:
             self.original_env[key] = os.environ.get(key)
             if key in os.environ:
@@ -58,10 +56,14 @@ class TestIndexIDMap(unittest.TestCase):
         self.num_vectors = 100
 
         # Generate vectors
-        self.vectors = np.random.random((self.num_vectors, self.dimension)).astype('float32')
+        self.vectors = np.random.random((self.num_vectors, self.dimension)).astype(
+            "float32"
+        )
 
         # Generate IDs (non-sequential to test mapping)
-        self.ids = np.array([1000 + i * 10 for i in range(self.num_vectors)], dtype='int64')
+        self.ids = np.array(
+            [1000 + i * 10 for i in range(self.num_vectors)], dtype="int64"
+        )
 
     def tearDown(self):
         """Restore original environment variables"""
@@ -83,7 +85,7 @@ class TestIndexIDMap(unittest.TestCase):
 
         self.assertEqual(index.d, self.dimension)
         self.assertEqual(index.ntotal, 0)
-        self.assertTrue(hasattr(index, 'id_map'))
+        self.assertTrue(hasattr(index, "id_map"))
 
     def test_add_with_ids(self):
         """Test adding vectors with custom IDs"""
@@ -107,7 +109,7 @@ class TestIndexIDMap(unittest.TestCase):
 
         # Create a query vector identical to one of the added vectors
         query_idx = 42
-        query = self.vectors[query_idx:query_idx+1].copy()
+        query = self.vectors[query_idx:query_idx + 1].copy()
 
         # Search for the nearest vector
         k = 1
@@ -136,7 +138,7 @@ class TestIndexIDMap(unittest.TestCase):
 
         # Search for a removed vector
         removed_idx = 15
-        query = self.vectors[removed_idx:removed_idx+1].copy()
+        query = self.vectors[removed_idx:removed_idx + 1].copy()
 
         # Search should not return the removed vector as an exact match
         k = 1
@@ -161,9 +163,7 @@ class TestIndexIDMap(unittest.TestCase):
 
         # The reconstructed vector should match the original
         np.testing.assert_almost_equal(
-            reconstructed,
-            self.vectors[idx_to_reconstruct],
-            decimal=5
+            reconstructed, self.vectors[idx_to_reconstruct], decimal=5
         )
 
     def test_reconstruct_batch(self):
@@ -187,9 +187,7 @@ class TestIndexIDMap(unittest.TestCase):
         # Check each reconstructed vector
         for i, idx in enumerate(indices):
             np.testing.assert_almost_equal(
-                reconstructed[i],
-                self.vectors[idx],
-                decimal=5
+                reconstructed[i], self.vectors[idx], decimal=5
             )
 
     def test_error_handling(self):
@@ -214,11 +212,7 @@ class TestIndexIDMap2(unittest.TestCase):
     def setUp(self):
         """Clear any existing environment variables that might affect the test"""
         self.original_env = {}
-        env_vars = [
-            'FAISSX_SERVER',
-            'FAISSX_API_KEY',
-            'FAISSX_TENANT_ID'
-        ]
+        env_vars = ["FAISSX_SERVER", "FAISSX_API_KEY", "FAISSX_TENANT_ID"]
         for key in env_vars:
             self.original_env[key] = os.environ.get(key)
             if key in os.environ:
@@ -231,10 +225,14 @@ class TestIndexIDMap2(unittest.TestCase):
         self.num_vectors = 100
 
         # Generate vectors
-        self.vectors = np.random.random((self.num_vectors, self.dimension)).astype('float32')
+        self.vectors = np.random.random((self.num_vectors, self.dimension)).astype(
+            "float32"
+        )
 
         # Generate IDs (non-sequential to test mapping)
-        self.ids = np.array([1000 + i * 10 for i in range(self.num_vectors)], dtype='int64')
+        self.ids = np.array(
+            [1000 + i * 10 for i in range(self.num_vectors)], dtype="int64"
+        )
 
     def tearDown(self):
         """Restore original environment variables"""
@@ -257,7 +255,7 @@ class TestIndexIDMap2(unittest.TestCase):
         initial_count = index.ntotal
 
         # Generate new vectors for the same IDs
-        new_vectors = np.random.random((10, self.dimension)).astype('float32')
+        new_vectors = np.random.random((10, self.dimension)).astype("float32")
         ids_to_replace = self.ids[5:15]  # Replace 10 vectors
 
         # Add vectors with IDs that already exist
@@ -268,7 +266,9 @@ class TestIndexIDMap2(unittest.TestCase):
 
         # Search for a replaced vector
         replaced_idx = 10
-        query = new_vectors[replaced_idx - 5].reshape(1, -1)  # Adjusted index for new_vectors
+        query = new_vectors[replaced_idx - 5].reshape(
+            1, -1
+        )  # Adjusted index for new_vectors
 
         # Search should return the new vector as an exact match
         k = 1
