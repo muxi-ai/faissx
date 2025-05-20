@@ -178,12 +178,11 @@ from faissx import client as faiss
 
 try:
     faiss.configure(server="tcp://non-existent-server:45678")
-    index = faiss.IndexFlatL2(128)
 except RuntimeError as e:
+    # will use local mode instead
     print(f"Connection error: {e}")
-    # Handle the error or fall back to local FAISS
-    import faiss as local_faiss
-    index = local_faiss.IndexFlatL2(128)
+
+index = faiss.IndexFlatL2(128)
 ```
 
 ### Working with Existing FAISS Code
