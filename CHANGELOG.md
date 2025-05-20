@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.0.3
+
+### Added
+
+#### Advanced Features
+- Implemented IndexIDMap and IndexIDMap2 for custom vector IDs
+- Added factory pattern (index_factory) for creating indices from string descriptions
+- Implemented direct index persistence (write_index/read_index)
+- Added index modification capabilities (merging and splitting indices)
+- Created optimization controls with fine-grained parameters
+- Implemented memory management options for efficient resource usage
+
+#### Core Improvements
+- Enhanced modular architecture with consistent interfaces
+- Extended example suite with comprehensive feature demonstrations
+- Improved documentation for advanced usage patterns
+- Added unit tests for new functionality
+
+### Changed
+- Refactored index implementations for better performance
+- Improved memory efficiency for large indices
+- Enhanced error handling and validation
+
+---
+
 ## 0.0.2
 
 Initial release of FAISSx, a high-performance vector database proxy using FAISS and ZeroMQ.

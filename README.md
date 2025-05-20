@@ -119,6 +119,9 @@ distances, indices = index.search(np.random.rand(1, 128).astype(np.float32), k=5
 | **🐳 Docker deployment** | Easy deployment with Docker images (Server) |
 | **🔍 Multiple index types** | Support for various FAISS index types (FlatL2, IVFPQ, HNSW, etc.) |
 | **🖥️ GPU acceleration** | Client-side GPU support for local computations |
+| **🔧 Optimization controls** | Fine-grained parameters for performance tuning |
+| **💾 Memory management** | Advanced memory usage control and monitoring |
+| **🔀 Index modification** | Merge and split indices for flexible organization |
 
 ---
 
@@ -276,8 +279,17 @@ FAISSx currently supports these FAISS index implementations:
 - `IndexPQ` - Product quantization for memory-efficient storage
 - `IndexIVFPQ` - Combined IVF and PQ for efficiency
 - `IndexScalarQuantizer` - Efficient scalar quantization
+- `IndexIDMap` - Index wrapper for mapping external IDs to vectors
+- `IndexIDMap2` - Extended ID mapping with vector update capabilities
+- `IndexRandom` - Random index for testing and benchmarking
 
-All indices support GPU acceleration in local mode when available.
+All indices support:
+- GPU acceleration in local mode when available
+- Parameter tuning for performance optimization
+- Memory usage management and monitoring
+- Persistence via write_index/read_index operations
+
+The library also provides advanced factory pattern support with `index_factory()` for creating indices from string descriptions.
 
 ---
 
