@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.4
+
+### Added
+
+- Implemented remote mode support for IndexIDMap and IndexIDMap2
+- Added vector caching for more efficient reconstruction operations
+- Improved handling of non-empty base indices for IndexIDMap types
+- Fixed environment variable handling for server port configuration
+- Added test scripts for IndexIDMap remote mode functionality
+- Fixed client connection issues with more robust error handling
+- Improved handling when get_client() connection fails
+
 ## 0.0.3
 
 ### Added
