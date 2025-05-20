@@ -37,6 +37,10 @@ from .scalar_quantizer import IndexScalarQuantizer
 from .id_map import IndexIDMap, IndexIDMap2
 # Factory function for creating indices from string descriptions (FAISS-compatible)
 from .factory import index_factory
+# Index persistence functions
+from .io import write_index, read_index
+# Index modification functions (merging and splitting)
+from .modification import merge_indices, split_index
 
 __all__ = [
     'IndexFlatL2',
@@ -48,4 +52,8 @@ __all__ = [
     'IndexIDMap',
     'IndexIDMap2',
     'index_factory',
+    'write_index',
+    'read_index',
+    'merge_indices',
+    'split_index',
 ]
