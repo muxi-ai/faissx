@@ -26,7 +26,7 @@ It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
 """
 
-from .base import uuid, np, Tuple, faiss, logging, get_client
+from .base import uuid, np, Tuple, logging, get_client
 
 
 class IndexPQ:
@@ -57,7 +57,7 @@ class IndexPQ:
         _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
-    def __init__(self, d: int, M: int = 8, nbits: int = 8, metric=faiss.METRIC_L2):
+    def __init__(self, d: int, M: int = 8, nbits: int = 8, metric=None):
         """
         Initialize the PQ index with specified parameters.
 
@@ -67,6 +67,13 @@ class IndexPQ:
             nbits (int): Number of bits per subquantizer (default 8)
             metric: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
         """
+        # Import faiss to ensure we have it in the local scope
+        import faiss as local_faiss
+
+        # Set default metric if not provided
+        if metric is None:
+            metric = local_faiss.METRIC_L2
+
         # Validate that dimension is a multiple of M
         if d % M != 0:
             raise ValueError(f"PQ requires dimension ({d}) to be a multiple of M ({M})")
@@ -76,15 +83,18 @@ class IndexPQ:
         self.M = M
         self.nbits = nbits
         # Convert metric type to string representation for remote mode
-        self.metric_type = "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2"
+        self.metric_type = "IP" if metric == local_faiss.METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
         self.is_trained = False
         self.ntotal = 0
+        self._local_index = None
 
         # Initialize GPU-related attributes
         self._use_gpu = False
         self._gpu_resources = None
+        self._vector_mapping = {}  # Initialize for use in remote mode
+        self._next_idx = 0
 
         # Generate unique name for the index
         self.name = f"index-pq-{uuid.uuid4().hex[:8]}"
@@ -96,13 +106,21 @@ class IndexPQ:
 
             # Check if API key or server URL are set - this indicates configure() was called
             configured = bool(faissx._API_KEY) or (
-                faissx._API_URL != "tcp://localhost:45678"
+                faissx._API_URL != ""
             )
 
             # If configure was explicitly called, use remote mode
             if configured:
                 self._using_remote = True
                 self.client = get_client()
+
+                # If client is None, that means remote mode was requested but connection failed
+                if self.client is None:
+                    raise RuntimeError(
+                        "Remote mode was configured but connection to server failed. "
+                        "Check server URL and connectivity."
+                    )
+
                 self._local_index = None
 
                 # Determine index type identifier for server
@@ -111,24 +129,31 @@ class IndexPQ:
                     index_type = f"{index_type}_IP"
 
                 # Create index on server
-                response = self.client.create_index(
-                    name=self.name, dimension=self.d, index_type=index_type
-                )
+                try:
+                    response = self.client.create_index(
+                        name=self.name, dimension=self.d, index_type=index_type
+                    )
 
-                self.index_id = response.get("index_id", self.name)
-                self.is_trained = response.get("is_trained", False)
+                    self.index_id = response.get("index_id", self.name)
+                    self.is_trained = response.get("is_trained", False)
+                except Exception as e:
+                    # Raise a clear error instead of falling back to local mode
+                    raise RuntimeError(
+                        f"Failed to create remote PQ index: {e}. "
+                        f"Server may not support PQ indices with type {index_type}."
+                    )
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = (
-                    {}
-                )  # Maps local indices to server-side information
+                self._vector_mapping = {}  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
+        except RuntimeError:
+            # Re-raise runtime errors without fallback
+            raise
         except Exception as e:
-            logging.warning(
-                f"Error initializing remote mode: {e}, falling back to local mode"
-            )
+            # Only generic exceptions should result in an error, not fallback
+            raise RuntimeError(f"Error initializing remote mode: {e}")
 
         # Use local FAISS implementation by default
         self._using_remote = False
@@ -141,19 +166,19 @@ class IndexPQ:
                 # Import GPU-specific module
                 import faiss.contrib.gpu  # type: ignore
 
-                ngpus = faiss.get_num_gpus()
+                ngpus = local_faiss.get_num_gpus()
 
                 if ngpus > 0:
                     # GPU is available, create resources
                     self._use_gpu = True
-                    self._gpu_resources = faiss.StandardGpuResources()
+                    self._gpu_resources = local_faiss.StandardGpuResources()
 
                     # Create CPU index first
-                    cpu_index = faiss.IndexPQ(d, M, nbits, metric)
+                    cpu_index = local_faiss.IndexPQ(d, M, nbits, metric)
 
                     # Convert to GPU index
                     try:
-                        self._local_index = faiss.index_cpu_to_gpu(
+                        self._local_index = local_faiss.index_cpu_to_gpu(
                             self._gpu_resources, 0, cpu_index
                         )
                         logging.info(f"Using GPU-accelerated PQ index for {self.name}")

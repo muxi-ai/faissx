@@ -42,6 +42,7 @@ import msgpack
 import numpy as np
 import logging
 from typing import Dict, Any, Optional
+import time
 
 # Configure logging for the module
 logger = logging.getLogger(__name__)
@@ -518,45 +519,86 @@ def configure(
     _client = None
 
 
-def get_client() -> FaissXClient:
+def get_client() -> Optional[FaissXClient]:
     """
     Get or create the singleton client instance.
 
     Returns:
         Configured FaissXClient instance or None if local mode is required
             - Returns None when server URL is empty or not configured
-            - Returns None when FAISSX_FALLBACK_TO_LOCAL=1 and connection fails
 
-    This enables automatic fallback to local mode when:
-    1. No server URL is set
-    2. An empty string is set as the server URL
-    3. Connection to the server fails and fallback is enabled
+    Raises:
+        RuntimeError: When connection to the server fails after 3 attempts
+
+    This function will operate in one of two modes:
+    1. Local mode: If no server URL is configured (_API_URL is empty)
+    2. Remote mode: If a server URL is configured, will retry connection up to 3 times
+       and raise an error if all attempts fail - it will never fall back to local mode
     """
     global _client
 
     # Import here to avoid circular imports
-    from . import _API_URL, _FALLBACK_TO_LOCAL
+    from . import _API_URL
 
-    # Check if server URL is empty or None - force local mode
+    # Check if server URL is empty or None - use local mode
     if not _API_URL or _API_URL == "":
         return None
 
     # Only create client if not already existing
     if _client is None:
-        try:
-            _client = FaissXClient()
-        except Exception as e:
-            # If fallback is enabled, return None to use local mode
-            if _FALLBACK_TO_LOCAL:
-                import logging
-                logging.warning(
-                    f"Failed to connect to FAISSx server: {e}, "
-                    f"falling back to local mode"
-                )
-                return None
-            # Otherwise, re-raise the exception
-            raise
+        max_retries = 2  # Will try a total of 3 times (initial attempt + 2 retries)
+        retry_count = 0
+        last_error = None
 
+        while retry_count <= max_retries:
+            try:
+                # Create a ZeroMQ connection and test it directly
+                context = zmq.Context()
+                socket = context.socket(zmq.REQ)
+                socket.setsockopt(zmq.LINGER, 0)
+                socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second receive timeout
+                socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 second send timeout
+                socket.connect(_API_URL)
+
+                # Send a ping request
+                request = {"action": "ping"}
+                socket.send(msgpack.packb(request))
+
+                # Wait for response
+                response = socket.recv()
+                result = msgpack.unpackb(response, raw=False)
+
+                # Clean up socket
+                socket.close()
+                context.term()
+
+                # If ping was successful, create the client
+                if result.get("success", False):
+                    # Now create the actual client
+                    _client = FaissXClient()
+                    logger.info(f"Successfully connected to FAISSx server at {_API_URL}")
+                    return _client
+                else:
+                    raise RuntimeError(f"Server returned error: {result.get('error', 'Unknown error')}")
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                logger.warning(
+                    f"Failed to connect to FAISSx server "
+                    f"(attempt {retry_count}/{max_retries+1}): {e}"
+                )
+
+                # If we haven't reached max retries, wait before trying again
+                if retry_count <= max_retries:
+                    time.sleep(1)  # Wait 1 second between retry attempts
+
+        # If we get here, all retries have failed - make sure to raise an exception
+        logger.error(f"Failed to connect to FAISSx server after {max_retries+1} attempts")
+        raise RuntimeError(
+            f"Failed to connect to FAISSx server after {max_retries+1} attempts: {last_error}"
+        )
+
+    # Return existing client
     return _client
 
 

@@ -31,17 +31,6 @@ import numpy as np
 from typing import Tuple
 import logging
 
-# Avoid module-level dependency on faiss by conditionally importing
-try:
-    import faiss
-
-    METRIC_L2 = faiss.METRIC_L2
-    METRIC_INNER_PRODUCT = faiss.METRIC_INNER_PRODUCT
-except ImportError:
-    # Define fallback constants when faiss isn't available
-    METRIC_L2 = 0
-    METRIC_INNER_PRODUCT = 1
-
 from ..client import get_client
 
 
@@ -73,7 +62,7 @@ class IndexScalarQuantizer:
         _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
-    def __init__(self, d: int, qtype=None, metric_type=METRIC_L2):
+    def __init__(self, d: int, qtype=None, metric_type=None):
         """
         Initialize the scalar quantizer index with specified parameters.
 
@@ -83,6 +72,21 @@ class IndexScalarQuantizer:
             metric_type: Distance metric, either faiss.METRIC_L2 or
                         faiss.METRIC_INNER_PRODUCT
         """
+        # Try to import faiss locally to avoid module-level dependency
+        try:
+            import faiss as local_faiss
+            METRIC_L2 = local_faiss.METRIC_L2
+            METRIC_INNER_PRODUCT = local_faiss.METRIC_INNER_PRODUCT
+        except ImportError:
+            # Define fallback constants when faiss isn't available
+            METRIC_L2 = 0
+            METRIC_INNER_PRODUCT = 1
+            local_faiss = None
+
+        # Use default metric if not provided
+        if metric_type is None:
+            metric_type = METRIC_L2
+
         # Store core parameters
         self.d = d
         # Convert metric type to string representation for remote mode
@@ -106,13 +110,21 @@ class IndexScalarQuantizer:
 
             # Check if API key or server URL are set - indicates configure() was called
             configured = bool(faissx._API_KEY) or (
-                faissx._API_URL != "tcp://localhost:45678"
+                faissx._API_URL != ""
             )
 
             # If configure was explicitly called, use remote mode
             if configured:
                 self._using_remote = True
                 self.client = get_client()
+
+                # If client is None, that means remote mode was requested but connection failed
+                if self.client is None:
+                    raise RuntimeError(
+                        "Remote mode was configured but connection to server failed. "
+                        "Check server URL and connectivity."
+                    )
+
                 self._local_index = None
 
                 # Determine index type identifier for scalar quantizer
@@ -122,23 +134,30 @@ class IndexScalarQuantizer:
                     index_type = f"{index_type}_IP"
 
                 # Create index on server
-                response = self.client.create_index(
-                    name=self.name, dimension=self.d, index_type=index_type
-                )
+                try:
+                    response = self.client.create_index(
+                        name=self.name, dimension=self.d, index_type=index_type
+                    )
 
-                self.index_id = response.get("index_id", self.name)
+                    self.index_id = response.get("index_id", self.name)
+                except Exception as e:
+                    # Raise a clear error instead of falling back to local mode
+                    raise RuntimeError(
+                        f"Failed to create remote scalar quantizer index: {e}. "
+                        f"Server may not support SQ indices with type {index_type}."
+                    )
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = (
-                    {}
-                )  # Maps local indices to server-side information
+                self._vector_mapping = {}  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
+        except RuntimeError:
+            # Re-raise runtime errors without fallback
+            raise
         except Exception as e:
-            logging.warning(
-                f"Error initializing remote mode: {e}, falling back to local mode"
-            )
+            # Only generic exceptions should result in an error, not fallback
+            raise RuntimeError(f"Error initializing remote mode: {e}")
 
         # Use local FAISS implementation by default
         self._using_remote = False

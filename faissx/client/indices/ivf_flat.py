@@ -100,13 +100,21 @@ class IndexIVFFlat:
 
             # Check if API key or server URL are set - this indicates configure() was called
             configured = bool(faissx._API_KEY) or (
-                faissx._API_URL != "tcp://localhost:45678"
+                faissx._API_URL != ""
             )
 
             # If configure was explicitly called, use remote mode
             if configured:
                 self._using_remote = True
                 self.client = get_client()
+
+                # If client is None, that means remote mode was requested but connection failed
+                if self.client is None:
+                    raise RuntimeError(
+                        "Remote mode was configured but connection to server failed. "
+                        "Check server URL and connectivity."
+                    )
+
                 self._local_index = None
 
                 # Determine index type identifier for remote server
@@ -115,24 +123,31 @@ class IndexIVFFlat:
                     index_type = f"{index_type}_IP"
 
                 # Create index on server
-                response = self.client.create_index(
-                    name=self.name, dimension=self.d, index_type=index_type
-                )
+                try:
+                    response = self.client.create_index(
+                        name=self.name, dimension=self.d, index_type=index_type
+                    )
 
-                self.index_id = response.get("index_id", self.name)
-                self.is_trained = response.get("is_trained", False)
+                    self.index_id = response.get("index_id", self.name)
+                    self.is_trained = response.get("is_trained", False)
+                except Exception as e:
+                    # Raise a clear error instead of falling back to local mode
+                    raise RuntimeError(
+                        f"Failed to create remote IVF index: {e}. "
+                        f"Server may not support IVF indices with type {index_type}."
+                    )
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = (
-                    {}
-                )  # Maps local indices to server-side information
+                self._vector_mapping = {}  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
+        except RuntimeError:
+            # Re-raise runtime errors without fallback
+            raise
         except Exception as e:
-            logging.warning(
-                f"Error initializing remote mode: {e}, falling back to local mode"
-            )
+            # Only generic exceptions should result in an error, not fallback
+            raise RuntimeError(f"Error initializing remote mode: {e}")
 
         # Use local FAISS implementation by default
         self._using_remote = False

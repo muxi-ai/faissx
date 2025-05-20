@@ -42,6 +42,7 @@ from .indices.hnsw_flat import IndexHNSWFlat
 from .indices.pq import IndexPQ
 from .indices.ivf_pq import IndexIVFPQ
 from .indices.scalar_quantizer import IndexScalarQuantizer
+from .indices.id_map import IndexIDMap, IndexIDMap2
 
 # Define what's available via import
 __all__ = [
@@ -50,5 +51,7 @@ __all__ = [
     'IndexHNSWFlat',
     'IndexPQ',
     'IndexIVFPQ',
-    'IndexScalarQuantizer'
+    'IndexScalarQuantizer',
+    'IndexIDMap',
+    'IndexIDMap2'
 ]

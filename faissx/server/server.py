@@ -68,6 +68,7 @@ class FaissIndex:
         self.data_dir = data_dir
         self.indexes = {}  # Dictionary to store FAISS indexes
         self.dimensions = {}  # Dictionary to store dimensions for each index
+        self.base_indexes = {}  # Dictionary to store relationships between ID maps and base indices
 
     def create_index(self, index_id, dimension, index_type="L2"):
         """
@@ -85,6 +86,8 @@ class FaissIndex:
                 - "HNSW_IP" - HNSW index with inner product distance
                 - "PQ" - Product Quantization index with L2 distance
                 - "PQ_IP" - Product Quantization index with inner product distance
+                - "IDMap:{base_index_id}" - IDMap wrapper for an existing index
+                - "IDMap2:{base_index_id}" - IDMap2 wrapper for an existing index
                 Additional parameters can be specified:
                 - "IVF100" - IVF with 100 centroids
                 - "IVF100_IP" - IVF with 100 centroids and inner product distance
@@ -100,6 +103,142 @@ class FaissIndex:
             return {"success": False, "error": f"Index {index_id} already exists"}
 
         try:
+            # Check for IDMap index types
+            if index_type.startswith("IDMap"):
+                # Handle both IDMap and IDMap2 types
+                is_idmap2 = index_type.startswith("IDMap2:")
+
+                # Extract the base index ID
+                if ":" not in index_type:
+                    return {
+                        "success": False,
+                        "error": "Invalid IDMap format. Use 'IDMap:base_index_id' or 'IDMap2:base_index_id'"
+                    }
+
+                base_index_id = index_type.split(":", 1)[1]
+
+                # Check if base index exists
+                if base_index_id not in self.indexes:
+                    return {
+                        "success": False,
+                        "error": f"Base index {base_index_id} does not exist"
+                    }
+
+                base_index = self.indexes[base_index_id]
+
+                # Special handling for non-empty base indices
+                if base_index.ntotal > 0:
+                    # For non-empty indices, we need to create a new empty index of the same type
+                    # and then copy the vectors over to the IDMap wrapper
+
+                    # Store vectors and IDs to add later
+                    if hasattr(base_index, "reconstruct_n") and hasattr(base_index, "id_map"):
+                        # For another IDMap as base, get IDs and vectors
+                        ids = np.array(list(base_index.id_map.keys()), dtype=np.int64)
+                        vectors = np.zeros((len(ids), self.dimensions[base_index_id]), dtype=np.float32)
+
+                        for i, id_val in enumerate(ids):
+                            vectors[i] = base_index.reconstruct(id_val)
+                    else:
+                        # For regular indices, create sequential IDs
+                        vectors = np.zeros((base_index.ntotal, self.dimensions[base_index_id]), dtype=np.float32)
+                        for i in range(base_index.ntotal):
+                            vectors[i] = base_index.reconstruct(i)
+
+                        ids = np.arange(base_index.ntotal, dtype=np.int64)
+
+                    # Get the underlying index type by creating a fresh empty base index
+                    # Create a copy of the same type as the original base index
+                    base_copy = None
+
+                    if isinstance(base_index, faiss.IndexFlatL2):
+                        base_copy = faiss.IndexFlatL2(self.dimensions[base_index_id])
+                    elif isinstance(base_index, faiss.IndexFlatIP):
+                        base_copy = faiss.IndexFlatIP(self.dimensions[base_index_id])
+                    elif isinstance(base_index, faiss.IndexIVFFlat):
+                        # Create a similar IVF index
+                        if base_index.metric_type == faiss.METRIC_L2:
+                            quantizer = faiss.IndexFlatL2(self.dimensions[base_index_id])
+                            base_copy = faiss.IndexIVFFlat(
+                                quantizer, self.dimensions[base_index_id],
+                                base_index.nlist, faiss.METRIC_L2
+                            )
+                        else:
+                            quantizer = faiss.IndexFlatIP(self.dimensions[base_index_id])
+                            base_copy = faiss.IndexIVFFlat(
+                                quantizer, self.dimensions[base_index_id],
+                                base_index.nlist, faiss.METRIC_INNER_PRODUCT
+                            )
+
+                        # Train the index if needed
+                        if not base_copy.is_trained:
+                            if base_index.is_trained:
+                                base_copy.train(vectors)
+                            else:
+                                return {
+                                    "success": False,
+                                    "error": "Base index is not trained and cannot be used as template"
+                                }
+                    else:
+                        # For other index types, attempt to determine basic parameters
+                        # This is a simplification and might not handle all index types
+                        return {
+                            "success": False,
+                            "error": "Complex index types with existing vectors are not supported for IDMap wrapping"
+                        }
+
+                    # Create appropriate IDMap index with the empty base
+                    if is_idmap2:
+                        index = faiss.IndexIDMap2(base_copy)
+                    else:
+                        index = faiss.IndexIDMap(base_copy)
+
+                    # Store index and metadata
+                    self.indexes[index_id] = index
+                    self.dimensions[index_id] = self.dimensions[base_index_id]
+
+                    # Store relationship for future reference
+                    self.base_indexes[index_id] = base_index_id
+
+                    # Add the vectors with IDs
+                    index.add_with_ids(vectors, ids)
+
+                    # Return success
+                    return {
+                        "success": True,
+                        "index_id": index_id,
+                        "dimension": self.dimensions[index_id],
+                        "type": index_type,
+                        "is_trained": getattr(index, "is_trained", True),
+                        "base_index_id": base_index_id,
+                        "vector_count": index.ntotal
+                    }
+                else:
+                    # For empty base indices, proceed normally
+                    # Create appropriate IDMap index
+                    if is_idmap2:
+                        index = faiss.IndexIDMap2(base_index)
+                    else:
+                        index = faiss.IndexIDMap(base_index)
+
+                    # Store index and metadata
+                    self.indexes[index_id] = index
+                    self.dimensions[index_id] = self.dimensions[base_index_id]
+
+                    # Store relationship for future reference
+                    self.base_indexes[index_id] = base_index_id
+
+                    # Return success
+                    return {
+                        "success": True,
+                        "index_id": index_id,
+                        "dimension": self.dimensions[index_id],
+                        "type": index_type,
+                        "is_trained": getattr(index, "is_trained", True),
+                        "base_index_id": base_index_id
+                    }
+
+            # Handle other index types (existing code)
             # Parse index parameters
             index_params = {}
             if "_" in index_type:
@@ -281,6 +420,262 @@ class FaissIndex:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def add_with_ids(self, index_id, vectors, ids):
+        """
+        Add vectors with explicit IDs to an index.
+
+        Args:
+            index_id (str): ID of the target index
+            vectors (list): List of vectors to add
+            ids (list): List of IDs to associate with vectors
+
+        Returns:
+            dict: Response containing success status and count of added vectors or error message
+        """
+        if index_id not in self.indexes:
+            return {"success": False, "error": f"Index {index_id} does not exist"}
+
+        try:
+            # Check if index is an IDMap type
+            index = self.indexes[index_id]
+            if not isinstance(index, (faiss.IndexIDMap, faiss.IndexIDMap2)):
+                return {
+                    "success": False,
+                    "error": f"Index {index_id} is not an IDMap type"
+                }
+
+            # Convert vectors and IDs to numpy arrays
+            vectors_np = np.array(vectors, dtype=np.float32)
+            ids_np = np.array(ids, dtype=np.int64)
+
+            # Validate dimensions
+            if vectors_np.shape[1] != self.dimensions[index_id]:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Vector dimension mismatch. Expected {self.dimensions[index_id]}, "
+                        f"got {vectors_np.shape[1]}"
+                    )
+                }
+
+            # Validate matching lengths
+            if len(vectors_np) != len(ids_np):
+                return {
+                    "success": False,
+                    "error": f"Number of vectors ({len(vectors_np)}) doesn't match number of IDs ({len(ids_np)})"
+                }
+
+            # Initialize vector cache if needed
+            if not hasattr(self, '_vector_cache'):
+                self._vector_cache = {}
+            if index_id not in self._vector_cache:
+                self._vector_cache[index_id] = {}
+
+            # Cache each vector with its ID as list to ensure serializability
+            for i, id_val in enumerate(ids_np):
+                id_int = int(id_val)
+                self._vector_cache[index_id][id_int] = vectors_np[i].tolist()
+
+            # Add vectors with IDs
+            index.add_with_ids(vectors_np, ids_np)
+            total = index.ntotal
+
+            print(f"Added {len(vectors)} vectors with IDs to index {index_id}, total: {total}")
+            return {"success": True, "count": len(vectors), "total": total}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def remove_ids(self, index_id, ids):
+        """
+        Remove vectors with the specified IDs from an index.
+
+        Args:
+            index_id (str): ID of the target index
+            ids (list): List of IDs to remove
+
+        Returns:
+            dict: Response containing success status and count of removed vectors or error message
+        """
+        if index_id not in self.indexes:
+            return {"success": False, "error": f"Index {index_id} does not exist"}
+
+        try:
+            # Check if index is an IDMap type
+            index = self.indexes[index_id]
+            if not isinstance(index, (faiss.IndexIDMap, faiss.IndexIDMap2)):
+                return {
+                    "success": False,
+                    "error": f"Index {index_id} is not an IDMap type"
+                }
+
+            # Convert IDs to numpy array
+            ids_np = np.array(ids, dtype=np.int64)
+
+            # Get current vector count
+            before_count = index.ntotal
+
+            # Remove IDs
+            index.remove_ids(ids_np)
+
+            # Calculate number of vectors removed
+            after_count = index.ntotal
+            removed_count = before_count - after_count
+
+            print(f"Removed {removed_count} vectors from index {index_id}, remaining: {after_count}")
+            return {"success": True, "count": removed_count, "total": after_count}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def reconstruct(self, index_id, id_val):
+        """
+        Reconstruct a vector from its ID.
+
+        Args:
+            index_id (str): ID of the target index
+            id_val (int): ID of the vector to reconstruct
+
+        Returns:
+            dict: Response containing the reconstructed vector or error message
+        """
+        if index_id not in self.indexes:
+            return {"success": False, "error": f"Index {index_id} does not exist"}
+
+        try:
+            # Get the index
+            index = self.indexes[index_id]
+            id_int = int(id_val)  # Convert to integer for consistent key lookup
+
+            # Special handling for IDMap indices
+            if isinstance(index, (faiss.IndexIDMap, faiss.IndexIDMap2)):
+                # First, check if we have this vector in our cache
+                if hasattr(self, '_vector_cache') and index_id in self._vector_cache:
+                    # Check cache first for efficiency
+                    if id_int in self._vector_cache[index_id]:
+                        cached_vector = self._vector_cache[index_id][id_int]
+                        # Make sure we have a list (serializable) not a numpy array
+                        vector_list = cached_vector if isinstance(cached_vector, list) else cached_vector.tolist()
+                        return {
+                            "success": True,
+                            "vector": vector_list
+                        }
+
+                # If not in cache, try direct reconstruction if supported
+                try:
+                    # Attempt direct reconstruction
+                    vector = index.reconstruct(id_int)
+                    vector_list = vector.tolist()
+
+                    # Cache the result for future use
+                    if not hasattr(self, '_vector_cache'):
+                        self._vector_cache = {}
+                    if index_id not in self._vector_cache:
+                        self._vector_cache[index_id] = {}
+                    self._vector_cache[index_id][id_int] = vector_list
+
+                    return {"success": True, "vector": vector_list}
+                except Exception:
+                    # If direct reconstruction fails, try search-based fallback
+                    # This is a last resort and can be very inefficient for large indices
+
+                    # Try the base index if this is an IDMap
+                    if index_id in self.base_indexes:
+                        base_id = self.base_indexes[index_id]
+
+                        # Check if the base index supports reconstruction
+                        if hasattr(self.indexes[base_id], "reconstruct"):
+                            try:
+                                # For IDMap indices, we need to find the internal index
+                                if hasattr(index, 'id_map'):
+                                    internal_idx = index.id_map.get(id_int)
+                                    if internal_idx is not None:
+                                        # Use the base index to reconstruct
+                                        vector = self.indexes[base_id].reconstruct(internal_idx)
+                                        vector_list = vector.tolist()
+
+                                        # Cache for future use
+                                        if not hasattr(self, '_vector_cache'):
+                                            self._vector_cache = {}
+                                        if index_id not in self._vector_cache:
+                                            self._vector_cache[index_id] = {}
+
+                                        self._vector_cache[index_id][id_int] = vector_list
+
+                                        return {"success": True, "vector": vector_list}
+                            except Exception:
+                                # Fall through to error
+                                pass
+
+                    # If all else fails, return more detailed error message
+                    return {
+                        "success": False,
+                        "error": (
+                            "Reconstruction not supported for this IDMap index type. "
+                            "The vector was not found in cache and direct reconstruction failed."
+                        )
+                    }
+            else:
+                # Check if the index supports reconstruction
+                if not hasattr(index, "reconstruct"):
+                    return {
+                        "success": False,
+                        "error": f"Index {index_id} does not support reconstruction"
+                    }
+
+                # Reconstruct the vector
+                vector = index.reconstruct(id_int)
+                vector_list = vector.tolist()
+
+                print(f"Reconstructed vector with ID {id_val} from index {index_id}")
+                return {"success": True, "vector": vector_list}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def replace_vector(self, index_id, id_val, vector):
+        """
+        Replace a vector while preserving its ID (for IndexIDMap2 only).
+
+        Args:
+            index_id (str): ID of the target index
+            id_val (int): ID of the vector to replace
+            vector (list): New vector data
+
+        Returns:
+            dict: Response containing success status or error message
+        """
+        if index_id not in self.indexes:
+            return {"success": False, "error": f"Index {index_id} does not exist"}
+
+        try:
+            # Check if index is an IDMap2 type
+            index = self.indexes[index_id]
+            if not isinstance(index, faiss.IndexIDMap2):
+                return {
+                    "success": False,
+                    "error": f"Index {index_id} is not an IDMap2 type"
+                }
+
+            # Convert vector to numpy array
+            vector_np = np.array([vector], dtype=np.float32)
+            id_np = np.array([id_val], dtype=np.int64)
+
+            # Validate dimension
+            if vector_np.shape[1] != self.dimensions[index_id]:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Vector dimension mismatch. Expected {self.dimensions[index_id]}, "
+                        f"got {vector_np.shape[1]}"
+                    )
+                }
+
+            # Replace the vector
+            index.add_with_ids(vector_np, id_np)  # For IDMap2, this replaces existing vectors
+
+            print(f"Replaced vector with ID {id_val} in index {index_id}")
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def search(self, index_id, query_vectors, k=10):
         """
         Search for similar vectors in an index.
@@ -410,6 +805,13 @@ class FaissIndex:
                 "vector_count": index.ntotal,
                 "type": "L2" if isinstance(index, faiss.IndexFlatL2) else "IP",
             }
+
+            # Add IDMap specific information if applicable
+            if index_id in self.base_indexes:
+                stats["base_index_id"] = self.base_indexes[index_id]
+                stats["is_idmap"] = isinstance(index, faiss.IndexIDMap)
+                stats["is_idmap2"] = isinstance(index, faiss.IndexIDMap2)
+
             return {"success": True, "stats": stats}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -424,13 +826,20 @@ class FaissIndex:
         try:
             index_list = []
             for index_id in self.indexes:
-                index_list.append(
-                    {
-                        "index_id": index_id,
-                        "dimension": self.dimensions[index_id],
-                        "vector_count": self.indexes[index_id].ntotal,
-                    }
-                )
+                index_info = {
+                    "index_id": index_id,
+                    "dimension": self.dimensions[index_id],
+                    "vector_count": self.indexes[index_id].ntotal,
+                }
+
+                # Add IDMap specific information if applicable
+                if index_id in self.base_indexes:
+                    index_info["base_index_id"] = self.base_indexes[index_id]
+                    index_info["is_idmap"] = isinstance(self.indexes[index_id], faiss.IndexIDMap)
+                    index_info["is_idmap2"] = isinstance(self.indexes[index_id], faiss.IndexIDMap2)
+
+                index_list.append(index_info)
+
             return {"success": True, "indexes": index_list}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -621,6 +1030,32 @@ def run_server(
                         request.get("index_id", ""), request.get("vectors", [])
                     )
 
+                elif action == "add_with_ids":
+                    response = faiss_index.add_with_ids(
+                        request.get("index_id", ""),
+                        request.get("vectors", []),
+                        request.get("ids", [])
+                    )
+
+                elif action == "remove_ids":
+                    response = faiss_index.remove_ids(
+                        request.get("index_id", ""),
+                        request.get("ids", [])
+                    )
+
+                elif action == "reconstruct":
+                    response = faiss_index.reconstruct(
+                        request.get("index_id", ""),
+                        request.get("id", 0)
+                    )
+
+                elif action == "replace_vector":
+                    response = faiss_index.replace_vector(
+                        request.get("index_id", ""),
+                        request.get("id", 0),
+                        request.get("vector", [])
+                    )
+
                 elif action == "search":
                     response = faiss_index.search(
                         request.get("index_id", ""),
@@ -678,9 +1113,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Use environment variables as fallback, but prioritize command-line arguments
-    port = args.port
-    bind_address = args.bind_address
-    data_dir = args.data_dir or os.environ.get("FAISS_DATA_DIR")
+    port = int(os.environ.get("FAISSX_PORT", args.port))
+    bind_address = os.environ.get("FAISSX_BIND_ADDRESS", args.bind_address)
+    data_dir = args.data_dir or os.environ.get("FAISSX_DATA_DIR")
 
     # Default to no authentication when run directly
     run_server(port, bind_address, auth_keys={}, enable_auth=False, data_dir=data_dir)

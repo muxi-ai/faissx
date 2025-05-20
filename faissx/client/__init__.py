@@ -76,20 +76,16 @@ _API_URL: Optional[str] = os.environ.get(
 )
 _API_KEY: Optional[str] = os.environ.get("FAISSX_API_KEY", "")  # API key for authentication
 _TENANT_ID: Optional[str] = os.environ.get("FAISSX_TENANT_ID", "")  # Tenant ID for multi-tenancy
-# Enable local FAISS fallback by default
-_FALLBACK_TO_LOCAL: bool = os.environ.get("FAISSX_FALLBACK_TO_LOCAL", "1") == "1"
 
-# Attempt to import local FAISS for fallback capabilities
+# Attempt to import local FAISS for local mode
 try:
-    # Import FAISS locally to enable fallback mode when remote server is unavailable
+    # Import FAISS locally for local mode when remote server is not configured
     import faiss as _local_faiss
 except ImportError:
     _local_faiss = None
-    if _FALLBACK_TO_LOCAL:
-        print(
-            "Warning: Local FAISS not found, can't use fallback mode", file=sys.stderr
-        )
-        _FALLBACK_TO_LOCAL = False
+    print(
+        "Warning: Local FAISS not found, only remote mode will be available", file=sys.stderr
+    )
 
 # Define public API - symbols that can be imported directly from the module
 __all__ = [

@@ -62,6 +62,8 @@ from .client.index import (  # noqa: F401
     IndexPQ,
     IndexIVFPQ,
     IndexScalarQuantizer,
+    IndexIDMap,
+    IndexIDMap2,
 )
 
 # Define public API
@@ -73,6 +75,8 @@ __all__ = [
     'IndexPQ',
     'IndexIVFPQ',
     'IndexScalarQuantizer',
+    'IndexIDMap',
+    'IndexIDMap2',
 ]
 
 
