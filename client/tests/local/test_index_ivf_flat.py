@@ -80,9 +80,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def _create_trained_index(self):
         """Helper to create and train an index with the test data"""
-        # Skip for now due to local variable faiss reference issue
-        self.skipTest("Skipping due to faiss reference issues in IndexIVFFlat implementation")
-
         # Create a quantizer
         quantizer = faiss.IndexFlatL2(self.dimension)
 
@@ -96,9 +93,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_create_index(self):
         """Test creating an IndexIVFFlat instance"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
-
         # Create a quantizer
         quantizer = faiss.IndexFlatL2(self.dimension)
 
@@ -115,8 +109,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_train_index(self):
         """Test training an IndexIVFFlat"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
         index = self._create_trained_index()
 
         # Verify the index is trained
@@ -124,8 +116,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_add_vectors(self):
         """Test adding vectors to a trained index"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
         index = self._create_trained_index()
 
         # Add vectors
@@ -136,8 +126,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_search(self):
         """Test search functionality"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
         index = self._create_trained_index()
         index.add(self.vectors)
 
@@ -155,8 +143,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_nprobe_parameter(self):
         """Test setting nprobe parameter affects search results"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
         index = self._create_trained_index()
         index.add(self.vectors)
 
@@ -178,8 +164,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_reset(self):
         """Test reset functionality"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
         index = self._create_trained_index()
         index.add(self.vectors)
 
@@ -194,8 +178,6 @@ class TestIndexIVFFlat(unittest.TestCase):
 
     def test_error_handling(self):
         """Test error handling for invalid inputs"""
-        # Skip this test for now as it requires more extensive patching
-        self.skipTest("Skipping IVF test due to implementation issues")
         index = self._create_trained_index()
 
         # Test adding vectors before training (should work since we trained already)

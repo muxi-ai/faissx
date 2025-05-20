@@ -55,12 +55,12 @@ python -m unittest test_index_flat
 |--------------|--------|-------|
 | IndexFlatL2  | ✅ Pass | All core functionality tested |
 | IndexFactory | ✅ Pass | Basic factory tests pass |
-| IndexIVFFlat | ⏸️ Skipped | Requires additional implementation |
+| IndexIVFFlat | ✅ Pass | All tests now passing properly |
 | IndexIDMap   | ✅ Pass | Basic tests pass, some advanced features skipped |
-| Persistence  | ⏸️ Skipped | Requires IO module implementation |
+| Persistence  | ✅ Pass | Basic tests pass with custom implementation |
 
 ## Future Work
 
-- Implement the remaining index types (IVF, PQ, HNSW)
+- Implement any remaining advanced features
 - Add more comprehensive error handling tests
 - Add benchmarking to compare performance
