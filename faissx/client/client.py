@@ -18,196 +18,217 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-FAISSx ZeroMQ Client Implementation
-
-This module provides the core client interface for communicating with
-the FAISSx vector server.
-
-It handles:
-- ZeroMQ socket communication with binary protocol support
-- Request/response cycles for all vector operations
-- Authentication and tenant isolation
-- Connection management and error handling
-- Serialization/deserialization of vector data
-- Index creation, vector addition, and similarity searches
-
-The FaissXClient class handles low-level communication details, while the
-public configure() and get_client() functions provide a simplified interface
-for the rest of the client library.
-"""
-
+import os
 import zmq
 import msgpack
 import numpy as np
 import logging
 from typing import Dict, Any, Optional
 import time
+from functools import wraps
 
 # Configure logging for the module
 logger = logging.getLogger(__name__)
 
 
+def retry_on_failure(max_retries=2, delay=1):
+    """Decorator that retries a function call on failure.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay: Delay in seconds between retries
+
+    Returns:
+        Decorated function that will retry on failure
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retry_count = 0
+            last_error = None
+
+            while retry_count <= max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    retry_count += 1
+                    logger.warning(
+                        f"Operation failed (attempt {retry_count}/{max_retries+1}): {e}"
+                    )
+                    if retry_count <= max_retries:
+                        time.sleep(delay)
+
+            raise RuntimeError(
+                f"Operation failed after {max_retries+1} attempts: {last_error}"
+            )
+
+        return wrapper
+
+    return decorator
+
+
 class FaissXClient:
-    """
-    Client for interacting with FAISSx server via ZeroMQ.
+    """Client for interacting with FAISSx server via ZeroMQ.
 
-    This class handles all communication with the FAISSx server, including:
-    - Connection management
-    - Request/response handling
-    - Vector operations (create, add, search)
-    - Index management
+    This client provides methods to create and manage vector indexes, add vectors,
+    and perform similarity searches using the FAISS library through a ZeroMQ server.
     """
 
-    def __init__(
+    def __init__(self):
+        """Initialize the client with configuration from environment variables."""
+        self.server = os.environ.get("FAISSX_SERVER", "")
+        self.api_key = os.environ.get("FAISSX_API_KEY", "")
+        self.tenant_id = os.environ.get("FAISSX_TENANT_ID", "")
+        self.context = None
+        self.socket = None
+        self.mode = "local"
+
+    def configure(
         self,
         server: Optional[str] = None,
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
-    ):
-        """
-        Initialize the client with server connection details and authentication.
+    ) -> None:
+        """Configure the client with server details and authentication.
 
         Args:
-            server: Server address in ZeroMQ format (e.g. "tcp://localhost:45678")
-            api_key: API key for authentication with the server
-            tenant_id: Tenant ID for multi-tenant data isolation
-
-        Raises:
-            ValueError: If server address is not provided
-            RuntimeError: If connection to server fails
+            server: ZeroMQ server address
+            api_key: API key for authentication
+            tenant_id: Tenant identifier for multi-tenant setups
         """
-        from . import _API_URL, _API_KEY, _TENANT_ID
+        self.server = server or self.server
+        self.api_key = api_key or self.api_key
+        self.tenant_id = tenant_id or self.tenant_id
+        self.connect()
+        self.mode = "remote"
 
-        # Use provided values or fall back to module defaults
-        self.server = server or _API_URL
-        self.api_key = api_key or _API_KEY
-        self.tenant_id = tenant_id or _TENANT_ID
+    def disconnect(self):
+        """Close the ZeroMQ connection and clean up resources."""
+        if self.socket:
+            self.socket.close()
+            self.context.term()
+            self.socket = None
+            self.context = None
 
-        # If server address is empty, this is an error - it should be caught by get_client
-        # to enable local mode
-        if not self.server:
-            raise ValueError("Server address is empty, using local mode instead")
-
-        # Set up ZeroMQ connection
+    @retry_on_failure(max_retries=2)
+    def connect(self):
+        """Establish connection to the FAISSx server with retry logic."""
+        self.disconnect()
         self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REQ)  # Request-Reply pattern
+        self.socket = self.context.socket(zmq.REQ)
         self.socket.connect(self.server)
+        self._send_request({"action": "ping"})
+        logger.info(f"Connected to FAISSx server at {self.server}")
 
-        # Verify connection with a ping request
-        try:
-            self._send_request({"action": "ping"})
-            logger.info(f"Connected to FAISSx server at {self.server}")
-        except Exception as e:
-            logger.error(f"Failed to connect to FAISSx server: {e}")
-            raise RuntimeError(f"Failed to connect to FAISSx server at {self.server}: {e}")
+    def get_client(self):
+        """Get an active client instance, creating one if necessary."""
+        if not self.socket and not self.server:
+            return None
+        if not self.socket:
+            return self.connect()
+        return self
+
+    def __del__(self):
+        """Cleanup when the client is destroyed."""
+        self.disconnect()
 
     def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Internal method to send requests to the server and handle responses.
+        """Send a request to the FAISSx server and handle the response.
 
         Args:
-            request: Dictionary containing the request data
+            request: Dictionary containing the request parameters
 
         Returns:
-            Dictionary containing the server's response
+            Dictionary containing the server response
 
         Raises:
-            RuntimeError: If request fails or server returns an error
+            RuntimeError: If the request fails or server returns an error
         """
-        # Add authentication headers if configured
         if self.api_key:
             request["api_key"] = self.api_key
         if self.tenant_id:
             request["tenant_id"] = self.tenant_id
 
         try:
-            # Serialize request using msgpack for efficient binary transfer
             self.socket.send(msgpack.packb(request))
-
-            # Wait for and deserialize response
             response = self.socket.recv()
             result = msgpack.unpackb(response, raw=False)
 
-            # Handle error responses
             if not result.get("success", False) and "error" in result:
-                logger.error(f"FAISSx request failed: {result['error']}")
                 raise RuntimeError(f"FAISSx request failed: {result['error']}")
 
             return result
         except zmq.ZMQError as e:
-            logger.error(f"ZMQ error: {str(e)}")
             raise RuntimeError(f"ZMQ error: {str(e)}")
         except Exception as e:
-            logger.error(f"Request failed: {str(e)}")
             raise RuntimeError(f"FAISSx request failed: {str(e)}")
 
-    def create_index(
-        self, name: str, dimension: int, index_type: str = "L2"
-    ) -> str:
+    def _prepare_vectors(self, vectors: np.ndarray) -> list:
+        """Convert numpy arrays to a format suitable for serialization.
+
+        Args:
+            vectors: Input vectors as numpy array
+
+        Returns:
+            List representation of the vectors
         """
-        Create a new vector index on the server.
+        if not isinstance(vectors, np.ndarray):
+            vectors = np.array(vectors, dtype=np.float32)
+        return vectors.tolist() if hasattr(vectors, "tolist") else vectors
+
+    def create_index(self, name: str, dimension: int, index_type: str = "L2") -> str:
+        """Create a new vector index.
 
         Args:
             name: Unique identifier for the index
-            dimension: Dimensionality of vectors to be stored
-            index_type: Type of similarity metric
-                        ("L2" for Euclidean distance or "IP" for inner product)
+            dimension: Dimensionality of the vectors
+            index_type: Type of index (default: "L2")
 
         Returns:
-            The created index ID (same as name if successful)
+            Index identifier
         """
-        request = {
-            "action": "create_index",
-            "index_id": name,
-            "dimension": dimension,
-            "index_type": index_type
-        }
-
-        response = self._send_request(request)
+        response = self._send_request(
+            {
+                "action": "create_index",
+                "index_id": name,
+                "dimension": dimension,
+                "index_type": index_type,
+            }
+        )
         return response.get("index_id", name)
 
     def add_vectors(self, index_id: str, vectors: np.ndarray) -> Dict[str, Any]:
-        """
-        Add vectors to an existing index.
+        """Add vectors to an existing index.
 
         Args:
-            index_id: ID of the target index
+            index_id: Identifier of the target index
             vectors: Numpy array of vectors to add
+
+        Returns:
+            Dictionary containing operation results
+        """
+        return self._send_request(
+            {
+                "action": "add_vectors",
+                "index_id": index_id,
+                "vectors": self._prepare_vectors(vectors),
+            }
+        )
+
+    def batch_add_vectors(
+        self, index_id: str, vectors: np.ndarray, batch_size: int = 1000
+    ) -> Dict[str, Any]:
+        """Add vectors to an index in batches.
+
+        Args:
+            index_id: Identifier of the target index
+            vectors: Numpy array of vectors to add
+            batch_size: Number of vectors per batch
 
         Returns:
             Dictionary containing operation results and statistics
-        """
-        # Convert numpy array to list for serialization
-        vectors_list = vectors.tolist() if hasattr(vectors, 'tolist') else vectors
-
-        request = {
-            "action": "add_vectors",
-            "index_id": index_id,
-            "vectors": vectors_list
-        }
-
-        return self._send_request(request)
-
-    def batch_add_vectors(
-        self,
-        index_id: str,
-        vectors: np.ndarray,
-        batch_size: int = 1000
-    ) -> Dict[str, Any]:
-        """
-        Add vectors to an index in optimized batches.
-
-        This method improves performance when adding large numbers of vectors
-        by splitting them into batches of optimal size for network transmission.
-
-        Args:
-            index_id: ID of the target index
-            vectors: Numpy array of vectors to add
-            batch_size: Size of each batch (default: 1000 vectors)
-
-        Returns:
-            Dictionary containing aggregated operation results and statistics
         """
         if not isinstance(vectors, np.ndarray):
             vectors = np.array(vectors, dtype=np.float32)
@@ -216,28 +237,21 @@ class FaissXClient:
         total_added = 0
         results = {"success": True, "count": 0, "total": 0}
 
-        # Process vectors in batches
         for i in range(0, total_vectors, batch_size):
-            batch = vectors[i:min(i+batch_size, total_vectors)]
-
-            # Add this batch
+            batch = vectors[i : min(i + batch_size, total_vectors)]
             batch_result = self.add_vectors(index_id, batch)
 
-            # If any batch fails, mark the whole operation as failed
             if not batch_result.get("success", False):
-                error_msg = batch_result.get('error', 'Unknown error')
                 return {
                     "success": False,
-                    "error": f"Failed at batch {i//batch_size}: {error_msg}",
+                    "error": f"Failed at batch {i//batch_size}: {batch_result.get('error', 'Unknown error')}",
                     "count": total_added,
-                    "total": batch_result.get("total", 0)
+                    "total": batch_result.get("total", 0),
                 }
 
-            # Update counters
             total_added += batch_result.get("count", 0)
-            results["total"] = batch_result.get("total", 0)  # Get latest total
+            results["total"] = batch_result.get("total", 0)
 
-        # Return aggregated results
         results["count"] = total_added
         return results
 
@@ -248,34 +262,25 @@ class FaissXClient:
         k: int = 10,
         params: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
-        """
-        Search for similar vectors in an index.
+        """Search for nearest neighbors in the index.
 
         Args:
-            index_id: ID of the index to search
-            query_vectors: Query vectors to find matches for
+            index_id: Identifier of the target index
+            query_vectors: Query vectors to search for
             k: Number of nearest neighbors to return
-            params: Additional search parameters (e.g., nprobe for IVF indices)
+            params: Additional search parameters
 
         Returns:
-            Dictionary containing search results and distances
+            Dictionary containing search results
         """
-        # Convert numpy array to list for serialization
-        vectors_list = (
-            query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
-        )
-
         request = {
             "action": "search",
             "index_id": index_id,
-            "query_vectors": vectors_list,
-            "k": k
+            "query_vectors": self._prepare_vectors(query_vectors),
+            "k": k,
         }
-
-        # Add search parameters if provided
         if params:
             request["params"] = params
-
         return self._send_request(request)
 
     def batch_search(
@@ -286,22 +291,19 @@ class FaissXClient:
         batch_size: int = 100,
         params: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
-        """
-        Search for similar vectors in batches for improved performance.
-
-        For large numbers of query vectors, this method splits the search
-        into optimally sized batches to improve network efficiency.
+        """Perform batched nearest neighbor search for large query sets.
 
         Args:
-            index_id: ID of the index to search
-            query_vectors: Query vectors to find matches for
+            index_id: Identifier of the target index
+            query_vectors: Query vectors to search for
             k: Number of nearest neighbors to return
-            batch_size: Size of each batch (default: 100 queries)
-            params: Additional search parameters (e.g., nprobe for IVF indices)
+            batch_size: Number of queries per batch
+            params: Additional search parameters
 
         Returns:
-            Dictionary containing combined search results and distances
+            Dictionary containing combined search results and success status
         """
+        # Convert input to numpy array if needed
         if not isinstance(query_vectors, np.ndarray):
             query_vectors = np.array(query_vectors, dtype=np.float32)
 
@@ -310,79 +312,63 @@ class FaissXClient:
 
         # Process queries in batches
         for i in range(0, total_queries, batch_size):
-            batch = query_vectors[i:min(i+batch_size, total_queries)]
-
-            # Search this batch
+            # Extract current batch of vectors
+            batch = query_vectors[i : min(i + batch_size, total_queries)]
             batch_result = self.search(index_id, batch, k, params)
 
-            # Check for errors
+            # Handle batch failure
             if not batch_result.get("success", False):
-                error_msg = batch_result.get('error', 'Unknown error')
                 return {
                     "success": False,
-                    "error": f"Failed at batch {i//batch_size}: {error_msg}"
+                    "error": f"Failed at batch {i//batch_size}: {batch_result.get('error', 'Unknown error')}",
                 }
 
-            # Add results from this batch to our collection
+            # Accumulate results
             all_results.extend(batch_result.get("results", []))
 
-        # Return combined results
         return {"success": True, "results": all_results}
 
     def range_search(
-        self,
-        index_id: str,
-        query_vectors: np.ndarray,
-        radius: float,
+        self, index_id: str, query_vectors: np.ndarray, radius: float
     ) -> Dict[str, Any]:
-        """
-        Search for vectors within a specified radius.
+        """Search for vectors within specified radius of query vectors.
 
         Args:
-            index_id: ID of the index to search
-            query_vectors: Query vectors to find matches for
-            radius: Maximum distance threshold for matches
+            index_id: Identifier of the target index
+            query_vectors: Query vectors to search around
+            radius: Maximum distance threshold for results
 
         Returns:
-            Dictionary containing search results including distances and indices
-            for each point within the radius
+            Dictionary containing vectors within radius and their distances
         """
-        # Convert numpy array to list for serialization
-        vectors_list = (
-            query_vectors.tolist() if hasattr(query_vectors, 'tolist') else query_vectors
+        return self._send_request(
+            {
+                "action": "range_search",
+                "index_id": index_id,
+                "query_vectors": self._prepare_vectors(query_vectors),
+                "radius": float(radius),
+            }
         )
-
-        request = {
-            "action": "range_search",
-            "index_id": index_id,
-            "query_vectors": vectors_list,
-            "radius": float(radius)  # Ensure radius is a float
-        }
-
-        return self._send_request(request)
 
     def batch_range_search(
         self,
         index_id: str,
         query_vectors: np.ndarray,
         radius: float,
-        batch_size: int = 100
+        batch_size: int = 100,
     ) -> Dict[str, Any]:
-        """
-        Perform radius search in batches for improved performance.
-
-        For large numbers of query vectors, this method splits the range search
-        into optimally sized batches to improve network efficiency.
+        """Perform batched range search for large query sets.
 
         Args:
-            index_id: ID of the index to search
-            query_vectors: Query vectors to find matches for
-            radius: Maximum distance threshold for matches
-            batch_size: Size of each batch (default: 100 queries)
+            index_id: Identifier of the target index
+            query_vectors: Query vectors to search around
+            radius: Maximum distance threshold for results
+            batch_size: Number of queries per batch
 
         Returns:
-            Dictionary containing combined search results
+            Dictionary containing combined range search results
         """
+        # Convert input to numpy array if needed
         if not isinstance(query_vectors, np.ndarray):
             query_vectors = np.array(query_vectors, dtype=np.float32)
 
@@ -391,58 +377,50 @@ class FaissXClient:
 
         # Process queries in batches
         for i in range(0, total_queries, batch_size):
-            batch = query_vectors[i:min(i+batch_size, total_queries)]
-
-            # Range search this batch
+            # Extract current batch of vectors
+            batch = query_vectors[i : min(i + batch_size, total_queries)]
             batch_result = self.range_search(index_id, batch, radius)
 
-            # Check for errors
+            # Handle batch failure
             if not batch_result.get("success", False):
-                error_msg = batch_result.get('error', 'Unknown error')
                 return {
                     "success": False,
-                    "error": f"Failed at batch {i//batch_size}: {error_msg}"
+                    "error": f"Failed at batch {i//batch_size}: {batch_result.get('error', 'Unknown error')}",
                 }
 
-            # Add results from this batch to our collection
+            # Accumulate results
             all_results.extend(batch_result.get("results", []))
 
-        # Return combined results
         return {"success": True, "results": all_results}
 
     def get_index_stats(self, index_id: str) -> Dict[str, Any]:
-        """
-        Retrieve statistics about an index.
+        """Get statistics and metadata for specified index.
 
         Args:
-            index_id: ID of the index to get stats for
+            index_id: Identifier of the target index
 
         Returns:
             Dictionary containing index statistics (dimension, vector count, etc.)
         """
-        request = {
-            "action": "get_index_stats",
-            "index_id": index_id
-        }
-
-        return self._send_request(request)
+        return self._send_request(
+            {
+                "action": "get_index_stats",
+                "index_id": index_id,
+            }
+        )
 
     def list_indexes(self) -> Dict[str, Any]:
-        """
-        List all available indexes on the server.
+        """List all available indexes on the server.
 
         Returns:
             Dictionary containing list of indexes and their metadata
         """
-        request = {
-            "action": "list_indexes"
-        }
+        return self._send_request({"action": "list_indexes"})
 
-        return self._send_request(request)
-
-    def train_index(self, index_id: str, training_vectors: np.ndarray) -> Dict[str, Any]:
-        """
-        Train an index with the provided vectors (required for IVF indices).
+    def train_index(
+        self, index_id: str, training_vectors: np.ndarray
+    ) -> Dict[str, Any]:
+        """Train an index with the provided vectors (required for IVF indices).
 
         Args:
             index_id: ID of the index to train
@@ -451,35 +429,36 @@ class FaissXClient:
         Returns:
             Dictionary containing training results
         """
-        # Convert numpy array to list for serialization
-        vectors_list = (
-            training_vectors.tolist() if hasattr(training_vectors, 'tolist')
-            else training_vectors
+        return self._send_request(
+            {
+                "action": "train_index",
+                "index_id": index_id,
+                "training_vectors": self._prepare_vectors(training_vectors),
+            }
         )
 
-        request = {
-            "action": "train_index",
-            "index_id": index_id,
-            "training_vectors": vectors_list
-        }
-
-        return self._send_request(request)
-
     def close(self) -> None:
-        """
-        Clean up ZeroMQ resources and close the connection.
-
-        This method should be called when the client is no longer needed
-        to properly free system resources.
-        """
-        if hasattr(self, 'socket') and self.socket:
-            self.socket.close()
-        if hasattr(self, 'context') and self.context:
-            self.context.term()
+        """Clean up resources and close the connection."""
+        self.disconnect()
 
 
-# Global singleton client instance
+# Global singleton instance of FaissXClient
 _client: Optional[FaissXClient] = None
+
+
+def get_client() -> FaissXClient:
+    """Initialize or retrieve the singleton FaissXClient instance.
+
+    Creates a new client instance if none exists, otherwise returns the existing one.
+    This ensures we maintain a single client connection throughout the application.
+
+    Returns:
+        FaissXClient: The active client instance
+    """
+    global _client
+    if not _client:
+        _client = FaissXClient()
+    return _client.get_client()
 
 
 def configure(
@@ -487,128 +466,18 @@ def configure(
     api_key: Optional[str] = None,
     tenant_id: Optional[str] = None,
 ) -> None:
-    """
-    Configure the global FAISSx client settings.
+    """Configure the global FaissXClient instance with server and auth settings.
 
-    This function updates the module-level configuration and resets the client
-    instance to ensure it uses the new settings.
+    Updates the client configuration with new server address, API key, and tenant ID.
+    Creates a new client instance if one doesn't exist.
 
     Args:
-        server: New server address
-        api_key: New API key
-        tenant_id: New tenant ID
+        server: ZeroMQ server address (e.g. "tcp://localhost:45678")
+        api_key: API key for server authentication
+        tenant_id: Tenant identifier for multi-tenant isolation
     """
     global _client
 
-    # Update module-level configuration variables
-    if server:
-        import faissx
-        faissx._API_URL = server
-
-    if api_key:
-        import faissx
-        faissx._API_KEY = api_key
-
-    if tenant_id:
-        import faissx
-        faissx._TENANT_ID = tenant_id
-
-    # Reset client to force recreation with new settings
-    if _client:
-        _client.close()
-    _client = None
-
-
-def get_client() -> Optional[FaissXClient]:
-    """
-    Get or create the singleton client instance.
-
-    Returns:
-        Configured FaissXClient instance or None if local mode is required
-            - Returns None when server URL is empty or not configured
-
-    Raises:
-        RuntimeError: When connection to the server fails after 3 attempts
-
-    This function will operate in one of two modes:
-    1. Local mode: If no server URL is configured (_API_URL is empty)
-    2. Remote mode: If a server URL is configured, will retry connection up to 3 times
-       and raise an error if all attempts fail - it will never fall back to local mode
-    """
-    global _client
-
-    # Import here to avoid circular imports
-    from . import _API_URL
-
-    # Check if server URL is empty or None - use local mode
-    if not _API_URL or _API_URL == "":
-        return None
-
-    # Only create client if not already existing
-    if _client is None:
-        max_retries = 2  # Will try a total of 3 times (initial attempt + 2 retries)
-        retry_count = 0
-        last_error = None
-
-        while retry_count <= max_retries:
-            try:
-                # Create a ZeroMQ connection and test it directly
-                context = zmq.Context()
-                socket = context.socket(zmq.REQ)
-                socket.setsockopt(zmq.LINGER, 0)
-                socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second receive timeout
-                socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 second send timeout
-                socket.connect(_API_URL)
-
-                # Send a ping request
-                request = {"action": "ping"}
-                socket.send(msgpack.packb(request))
-
-                # Wait for response
-                response = socket.recv()
-                result = msgpack.unpackb(response, raw=False)
-
-                # Clean up socket
-                socket.close()
-                context.term()
-
-                # If ping was successful, create the client
-                if result.get("success", False):
-                    # Now create the actual client
-                    _client = FaissXClient()
-                    logger.info(f"Successfully connected to FAISSx server at {_API_URL}")
-                    return _client
-                else:
-                    raise RuntimeError(
-                        f"Server returned error: {result.get('error', 'Unknown error')}")
-            except Exception as e:
-                last_error = e
-                retry_count += 1
-                logger.warning(
-                    f"Failed to connect to FAISSx server "
-                    f"(attempt {retry_count}/{max_retries+1}): {e}"
-                )
-
-                # If we haven't reached max retries, wait before trying again
-                if retry_count <= max_retries:
-                    time.sleep(1)  # Wait 1 second between retry attempts
-
-        # If we get here, all retries have failed - make sure to raise an exception
-        logger.error(f"Failed to connect to FAISSx server after {max_retries+1} attempts")
-        raise RuntimeError(
-            f"Failed to connect to FAISSx server after {max_retries+1} attempts: {last_error}"
-        )
-
-    # Return existing client
-    return _client
-
-
-def __del__():
-    """
-    Cleanup handler called when the module is unloaded.
-
-    Ensures proper cleanup of the client instance and its resources.
-    """
-    global _client
-    if _client:
-        _client.close()
+    # Initialize client if needed and apply new configuration
+    get_client()
+    _client.configure(server, api_key, tenant_id)
