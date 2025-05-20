@@ -19,41 +19,53 @@
 # limitations under the License.
 
 """
-This package contains the FAISSx index implementations.
+FAISSx Index Implementations Package
 
-Each class provides a client-side implementation of a FAISS index class that
-can operate in either local mode (using FAISS directly) or remote mode
-(using the FAISSx server).
+This package provides client-side implementations of FAISS index classes that support both local
+and remote operation modes. Local mode uses FAISS directly, while remote mode communicates with
+the FAISSx server for distributed vector operations.
 """
 
-from .flat import IndexFlatL2
-from .ivf_flat import IndexIVFFlat
-from .hnsw_flat import IndexHNSWFlat
-from .pq import IndexPQ
-from .ivf_pq import IndexIVFPQ
-from .scalar_quantizer import IndexScalarQuantizer
-# IndexIDMap provides custom IDs for vectors
-# IndexIDMap2 extends it with vector update functionality
+# Core index implementations
+from .flat import IndexFlatL2  # Basic L2 distance-based index
+from .ivf_flat import IndexIVFFlat  # Inverted file index with flat vectors
+from .hnsw_flat import IndexHNSWFlat  # Hierarchical navigable small world graph
+from .pq import IndexPQ  # Product quantization for memory efficiency
+from .ivf_pq import IndexIVFPQ  # Combined IVF and PQ for large-scale search
+from .scalar_quantizer import IndexScalarQuantizer  # Scalar quantization
+
+# ID mapping implementations for custom vector identification
+# IndexIDMap: Basic ID mapping functionality
+# IndexIDMap2: Extended with vector update capabilities
 from .id_map import IndexIDMap, IndexIDMap2
-# Factory function for creating indices from string descriptions (FAISS-compatible)
+
+# Factory function for creating indices from string descriptions
+# Compatible with FAISS's index_factory interface
 from .factory import index_factory
-# Index persistence functions
+
+# Index persistence operations
+# write_index: Save index to disk
+# read_index: Load index from disk
 from .io import write_index, read_index
-# Index modification functions (merging and splitting)
+
+# Index modification utilities
+# merge_indices: Combine multiple indices
+# split_index: Divide index into smaller parts
 from .modification import merge_indices, split_index
 
+# Public API exports
 __all__ = [
-    'IndexFlatL2',
-    'IndexIVFFlat',
-    'IndexHNSWFlat',
-    'IndexPQ',
-    'IndexIVFPQ',
-    'IndexScalarQuantizer',
-    'IndexIDMap',
-    'IndexIDMap2',
-    'index_factory',
-    'write_index',
-    'read_index',
-    'merge_indices',
-    'split_index',
+    'IndexFlatL2',  # Basic L2 distance index
+    'IndexIVFFlat',  # IVF with flat vectors
+    'IndexHNSWFlat',  # HNSW graph index
+    'IndexPQ',  # Product quantization
+    'IndexIVFPQ',  # IVF with product quantization
+    'IndexScalarQuantizer',  # Scalar quantization
+    'IndexIDMap',  # Basic ID mapping
+    'IndexIDMap2',  # Extended ID mapping
+    'index_factory',  # Index creation factory
+    'write_index',  # Index persistence
+    'read_index',  # Index loading
+    'merge_indices',  # Index combination
+    'split_index',  # Index division
 ]

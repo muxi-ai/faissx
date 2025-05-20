@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx IndexIDMap implementation.
 
@@ -35,10 +55,13 @@ class IndexIDMap:
         Args:
             index: The FAISS index to wrap (e.g., IndexFlatL2, IndexIVFFlat)
         """
+        # Store the underlying index and its properties
         self.index = index
         self.is_trained = index.is_trained
-        self.ntotal = 0
-        self.d = index.d
+        self.ntotal = 0  # Start with no vectors
+        self.d = index.d  # Vector dimension from underlying index
+
+        # Initialize bidirectional mapping dictionaries
         self._id_map = {}  # Maps internal indices to user IDs
         self._rev_id_map = {}  # Maps user IDs to internal indices
 
@@ -53,15 +76,17 @@ class IndexIDMap:
         Raises:
             ValueError: If shapes don't match or if duplicate IDs are provided
         """
+        # Validate input shapes match
         if len(x) != len(ids):
             raise ValueError(
                 f"Number of vectors ({len(x)}) does not match number of IDs ({len(ids)})"
             )
 
+        # Validate vector dimensions
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
-        # Check for duplicate IDs
+        # Check for duplicate IDs by comparing with existing IDs
         new_ids = set(ids)
         existing_ids = set(self._rev_id_map.keys())
         duplicates = new_ids.intersection(existing_ids)
@@ -71,13 +96,13 @@ class IndexIDMap:
         # Add vectors to the underlying index
         self.index.add(x)
 
-        # Keep track of ID mappings
+        # Create mappings between internal indices and user IDs
         for i, id_val in enumerate(ids):
             internal_idx = self.ntotal + i
             self._id_map[internal_idx] = id_val
             self._rev_id_map[id_val] = internal_idx
 
-        # Update total count
+        # Update total vector count
         self.ntotal += len(x)
 
     def add(self, x: np.ndarray) -> None:
@@ -89,11 +114,11 @@ class IndexIDMap:
         Args:
             x (np.ndarray): Vectors to add, shape (n, d)
         """
-        # Generate sequential IDs starting from the current ntotal
+        # Generate sequential IDs starting from current total
         n = x.shape[0]
         ids = np.arange(self.ntotal, self.ntotal + n, dtype=np.int64)
 
-        # Add with these IDs
+        # Delegate to add_with_ids with generated IDs
         self.add_with_ids(x, ids)
 
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -112,13 +137,14 @@ class IndexIDMap:
         Raises:
             ValueError: If query vector shape doesn't match index dimension
         """
-        # Call the underlying index's search method
+        # Get results from underlying index
         distances, indices = self.index.search(x, k)
 
         # Convert internal indices to user IDs
         n = x.shape[0]
-        ids = np.full((n, k), -1, dtype=np.int64)  # Default to -1 for not found
+        ids = np.full((n, k), -1, dtype=np.int64)  # Initialize with -1 for not found
 
+        # Map each internal index to its corresponding user ID
         for i in range(n):
             for j in range(k):
                 internal_idx = indices[i, j]
@@ -140,7 +166,7 @@ class IndexIDMap:
         Raises:
             ValueError: If any ID is not found
         """
-        # Check if all IDs exist
+        # Validate all IDs exist
         missing = []
         for id_val in ids:
             if id_val not in self._rev_id_map:
@@ -149,22 +175,19 @@ class IndexIDMap:
         if missing:
             raise ValueError(f"IDs not found: {missing}")
 
-        # For each ID to remove
+        # Remove each ID from both mapping dictionaries
         for id_val in ids:
-            # Get the internal index for this ID
             internal_idx = self._rev_id_map[id_val]
-
-            # Remove from both mappings
             del self._id_map[internal_idx]
             del self._rev_id_map[id_val]
 
         # Update total count
         self.ntotal -= len(ids)
 
-        # Note: The vectors are still in the underlying index, but now
-        # they'll be inaccessible through our ID mapping
+        # Note: Vectors remain in underlying index but become inaccessible
 
-    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def range_search(
+            self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 
@@ -182,12 +205,13 @@ class IndexIDMap:
             ValueError: If query vector shape doesn't match index dimension
             RuntimeError: If range search isn't supported by the underlying index
         """
-        # Call the underlying index's range_search method
+        # Get results from underlying index
         lims, distances, indices = self.index.range_search(x, radius)
 
         # Convert internal indices to user IDs
-        ids = np.full_like(indices, -1, dtype=np.int64)  # Default to -1 for not found
+        ids = np.full_like(indices, -1, dtype=np.int64)  # Initialize with -1 for not found
 
+        # Map each internal index to its corresponding user ID
         for i in range(len(indices)):
             internal_idx = indices[i]
             if internal_idx != -1 and internal_idx in self._id_map:
@@ -209,17 +233,16 @@ class IndexIDMap:
             ValueError: If the ID is not found
             RuntimeError: If the underlying index doesn't support reconstruction
         """
+        # Validate ID exists
         if id_val not in self._rev_id_map:
             raise ValueError(f"ID {id_val} not found")
 
-        # Get the internal index
+        # Get internal index and validate reconstruction support
         internal_idx = self._rev_id_map[id_val]
-
-        # Check if the underlying index supports reconstruction
         if not hasattr(self.index, 'reconstruct'):
             raise RuntimeError("Underlying index doesn't support vector reconstruction")
 
-        # Call the underlying index's reconstruct method
+        # Reconstruct vector from underlying index
         return self.index.reconstruct(internal_idx)
 
     def reconstruct_n(self, ids: np.ndarray) -> np.ndarray:
@@ -236,7 +259,7 @@ class IndexIDMap:
             ValueError: If any ID is not found
             RuntimeError: If the underlying index doesn't support reconstruction
         """
-        # Check if all IDs exist
+        # Validate all IDs exist
         missing = []
         for id_val in ids:
             if id_val not in self._rev_id_map:
@@ -245,9 +268,9 @@ class IndexIDMap:
         if missing:
             raise ValueError(f"IDs not found: {missing}")
 
-        # Check if the underlying index supports reconstruction
+        # Handle reconstruction based on available methods
         if not hasattr(self.index, 'reconstruct_n'):
-            # Fall back to individual reconstructions if reconstruct is available
+            # Fall back to individual reconstructions if available
             if hasattr(self.index, 'reconstruct'):
                 vectors = np.zeros((len(ids), self.d), dtype=np.float32)
                 for i, id_val in enumerate(ids):

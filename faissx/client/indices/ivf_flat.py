@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx IndexIVFFlat implementation.
 
@@ -14,7 +34,7 @@ from .flat import IndexFlatL2
 
 class IndexIVFFlat:
     """
-    Proxy implementation of FAISS IndexIVFFlat
+    Proxy implementation of FAISS IndexIVFFlat.
 
     This class mimics the behavior of FAISS IndexIVFFlat, which uses inverted file
     indexing for efficient similarity search. It divides the vector space into partitions
@@ -53,7 +73,7 @@ class IndexIVFFlat:
         # Store core parameters
         self.d = d
         self.nlist = nlist
-        # Convert metric type to string representation
+        # Convert metric type to string representation for remote mode
         self.metric_type = "IP" if metric_type == faiss.METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
@@ -84,28 +104,30 @@ class IndexIVFFlat:
                 self.client = get_client()
                 self._local_index = None
 
-                # Determine index type identifier
+                # Determine index type identifier for remote server
                 index_type = f"IVF{nlist}"
                 if self.metric_type == "IP":
                     index_type = f"{index_type}_IP"
 
                 # Create index on server
                 response = self.client.create_index(
-                    name=self.name,
-                    dimension=self.d,
-                    index_type=index_type
+                    name=self.name, dimension=self.d, index_type=index_type
                 )
 
                 self.index_id = response.get("index_id", self.name)
                 self.is_trained = response.get("is_trained", False)
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._vector_mapping = (
+                    {}
+                )  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
         except Exception as e:
-            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+            logging.warning(
+                f"Error initializing remote mode: {e}, falling back to local mode"
+            )
 
         # Use local FAISS implementation by default
         self._using_remote = False
@@ -117,6 +139,7 @@ class IndexIVFFlat:
             try:
                 # Import GPU-specific module
                 import faiss.contrib.gpu  # type: ignore
+
                 ngpus = faiss.get_num_gpus()
 
                 if ngpus > 0:
@@ -132,14 +155,15 @@ class IndexIVFFlat:
                         # Otherwise, use the provided quantizer directly
                         cpu_quantizer = (
                             quantizer._local_index
-                            if hasattr(quantizer, '_local_index')
+                            if hasattr(quantizer, "_local_index")
                             else quantizer
                         )
 
+                    # Create CPU index and convert to GPU
                     cpu_index = faiss.IndexIVFFlat(cpu_quantizer, d, nlist, metric_type)
-
-                    # Convert to GPU index
-                    self._local_index = faiss.index_cpu_to_gpu(self._gpu_resources, 0, cpu_index)
+                    self._local_index = faiss.index_cpu_to_gpu(
+                        self._gpu_resources, 0, cpu_index
+                    )
 
                     logging.info(f"Using GPU-accelerated IVF index for {self.name}")
                 else:
@@ -169,7 +193,9 @@ class IndexIVFFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert to float32 if needed (FAISS requirement)
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -199,7 +225,9 @@ class IndexIVFFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         if not self.is_trained:
             raise RuntimeError("Index must be trained before adding vectors")
@@ -223,7 +251,7 @@ class IndexIVFFlat:
             for i in range(added_count):
                 self._vector_mapping[self._next_idx] = {
                     "local_idx": self._next_idx,
-                    "server_idx": self.ntotal + i
+                    "server_idx": self.ntotal + i,
                 }
                 self._next_idx += 1
 
@@ -245,7 +273,9 @@ class IndexIVFFlat:
         if nprobe < 1:
             raise ValueError(f"nprobe must be at least 1, got {nprobe}")
         if nprobe > self.nlist:
-            raise ValueError(f"nprobe must not exceed nlist ({self.nlist}), got {nprobe}")
+            raise ValueError(
+                f"nprobe must not exceed nlist ({self.nlist}), got {nprobe}"
+            )
 
         self._nprobe = nprobe
 
@@ -271,7 +301,9 @@ class IndexIVFFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         if not self.is_trained:
             raise RuntimeError("Index must be trained before searching")
@@ -291,14 +323,14 @@ class IndexIVFFlat:
             self.index_id,
             query_vectors=query_vectors,
             k=k,
-            params={"nprobe": self._nprobe}  # Send nprobe parameter to server
+            params={"nprobe": self._nprobe},  # Send nprobe parameter to server
         )
 
         n = x.shape[0]  # Number of query vectors
         search_results = result.get("results", [])
 
         # Initialize output arrays with default values
-        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        distances = np.full((n, k), float("inf"), dtype=np.float32)
         idx = np.full((n, k), -1, dtype=np.int64)
 
         # Process results for each query vector
@@ -348,14 +380,16 @@ class IndexIVFFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
         if not self._using_remote:
             # Use local FAISS implementation directly
-            if hasattr(self._local_index, 'range_search'):
+            if hasattr(self._local_index, "range_search"):
                 return self._local_index.range_search(query_vectors, radius)
             else:
                 raise RuntimeError("Local FAISS index does not support range_search")
@@ -392,7 +426,9 @@ class IndexIVFFlat:
 
             # Copy data to output arrays
             if count > 0:
-                distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
+                distances[offset:offset + count] = np.array(
+                    result_distances, dtype=np.float32
+                )
 
                 # Map server indices back to local indices
                 mapped_indices = np.zeros(count, dtype=np.int64)
@@ -407,7 +443,7 @@ class IndexIVFFlat:
                     if not found:
                         mapped_indices[j] = -1
 
-                indices[offset:offset+count] = mapped_indices
+                indices[offset:offset + count] = mapped_indices
                 offset += count
 
         # Set final boundary
@@ -437,9 +473,7 @@ class IndexIVFFlat:
                 index_type = f"{index_type}_IP"
 
             response = self.client.create_index(
-                name=new_name,
-                dimension=self.d,
-                index_type=index_type
+                name=new_name, dimension=self.d, index_type=index_type
             )
 
             self.index_id = response.get("index_id", new_name)
@@ -452,9 +486,7 @@ class IndexIVFFlat:
                 index_type = f"{index_type}_IP"
 
             response = self.client.create_index(
-                name=self.name,
-                dimension=self.d,
-                index_type=index_type
+                name=self.name, dimension=self.d, index_type=index_type
             )
 
             self.index_id = response.get("index_id", self.name)

@@ -1,40 +1,57 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx optimization controls module.
 
-This module provides fine-grained parameter controls and memory management
-options for FAISSx indices. It allows customizing performance characteristics
-and resource usage for both local and remote operating modes.
+This module provides fine-grained parameter controls and memory management options
+for FAISSx indices. It allows customizing performance characteristics and resource
+usage for both local and remote modes.
 
 Key features:
 1. Fine-grained parameters: Control search quality, training, and other performance settings
 2. Memory management options: Configure memory usage, caching, and resource limits
 """
 
-import os
 import logging
 import threading
-from typing import Dict, Any, Optional, Union, List, Tuple, Set
+import math
+from typing import Dict, Any, Set
 import weakref
 
-import numpy as np
 import faiss
 
 logger = logging.getLogger(__name__)
 
-# Global registry for index parameters
-# This stores parameters per index to allow dynamic adjustments
+# Global registry for index parameters - stores parameters per index to allow dynamic adjustments
 _index_params: Dict[int, Dict[str, Any]] = {}
 _registry_lock = threading.RLock()
 
-# Global memory management settings
+# Global memory management settings with conservative defaults
 _memory_options: Dict[str, Any] = {
-    # Default memory settings - conservative values
-    'max_memory_usage_mb': None,  # No limit by default
-    'use_memory_mapping': False,  # Default to standard loading
-    'index_cache_size': 100,  # Number of indices to keep in memory
-    'vector_cache_size_mb': 256,  # Size of vector cache in MB
-    'auto_unload_unused_indices': False,  # Don't automatically unload by default
-    'io_buffer_size_kb': 1024,  # 1MB IO buffer for index operations
+    "max_memory_usage_mb": None,  # No memory limit by default
+    "use_memory_mapping": False,  # Standard loading instead of memory mapping
+    "index_cache_size": 100,  # Maximum number of indices to keep in memory
+    "vector_cache_size_mb": 256,  # Size of vector cache in MB
+    "auto_unload_unused_indices": False,  # Manual index unloading by default
+    "io_buffer_size_kb": 1024,  # 1MB IO buffer for index operations
 }
 
 
@@ -42,86 +59,95 @@ class IndexParameters:
     """
     Manages fine-grained parameters for FAISS indices.
 
-    This class provides a unified interface for setting and getting
-    performance-related parameters for indices, regardless of their type.
-    It handles proper parameter validation and application for both
-    local and remote index modes.
+    This class provides a unified interface for setting and getting performance-related parameters
+    for indices, regardless of their type. It handles proper parameter validation and application
+    for both local and remote index modes.
     """
 
     # Parameter definitions with validation rules and descriptions
     PARAMETER_DEFINITIONS = {
-        # Search parameters
-        'nprobe': {
-            'applicable_to': ['IVFFlat', 'IVFPQ', 'IVFScalarQuantizer'],
-            'description': 'Number of clusters to scan during search',
-            'type': int,
-            'min': 1,
-            'max': 1024,
-            'default': 1,
+        # Search parameters that control query performance
+        "nprobe": {
+            "applicable_to": ["IVFFlat", "IVFPQ", "IVFScalarQuantizer"],
+            "description": "Number of clusters to scan during search",
+            "type": int,
+            "min": 1,
+            "max": 1024,
+            "default": 1,
         },
-        'efSearch': {
-            'applicable_to': ['HNSW'],
-            'description': 'Exploration factor for HNSW search',
-            'type': int,
-            'min': 1,
-            'max': 1024,
-            'default': 16,
+        "efSearch": {
+            "applicable_to": ["HNSW"],
+            "description": "Exploration factor for HNSW search",
+            "type": int,
+            "min": 1,
+            "max": 1024,
+            "default": 16,
         },
-        'k_factor': {
-            'applicable_to': ['Flat', 'IVFFlat', 'IVFPQ', 'HNSW', 'PQ', 'IVFScalarQuantizer'],
-            'description': 'Multiply k by this factor internally (returns top k after reranking)',
-            'type': float,
-            'min': 1.0,
-            'max': 10.0,
-            'default': 1.0,
+        "k_factor": {
+            "applicable_to": [
+                "Flat",
+                "IVFFlat",
+                "IVFPQ",
+                "HNSW",
+                "PQ",
+                "IVFScalarQuantizer",
+            ],
+            "description": "Multiply k by this factor internally (returns top k after reranking)",
+            "type": float,
+            "min": 1.0,
+            "max": 10.0,
+            "default": 1.0,
         },
-
-        # Training parameters
-        'n_iter': {
-            'applicable_to': ['IVFFlat', 'IVFPQ', 'IVFScalarQuantizer'],
-            'description': 'Number of iterations when training the index',
-            'type': int,
-            'min': 1,
-            'max': 1000,
-            'default': 25,
+        # Training parameters that affect index quality
+        "n_iter": {
+            "applicable_to": ["IVFFlat", "IVFPQ", "IVFScalarQuantizer"],
+            "description": "Number of iterations when training the index",
+            "type": int,
+            "min": 1,
+            "max": 1000,
+            "default": 25,
         },
-        'min_points_per_centroid': {
-            'applicable_to': ['IVFFlat', 'IVFPQ', 'IVFScalarQuantizer'],
-            'description': 'Minimum number of points per centroid during training',
-            'type': int,
-            'min': 5,
-            'max': 1000,
-            'default': 39,
+        "min_points_per_centroid": {
+            "applicable_to": ["IVFFlat", "IVFPQ", "IVFScalarQuantizer"],
+            "description": "Minimum number of points per centroid during training",
+            "type": int,
+            "min": 5,
+            "max": 1000,
+            "default": 39,
         },
-
-        # HNSW specific parameters
-        'efConstruction': {
-            'applicable_to': ['HNSW'],
-            'description': 'Construction time exploration factor for HNSW',
-            'type': int,
-            'min': 8,
-            'max': 512,
-            'default': 40,
+        # HNSW-specific parameters for graph construction
+        "efConstruction": {
+            "applicable_to": ["HNSW"],
+            "description": "Construction time exploration factor for HNSW",
+            "type": int,
+            "min": 8,
+            "max": 512,
+            "default": 40,
         },
-
-        # Batch operation parameters
-        'batch_size': {
-            'applicable_to': ['Flat', 'IVFFlat', 'IVFPQ', 'HNSW', 'PQ', 'IVFScalarQuantizer'],
-            'description': 'Batch size for add/search operations',
-            'type': int,
-            'min': 1,
-            'max': 1000000,
-            'default': 10000,
+        # Batch operation parameters for performance tuning
+        "batch_size": {
+            "applicable_to": [
+                "Flat",
+                "IVFFlat",
+                "IVFPQ",
+                "HNSW",
+                "PQ",
+                "IVFScalarQuantizer",
+            ],
+            "description": "Batch size for add/search operations",
+            "type": int,
+            "min": 1,
+            "max": 1000000,
+            "default": 10000,
         },
-
-        # Quality vs speed tradeoff
-        'quantizer_effort': {
-            'applicable_to': ['IVFScalarQuantizer'],
-            'description': 'Quantizer encoding effort (higher = better quality but slower)',
-            'type': int,
-            'min': 1,
-            'max': 10,
-            'default': 4,
+        # Quality vs speed tradeoff parameters
+        "quantizer_effort": {
+            "applicable_to": ["IVFScalarQuantizer"],
+            "description": "Quantizer encoding effort (higher = better quality but slower)",
+            "type": int,
+            "min": 1,
+            "max": 10,
+            "default": 4,
         },
     }
 
@@ -136,7 +162,7 @@ class IndexParameters:
         self._index_ref = weakref.ref(index)
         self._index_id = id(index)
 
-        # Identify index type
+        # Identify index type for parameter validation
         self._index_type = self._get_index_type(index)
 
         # Initialize parameters dictionary in the global registry
@@ -157,25 +183,25 @@ class IndexParameters:
         class_name = index.__class__.__name__
 
         # Map class names to parameter types
-        if 'IndexFlatL2' in class_name:
-            return 'Flat'
-        elif 'IndexIVFFlat' in class_name:
-            return 'IVFFlat'
-        elif 'IndexIVFPQ' in class_name:
-            return 'IVFPQ'
-        elif 'IndexHNSW' in class_name:
-            return 'HNSW'
-        elif 'IndexPQ' in class_name:
-            return 'PQ'
-        elif 'IndexScalarQuantizer' in class_name:
-            return 'IVFScalarQuantizer'
+        if "IndexFlatL2" in class_name:
+            return "Flat"
+        elif "IndexIVFFlat" in class_name:
+            return "IVFFlat"
+        elif "IndexIVFPQ" in class_name:
+            return "IVFPQ"
+        elif "IndexHNSW" in class_name:
+            return "HNSW"
+        elif "IndexPQ" in class_name:
+            return "PQ"
+        elif "IndexScalarQuantizer" in class_name:
+            return "IVFScalarQuantizer"
         else:
             # Default to Flat for unknown indices
-            return 'Flat'
+            return "Flat"
 
     def set_parameter(self, name: str, value: Any) -> None:
         """
-        Set a parameter value.
+        Set a parameter value with validation.
 
         Args:
             name: Parameter name
@@ -191,17 +217,21 @@ class IndexParameters:
         param_def = self.PARAMETER_DEFINITIONS[name]
 
         # Check if parameter applies to this index type
-        if self._index_type not in param_def['applicable_to']:
-            raise ValueError(f"Parameter '{name}' not applicable to index type {self._index_type}")
+        if self._index_type not in param_def["applicable_to"]:
+            raise ValueError(
+                f"Parameter '{name}' not applicable to index type {self._index_type}"
+            )
 
         # Validate value type and range
-        if not isinstance(value, param_def['type']):
-            raise ValueError(f"Parameter '{name}' expects {param_def['type'].__name__}, got {type(value).__name__}")
+        if not isinstance(value, param_def["type"]):
+            raise ValueError(
+                f"Param '{name}' expects {param_def['type'].__name__}, got {type(value).__name__}"
+            )
 
-        if 'min' in param_def and value < param_def['min']:
+        if "min" in param_def and value < param_def["min"]:
             raise ValueError(f"Parameter '{name}' must be >= {param_def['min']}")
 
-        if 'max' in param_def and value > param_def['max']:
+        if "max" in param_def and value > param_def["max"]:
             raise ValueError(f"Parameter '{name}' must be <= {param_def['max']}")
 
         # Store in registry
@@ -233,14 +263,19 @@ class IndexParameters:
         param_def = self.PARAMETER_DEFINITIONS[name]
 
         # Check if parameter applies to this index type
-        if self._index_type not in param_def['applicable_to']:
-            raise ValueError(f"Parameter '{name}' not applicable to index type {self._index_type}")
+        if self._index_type not in param_def["applicable_to"]:
+            raise ValueError(
+                f"Parameter '{name}' not applicable to index type {self._index_type}"
+            )
 
         # Get from registry or return default
         with _registry_lock:
-            if self._index_id in _index_params and name in _index_params[self._index_id]:
+            if (
+                self._index_id in _index_params
+                and name in _index_params[self._index_id]
+            ):
                 return _index_params[self._index_id][name]
-            return param_def['default']
+            return param_def["default"]
 
     def get_all_parameters(self) -> Dict[str, Any]:
         """
@@ -253,7 +288,7 @@ class IndexParameters:
 
         # Get applicable parameters
         for name, param_def in self.PARAMETER_DEFINITIONS.items():
-            if self._index_type in param_def['applicable_to']:
+            if self._index_type in param_def["applicable_to"]:
                 result[name] = self.get_parameter(name)
 
         return result
@@ -277,19 +312,19 @@ class IndexParameters:
         """
         # Some parameters can be applied directly
         try:
-            if name == 'nprobe' and hasattr(index, '_nprobe'):
+            if name == "nprobe" and hasattr(index, "_nprobe"):
                 index._nprobe = value
                 # If local index exists, set it there too
-                if hasattr(index, '_local_index') and index._local_index is not None:
+                if hasattr(index, "_local_index") and index._local_index is not None:
                     index._local_index.nprobe = value
 
-            elif name == 'efSearch' and hasattr(index, '_ef'):
+            elif name == "efSearch" and hasattr(index, "_ef"):
                 index._ef = value
                 # If local index exists, set it there too
-                if hasattr(index, '_local_index') and index._local_index is not None:
+                if hasattr(index, "_local_index") and index._local_index is not None:
                     index._local_index.hnsw.efSearch = value
 
-            elif name == 'efConstruction' and hasattr(index, '_efc'):
+            elif name == "efConstruction" and hasattr(index, "_efc"):
                 # This usually can't be changed after construction
                 # But we store it for future reference
                 index._efc = value
@@ -330,13 +365,13 @@ class MemoryManager:
             raise ValueError(f"Unknown memory option: {name}")
 
         # Validate some options
-        if name == 'max_memory_usage_mb' and value is not None and value <= 0:
+        if name == "max_memory_usage_mb" and value is not None and value <= 0:
             raise ValueError("max_memory_usage_mb must be positive or None")
 
-        if name == 'index_cache_size' and value <= 0:
+        if name == "index_cache_size" and value <= 0:
             raise ValueError("index_cache_size must be positive")
 
-        if name == 'vector_cache_size_mb' and value <= 0:
+        if name == "vector_cache_size_mb" and value <= 0:
             raise ValueError("vector_cache_size_mb must be positive")
 
         # Set the option
@@ -376,12 +411,12 @@ class MemoryManager:
         """
         Reset all memory options to defaults.
         """
-        _memory_options['max_memory_usage_mb'] = None
-        _memory_options['use_memory_mapping'] = False
-        _memory_options['index_cache_size'] = 100
-        _memory_options['vector_cache_size_mb'] = 256
-        _memory_options['auto_unload_unused_indices'] = False
-        _memory_options['io_buffer_size_kb'] = 1024
+        _memory_options["max_memory_usage_mb"] = None
+        _memory_options["use_memory_mapping"] = False
+        _memory_options["index_cache_size"] = 100
+        _memory_options["vector_cache_size_mb"] = 256
+        _memory_options["auto_unload_unused_indices"] = False
+        _memory_options["io_buffer_size_kb"] = 1024
 
     @staticmethod
     def get_io_flags() -> int:
@@ -395,7 +430,7 @@ class MemoryManager:
         flags = 0
 
         # Add memory mapping if enabled
-        if _memory_options['use_memory_mapping']:
+        if _memory_options["use_memory_mapping"]:
             flags |= faiss.IO_FLAG_MMAP
 
         return flags
@@ -417,8 +452,11 @@ class MemoryManager:
             self._last_accessed[index_id] = now
 
             # Start background monitoring if auto-unload is enabled
-            if (_memory_options['auto_unload_unused_indices'] and
-                self._unload_thread is None and not self._running):
+            if (
+                _memory_options["auto_unload_unused_indices"]
+                and self._unload_thread is None
+                and not self._running
+            ):
                 self._start_monitoring()
 
     def estimate_index_size(self, index) -> int:
@@ -441,8 +479,8 @@ class MemoryManager:
         size_bytes = 0
 
         # Account for dimension and vector count
-        d = getattr(index, 'd', 0)
-        ntotal = getattr(index, 'ntotal', 0)
+        d = getattr(index, "d", 0)
+        ntotal = getattr(index, "ntotal", 0)
 
         # Start with basic overhead
         size_bytes += 1024 * 100  # 100KB baseline overhead
@@ -450,15 +488,15 @@ class MemoryManager:
         # Different index types have different memory profiles
         index_type = index.__class__.__name__
 
-        if 'Flat' in index_type:
+        if "Flat" in index_type:
             # Flat indices store full vectors
             size_bytes += ntotal * d * 4  # 4 bytes per float32
 
-        elif 'IVFPQ' in index_type:
+        elif "IVFPQ" in index_type:
             # IVF has centroids and PQ has codebooks
-            nlist = getattr(index, 'nlist', 100)
-            m = getattr(index, 'm', 8)
-            nbits = getattr(index, 'nbits', 8)
+            nlist = getattr(index, "nlist", 100)
+            m = getattr(index, "m", 8)
+            nbits = getattr(index, "nbits", 8)
 
             # Centroid storage
             size_bytes += nlist * d * 4  # 4 bytes per float for centroids
@@ -470,21 +508,21 @@ class MemoryManager:
             code_size = (m * nbits + 7) // 8  # bytes per vector
             size_bytes += ntotal * code_size
 
-        elif 'IVF' in index_type:
+        elif "IVF" in index_type:
             # IVF stores centroids and vector lists
-            nlist = getattr(index, 'nlist', 100)
+            nlist = getattr(index, "nlist", 100)
 
             # Centroid storage
             size_bytes += nlist * d * 4  # 4 bytes per float for centroids
 
             # Vector storage depends on the type
-            if 'Flat' in index_type:
+            if "Flat" in index_type:
                 size_bytes += ntotal * d * 4  # 4 bytes per float
 
-        elif 'HNSW' in index_type:
+        elif "HNSW" in index_type:
             # HNSW has graph structure overhead
-            m = getattr(index, 'm', 32)
-            level_mult = 1/math.log(m)  # According to HNSW paper
+            m = getattr(index, "m", 32)
+            level_mult = 1 / math.log(m)  # According to HNSW paper
 
             # Vector storage
             size_bytes += ntotal * d * 4  # 4 bytes per float
@@ -493,10 +531,10 @@ class MemoryManager:
             avg_connections = m * (1 + level_mult)  # Include higher level links
             size_bytes += ntotal * avg_connections * 4  # 4 bytes per index
 
-        elif 'PQ' in index_type:
+        elif "PQ" in index_type:
             # PQ uses codebooks and codes
-            m = getattr(index, 'm', 8)
-            nbits = getattr(index, 'nbits', 8)
+            m = getattr(index, "m", 8)
+            nbits = getattr(index, "nbits", 8)
 
             # Codebook storage
             size_bytes += (1 << nbits) * (d // m) * m * 4  # 4 bytes per float
@@ -524,6 +562,7 @@ class MemoryManager:
             Number of indices unloaded
         """
         import time
+
         now = time.time()
         unloaded = 0
 
@@ -546,6 +585,7 @@ class MemoryManager:
         # Suggest garbage collection if any indices were unloaded
         if unloaded > 0:
             import gc
+
             gc.collect()
 
         return unloaded
@@ -559,7 +599,7 @@ class MemoryManager:
 
         def monitor_loop():
             try:
-                while self._running and _memory_options['auto_unload_unused_indices']:
+                while self._running and _memory_options["auto_unload_unused_indices"]:
                     # Sleep for a while
                     time.sleep(60)  # Check every minute
 
@@ -571,9 +611,7 @@ class MemoryManager:
                 self._unload_thread = None
 
         self._unload_thread = threading.Thread(
-            target=monitor_loop,
-            name="FAISSx-MemoryMonitor",
-            daemon=True
+            target=monitor_loop, name="FAISSx-MemoryMonitor", daemon=True
         )
         self._unload_thread.start()
 
@@ -588,7 +626,3 @@ class MemoryManager:
 
 # Initialize a global instance of the memory manager
 memory_manager = MemoryManager()
-
-
-# Add missing import
-import math

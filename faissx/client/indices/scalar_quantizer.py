@@ -31,13 +31,14 @@ import numpy as np
 from typing import Tuple
 import logging
 
-# Avoid module-level dependency on faiss
+# Avoid module-level dependency on faiss by conditionally importing
 try:
     import faiss
+
     METRIC_L2 = faiss.METRIC_L2
     METRIC_INNER_PRODUCT = faiss.METRIC_INNER_PRODUCT
 except ImportError:
-    # Define constants for when faiss isn't available
+    # Define fallback constants when faiss isn't available
     METRIC_L2 = 0
     METRIC_INNER_PRODUCT = 1
 
@@ -46,7 +47,7 @@ from ..client import get_client
 
 class IndexScalarQuantizer:
     """
-    Proxy implementation of FAISS IndexScalarQuantizer
+    Proxy implementation of FAISS IndexScalarQuantizer.
 
     This class mimics the behavior of FAISS IndexScalarQuantizer, which uses scalar
     quantization for efficient memory usage while maintaining search accuracy. It's
@@ -79,11 +80,12 @@ class IndexScalarQuantizer:
         Args:
             d (int): Vector dimension
             qtype: Scalar quantizer type (if None, uses default QT_8bit)
-            metric_type: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
+            metric_type: Distance metric, either faiss.METRIC_L2 or
+                        faiss.METRIC_INNER_PRODUCT
         """
         # Store core parameters
         self.d = d
-        # Convert metric type to string representation
+        # Convert metric type to string representation for remote mode
         self.metric_type = "IP" if metric_type == METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
@@ -102,7 +104,7 @@ class IndexScalarQuantizer:
             # Import here to avoid circular imports
             import faissx
 
-            # Check if API key or server URL are set - this indicates configure() was called
+            # Check if API key or server URL are set - indicates configure() was called
             configured = bool(faissx._API_KEY) or (
                 faissx._API_URL != "tcp://localhost:45678"
             )
@@ -121,20 +123,22 @@ class IndexScalarQuantizer:
 
                 # Create index on server
                 response = self.client.create_index(
-                    name=self.name,
-                    dimension=self.d,
-                    index_type=index_type
+                    name=self.name, dimension=self.d, index_type=index_type
                 )
 
                 self.index_id = response.get("index_id", self.name)
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._vector_mapping = (
+                    {}
+                )  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
         except Exception as e:
-            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+            logging.warning(
+                f"Error initializing remote mode: {e}, falling back to local mode"
+            )
 
         # Use local FAISS implementation by default
         self._using_remote = False
@@ -148,6 +152,7 @@ class IndexScalarQuantizer:
             gpu_available = False
             try:
                 import faiss.contrib.gpu  # type: ignore
+
                 ngpus = faiss.get_num_gpus()
                 gpu_available = ngpus > 0
             except (ImportError, AttributeError) as e:
@@ -176,7 +181,9 @@ class IndexScalarQuantizer:
                     # If GPU conversion fails, fall back to CPU
                     self._local_index = cpu_index
                     self._use_gpu = False
-                    logging.warning(f"Failed to create GPU SQ index: {e}, using CPU instead")
+                    logging.warning(
+                        f"Failed to create GPU SQ index: {e}, using CPU instead"
+                    )
             else:
                 # No GPUs available, use CPU version
                 self._local_index = faiss.IndexScalarQuantizer(d, qtype, metric_type)
@@ -197,7 +204,9 @@ class IndexScalarQuantizer:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert to float32 if needed (FAISS requirement)
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -218,7 +227,7 @@ class IndexScalarQuantizer:
             for i in range(added_count):
                 self._vector_mapping[self._next_idx] = {
                     "local_idx": self._next_idx,
-                    "server_idx": self.ntotal + i
+                    "server_idx": self.ntotal + i,
                 }
                 self._next_idx += 1
 
@@ -242,7 +251,9 @@ class IndexScalarQuantizer:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -252,17 +263,13 @@ class IndexScalarQuantizer:
             return self._local_index.search(query_vectors, k)
 
         # Perform search on remote index (remote mode)
-        result = self.client.search(
-            self.index_id,
-            query_vectors=query_vectors,
-            k=k
-        )
+        result = self.client.search(self.index_id, query_vectors=query_vectors, k=k)
 
         n = x.shape[0]  # Number of query vectors
         search_results = result.get("results", [])
 
         # Initialize output arrays with default values
-        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        distances = np.full((n, k), float("inf"), dtype=np.float32)
         idx = np.full((n, k), -1, dtype=np.int64)
 
         # Process results for each query vector
@@ -311,7 +318,9 @@ class IndexScalarQuantizer:
             RuntimeError: If range search fails or isn't supported by the index type
         """
         # Implementation for range_search
-        raise NotImplementedError("Range search is not yet implemented for IndexScalarQuantizer")
+        raise NotImplementedError(
+            "Range search is not yet implemented for IndexScalarQuantizer"
+        )
 
     def reset(self) -> None:
         """
@@ -334,9 +343,7 @@ class IndexScalarQuantizer:
             # Create new index with modified name
             new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
             response = self.client.create_index(
-                name=new_name,
-                dimension=self.d,
-                index_type=index_type
+                name=new_name, dimension=self.d, index_type=index_type
             )
 
             self.index_id = response.get("index_id", new_name)
@@ -349,9 +356,7 @@ class IndexScalarQuantizer:
                 index_type = f"{index_type}_IP"
 
             response = self.client.create_index(
-                name=self.name,
-                dimension=self.d,
-                index_type=index_type
+                name=self.name, dimension=self.d, index_type=index_type
             )
             self.index_id = response.get("index_id", self.name)
 

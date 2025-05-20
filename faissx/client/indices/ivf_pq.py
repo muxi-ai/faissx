@@ -31,7 +31,7 @@ from .base import np, Tuple, faiss
 
 class IndexIVFPQ:
     """
-    Proxy implementation of FAISS IndexIVFPQ
+    Proxy implementation of FAISS IndexIVFPQ.
 
     This class mimics the behavior of FAISS IndexIVFPQ, which combines inverted file
     indexing with product quantization for efficient similarity search. It offers
@@ -60,7 +60,13 @@ class IndexIVFPQ:
     """
 
     def __init__(
-        self, quantizer, d: int, M: int, nbits: int, nlist: int, metric_type=faiss.METRIC_L2
+        self,
+        quantizer,
+        d: int,
+        M: int,
+        nbits: int,
+        nlist: int,
+        metric_type=faiss.METRIC_L2,
     ):
         """
         Initialize the IVF-PQ index with specified parameters.

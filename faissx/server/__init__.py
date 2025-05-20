@@ -21,9 +21,9 @@
 """
 FAISSx Server Module
 
-This module provides a high-performance vector database proxy server
-using FAISS and ZeroMQ communication. It handles server configuration,
-authentication, and initialization of the vector database service.
+This module provides a high-performance vector database proxy server using FAISS and ZeroMQ
+communication. It handles server configuration, authentication, and initialization of the
+vector database service.
 """
 
 import os
@@ -54,7 +54,7 @@ def configure(
     auth_keys: Optional[Dict[str, str]] = None,
     auth_file: Optional[str] = None,
     enable_auth: bool = False,
-    **kwargs
+    **kwargs,
 ) -> Dict[str, Any]:
     """
     Configure the FAISSx Server with custom settings.
@@ -96,10 +96,12 @@ def configure(
     # Load API keys from file if specified
     if auth_file:
         try:
-            with open(auth_file, 'r') as f:
+            with open(auth_file, "r") as f:
                 _config["auth_keys"] = json.load(f)
         except Exception as e:
-            raise ValueError(f"Failed to load auth keys from file {auth_file}: {str(e)}")
+            raise ValueError(
+                f"Failed to load auth keys from file {auth_file}: {str(e)}"
+            )
 
     # Initialize authentication module with API keys
     auth.set_api_keys(_config["auth_keys"])

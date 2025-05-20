@@ -31,7 +31,7 @@ from .base import uuid, np, Tuple, faiss, logging, get_client
 
 class IndexHNSWFlat:
     """
-    Proxy implementation of FAISS IndexHNSWFlat
+    Proxy implementation of FAISS IndexHNSWFlat.
 
     This class mimics the behavior of FAISS IndexHNSWFlat, which uses Hierarchical
     Navigable Small World graphs for efficient approximate similarity search. It offers
@@ -69,7 +69,7 @@ class IndexHNSWFlat:
         # Store core parameters
         self.d = d
         self.M = M
-        # Convert metric type to string representation
+        # Convert metric type to string representation for remote mode
         self.metric_type = "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
@@ -99,27 +99,29 @@ class IndexHNSWFlat:
                 self.client = get_client()
                 self._local_index = None
 
-                # Determine index type identifier
+                # Determine index type identifier for remote server
                 index_type = f"HNSW{M}"
                 if self.metric_type == "IP":
                     index_type = f"{index_type}_IP"
 
                 # Create index on server
                 response = self.client.create_index(
-                    name=self.name,
-                    dimension=self.d,
-                    index_type=index_type
+                    name=self.name, dimension=self.d, index_type=index_type
                 )
 
                 self.index_id = response.get("index_id", self.name)
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._vector_mapping = (
+                    {}
+                )  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
         except Exception as e:
-            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+            logging.warning(
+                f"Error initializing remote mode: {e}, falling back to local mode"
+            )
 
         # Use local FAISS implementation by default
         self._using_remote = False
@@ -131,6 +133,7 @@ class IndexHNSWFlat:
             try:
                 # Import GPU-specific module
                 import faiss.contrib.gpu  # type: ignore
+
                 ngpus = faiss.get_num_gpus()
 
                 if ngpus > 0:
@@ -155,7 +158,9 @@ class IndexHNSWFlat:
                         # If GPU conversion fails, fall back to CPU
                         self._local_index = cpu_index
                         self._use_gpu = False
-                        logging.warning(f"Failed to create GPU HNSW index: {e}, using CPU instead")
+                        logging.warning(
+                            f"Failed to create GPU HNSW index: {e}, using CPU instead"
+                        )
                 else:
                     # No GPUs available, use CPU version
                     self._local_index = faiss.IndexHNSWFlat(d, M, metric)
@@ -179,7 +184,9 @@ class IndexHNSWFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert to float32 if needed (FAISS requirement)
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -200,7 +207,7 @@ class IndexHNSWFlat:
             for i in range(added_count):
                 self._vector_mapping[self._next_idx] = {
                     "local_idx": self._next_idx,
-                    "server_idx": self.ntotal + i
+                    "server_idx": self.ntotal + i,
                 }
                 self._next_idx += 1
 
@@ -224,7 +231,9 @@ class IndexHNSWFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -234,17 +243,13 @@ class IndexHNSWFlat:
             return self._local_index.search(query_vectors, k)
 
         # Perform search on remote index (remote mode)
-        result = self.client.search(
-            self.index_id,
-            query_vectors=query_vectors,
-            k=k
-        )
+        result = self.client.search(self.index_id, query_vectors=query_vectors, k=k)
 
         n = x.shape[0]  # Number of query vectors
         search_results = result.get("results", [])
 
         # Initialize output arrays with default values
-        distances = np.full((n, k), float('inf'), dtype=np.float32)
+        distances = np.full((n, k), float("inf"), dtype=np.float32)
         idx = np.full((n, k), -1, dtype=np.int64)
 
         # Process results for each query vector
@@ -294,14 +299,16 @@ class IndexHNSWFlat:
         """
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
-            raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
         if not self._using_remote:
             # Use local FAISS implementation directly
-            if hasattr(self._local_index, 'range_search'):
+            if hasattr(self._local_index, "range_search"):
                 return self._local_index.range_search(query_vectors, radius)
             else:
                 raise RuntimeError("Local FAISS index does not support range_search")
@@ -338,7 +345,9 @@ class IndexHNSWFlat:
 
             # Copy data to output arrays
             if count > 0:
-                distances[offset:offset+count] = np.array(result_distances, dtype=np.float32)
+                distances[offset:offset + count] = np.array(
+                    result_distances, dtype=np.float32
+                )
 
                 # Map server indices back to local indices
                 mapped_indices = np.zeros(count, dtype=np.int64)
@@ -353,7 +362,7 @@ class IndexHNSWFlat:
                     if not found:
                         mapped_indices[j] = -1
 
-                indices[offset:offset+count] = mapped_indices
+                indices[offset:offset + count] = mapped_indices
                 offset += count
 
         # Set final boundary
@@ -382,9 +391,7 @@ class IndexHNSWFlat:
                 index_type = f"{index_type}_IP"
 
             response = self.client.create_index(
-                name=new_name,
-                dimension=self.d,
-                index_type=index_type
+                name=new_name, dimension=self.d, index_type=index_type
             )
 
             self.index_id = response.get("index_id", new_name)
@@ -396,9 +403,7 @@ class IndexHNSWFlat:
                 index_type = f"{index_type}_IP"
 
             response = self.client.create_index(
-                name=self.name,
-                dimension=self.d,
-                index_type=index_type
+                name=self.name, dimension=self.d, index_type=index_type
             )
 
             self.index_id = response.get("index_id", self.name)

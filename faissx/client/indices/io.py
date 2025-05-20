@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx index persistence implementation.
 
@@ -12,7 +32,7 @@ The implementation allows for both local and remote modes:
 import os
 import tempfile
 import logging
-from typing import Any, Optional, Union, Type
+from typing import Any, Optional
 
 import numpy as np
 import faiss
@@ -31,22 +51,22 @@ logger = logging.getLogger(__name__)
 
 def write_index(index: Any, fname: str) -> None:
     """
-    Write an index to disk.
+    Write a FAISSx index to disk in a format compatible with FAISS.
 
     Args:
         index: The FAISSx index to save
-        fname: Output file name
+        fname: Output file name where the index will be saved
 
     Raises:
-        ValueError: If the index type is not supported or the file cannot be written
+        ValueError: If the index type is not supported or file cannot be written
     """
-    # Check if the directory exists
+    # Ensure output directory exists
     dirname = os.path.dirname(fname)
     if dirname and not os.path.isdir(dirname):
         os.makedirs(dirname, exist_ok=True)
 
-    # For local mode, we can directly use FAISS's persistence
-    if hasattr(index, '_local_index') and index._local_index is not None:
+    # Handle local mode indices directly using FAISS's persistence
+    if hasattr(index, "_local_index") and index._local_index is not None:
         try:
             logger.info(f"Saving index to {fname} using local FAISS implementation")
             faiss.write_index(index._local_index, fname)
@@ -55,39 +75,53 @@ def write_index(index: Any, fname: str) -> None:
             logger.error(f"Error saving local index: {e}")
             raise ValueError(f"Failed to save index: {e}")
 
-    # For remote mode and special cases like IDMap, we need a more complex approach
-    # First, handle IDMap and IDMap2 specially to preserve ID mappings
+    # Special handling for IDMap and IDMap2 indices to preserve ID mappings
     if isinstance(index, (IndexIDMap, IndexIDMap2)):
-        # Save the ID mappings separately
-        with tempfile.NamedTemporaryFile(suffix='.npy', delete=False) as tmp:
+        # Use temporary file for intermediate storage
+        with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as tmp:
             temp_path = tmp.name
             try:
-                # Extract ID mappings
-                id_map = np.array([(internal_idx, ext_id)
-                                   for internal_idx, ext_id in index._id_map.items()],
-                                  dtype=[('internal_idx', np.int64), ('external_id', np.int64)])
+                # Convert ID mappings to numpy array for efficient storage
+                id_map = np.array(
+                    [
+                        (internal_idx, ext_id)
+                        for internal_idx, ext_id in index._id_map.items()
+                    ],
+                    dtype=[("internal_idx", np.int64), ("external_id", np.int64)],
+                )
 
-                # Extract vectors using reconstruct
+                # Reconstruct vectors for storage
                 vectors = []
                 for i in range(index.ntotal):
-                    if i in index._id_map:  # Only include vectors that aren't removed
+                    if i in index._id_map:  # Skip removed vectors
                         vectors.append(index.reconstruct(index._id_map[i]))
 
-                vectors = np.vstack(vectors) if vectors else np.zeros((0, index.d), dtype=np.float32)
+                vectors = (
+                    np.vstack(vectors)
+                    if vectors
+                    else np.zeros((0, index.d), dtype=np.float32)
+                )
 
-                # Save the base index
-                faiss.write_index(index.index._local_index if hasattr(index.index, '_local_index')
-                                  else index.index, temp_path)
+                # Save base index to temporary file
+                faiss.write_index(
+                    (
+                        index.index._local_index
+                        if hasattr(index.index, "_local_index")
+                        else index.index
+                    ),
+                    temp_path,
+                )
 
-                # Combine everything into a single file
-                with open(temp_path, 'rb') as f:
+                # Read index data for combined storage
+                with open(temp_path, "rb") as f:
                     index_data = f.read()
 
-                # File format: [is_idmap2: byte][ntotal: int64][dim: int64]
-                #             [id_map_size: int64][id_map: bytes]
-                #             [index_data_size: int64][index_data: bytes]
-                with open(fname, 'wb') as f:
-                    # Is this IDMap2?
+                # Write combined file with format:
+                # [is_idmap2: byte][ntotal: int64][dim: int64]
+                # [id_map_size: int64][id_map: bytes]
+                # [index_data_size: int64][index_data: bytes]
+                with open(fname, "wb") as f:
+                    # Write IDMap type flag
                     f.write(bytes([1 if isinstance(index, IndexIDMap2) else 0]))
 
                     # Write dimensions
@@ -107,28 +141,30 @@ def write_index(index: Any, fname: str) -> None:
                     f.write(np.array([len(vectors_bytes)], dtype=np.int64).tobytes())
                     f.write(vectors_bytes)
 
-                logger.info(f"Successfully saved IndexIDMap{'2' if isinstance(index, IndexIDMap2) else ''} to {fname}")
+                log_idx = '2' if isinstance(index, IndexIDMap2) else ''
+                logger.info(f"Successfully saved IndexIDMap{log_idx} to {fname}")
 
             finally:
-                # Clean up temp file
+                # Clean up temporary file
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
 
         return
 
-    # For other remote indices, reconstruct them in memory and save
+    # Handle other remote indices by reconstructing in memory
     try:
         logger.info(f"Saving index to {fname} using reconstruction approach")
 
-        # Check if the index is trained and has vectors
-        if not getattr(index, 'is_trained', True):
+        # Validate index state
+        if not getattr(index, "is_trained", True):
             raise ValueError("Cannot save untrained index")
 
-        if getattr(index, 'ntotal', 0) == 0:
-            # If empty, create a dummy index of the same type
+        if getattr(index, "ntotal", 0) == 0:
+            # Create empty index of same type for empty indices
             index_type = type(index).__name__
             dummy_index = None
 
+            # Create appropriate empty index based on type
             if isinstance(index, IndexFlatL2):
                 dummy_index = faiss.IndexFlatL2(index.d)
             elif isinstance(index, IndexIVFFlat):
@@ -138,7 +174,9 @@ def write_index(index: Any, fname: str) -> None:
                 dummy_index = faiss.IndexPQ(index.d, index.m, index.nbits)
             elif isinstance(index, IndexIVFPQ):
                 quantizer = faiss.IndexFlatL2(index.d)
-                dummy_index = faiss.IndexIVFPQ(quantizer, index.d, index.nlist, index.m, index.nbits)
+                dummy_index = faiss.IndexIVFPQ(
+                    quantizer, index.d, index.nlist, index.m, index.nbits
+                )
             elif isinstance(index, IndexHNSWFlat):
                 dummy_index = faiss.IndexHNSWFlat(index.d, index.m)
             elif isinstance(index, IndexScalarQuantizer):
@@ -149,13 +187,13 @@ def write_index(index: Any, fname: str) -> None:
             faiss.write_index(dummy_index, fname)
             return
 
-        # Get all vectors through reconstruction
+        # Reconstruct all vectors
         vectors = []
         for i in range(index.ntotal):
             try:
                 vectors.append(index.reconstruct(i))
             except Exception:
-                # Skip any vectors that can't be reconstructed
+                # Skip vectors that can't be reconstructed
                 continue
 
         if not vectors:
@@ -163,10 +201,11 @@ def write_index(index: Any, fname: str) -> None:
 
         vectors = np.vstack(vectors)
 
-        # Create a new index of the appropriate type
+        # Create new index of appropriate type
         index_type = type(index).__name__
         local_index = None
 
+        # Initialize appropriate index type
         if isinstance(index, IndexFlatL2):
             local_index = faiss.IndexFlatL2(index.d)
         elif isinstance(index, IndexIVFFlat):
@@ -177,7 +216,9 @@ def write_index(index: Any, fname: str) -> None:
             local_index = faiss.IndexPQ(index.d, index.m, index.nbits)
         elif isinstance(index, IndexIVFPQ):
             quantizer = faiss.IndexFlatL2(index.d)
-            local_index = faiss.IndexIVFPQ(quantizer, index.d, index.nlist, index.m, index.nbits)
+            local_index = faiss.IndexIVFPQ(
+                quantizer, index.d, index.nlist, index.m, index.nbits
+            )
             local_index.nprobe = index._nprobe
         elif isinstance(index, IndexHNSWFlat):
             local_index = faiss.IndexHNSWFlat(index.d, index.m)
@@ -186,14 +227,12 @@ def write_index(index: Any, fname: str) -> None:
         else:
             raise ValueError(f"Unsupported index type for saving: {index_type}")
 
-        # Train if needed
-        if not getattr(local_index, 'is_trained', True):
+        # Train index if needed
+        if not getattr(local_index, "is_trained", True):
             local_index.train(vectors)
 
-        # Add vectors
+        # Add vectors and save
         local_index.add(vectors)
-
-        # Save to disk
         faiss.write_index(local_index, fname)
 
     except Exception as e:
@@ -203,14 +242,14 @@ def write_index(index: Any, fname: str) -> None:
 
 def read_index(fname: str, gpu: bool = False) -> Any:
     """
-    Read an index from disk.
+    Read a FAISSx index from disk.
 
     Args:
-        fname: Input file name
-        gpu: Whether to put the index on GPU if available
+        fname: Input file name containing the saved index
+        gpu: Whether to load the index onto GPU if available
 
     Returns:
-        The loaded FAISSx index
+        The loaded FAISSx index object
 
     Raises:
         ValueError: If the file cannot be read or is not a valid index
@@ -218,15 +257,16 @@ def read_index(fname: str, gpu: bool = False) -> Any:
     if not os.path.isfile(fname):
         raise ValueError(f"File not found: {fname}")
 
-    # First, check if this is a special IDMap file
+    # Try reading as custom IDMap format first
     try:
-        with open(fname, 'rb') as f:
-            # Read the first byte to check if it's an IDMap file
+        with open(fname, "rb") as f:
+            # Check if file is in custom IDMap format
             is_idmap_file = f.read(1)[0]
 
             if is_idmap_file in [0, 1]:  # 0 = IDMap, 1 = IDMap2
                 is_idmap2 = is_idmap_file == 1
 
+                # Read index dimensions
                 # Read dimensions
                 ntotal_dim = np.frombuffer(f.read(16), dtype=np.int64)
                 ntotal, d = ntotal_dim[0], ntotal_dim[1]
@@ -234,21 +274,21 @@ def read_index(fname: str, gpu: bool = False) -> Any:
                 # Read ID mappings
                 id_map_size = np.frombuffer(f.read(8), dtype=np.int64)[0]
                 id_map_bytes = f.read(id_map_size)
-                id_map_data = np.frombuffer(id_map_bytes,
-                                           dtype=[('internal_idx', np.int64),
-                                                  ('external_id', np.int64)])
+                id_map_data = np.frombuffer(
+                    id_map_bytes,
+                    dtype=[("internal_idx", np.int64), ("external_id", np.int64)],
+                )
 
                 # Read index data
                 index_data_size = np.frombuffer(f.read(8), dtype=np.int64)[0]
                 index_data = f.read(index_data_size)
 
-                # Read vectors
+                # Read vectors (skip processing but read the data from the file)
                 vectors_size = np.frombuffer(f.read(8), dtype=np.int64)[0]
-                vectors_bytes = f.read(vectors_size)
-                vectors = np.frombuffer(vectors_bytes, dtype=np.float32).reshape(-1, d)
+                f.read(vectors_size)  # Read but don't process the vectors bytes
 
                 # Create a temporary file for the index
-                with tempfile.NamedTemporaryFile(suffix='.index', delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix=".index", delete=False) as tmp:
                     temp_path = tmp.name
                     try:
                         tmp.write(index_data)
@@ -261,11 +301,16 @@ def read_index(fname: str, gpu: bool = False) -> Any:
                         if gpu:
                             try:
                                 import faiss.contrib.gpu  # type: ignore
+
                                 if faiss.get_num_gpus() > 0:
                                     res = faiss.StandardGpuResources()
-                                    base_index = faiss.index_cpu_to_gpu(res, 0, base_index)
+                                    base_index = faiss.index_cpu_to_gpu(
+                                        res, 0, base_index
+                                    )
                             except (ImportError, AttributeError):
-                                logger.warning("GPU requested but FAISS GPU support not available")
+                                logger.warning(
+                                    "GPU requested but FAISS GPU support not available"
+                                )
 
                         # Create the corresponding FAISSx index
                         if isinstance(base_index, faiss.IndexFlatL2):
@@ -279,23 +324,34 @@ def read_index(fname: str, gpu: bool = False) -> Any:
                             faissx_base._local_index = base_index
                             faissx_base._nprobe = base_index.nprobe
                         elif isinstance(base_index, faiss.IndexPQ):
-                            faissx_base = IndexPQ(d, base_index.pq.M, base_index.pq.nbits)
+                            faissx_base = IndexPQ(
+                                d, base_index.pq.M, base_index.pq.nbits
+                            )
                             faissx_base._local_index = base_index
                         elif isinstance(base_index, faiss.IndexIVFPQ):
                             quant = IndexFlatL2(d)
                             quant._local_index = base_index.quantizer
-                            faissx_base = IndexIVFPQ(quant, d, base_index.nlist,
-                                                   base_index.pq.M, base_index.pq.nbits)
+                            faissx_base = IndexIVFPQ(
+                                quant,
+                                d,
+                                base_index.nlist,
+                                base_index.pq.M,
+                                base_index.pq.nbits,
+                            )
                             faissx_base._local_index = base_index
                             faissx_base._nprobe = base_index.nprobe
                         elif isinstance(base_index, faiss.IndexHNSWFlat):
-                            faissx_base = IndexHNSWFlat(d, base_index.hnsw.efConstruction)
+                            faissx_base = IndexHNSWFlat(
+                                d, base_index.hnsw.efConstruction
+                            )
                             faissx_base._local_index = base_index
                         elif isinstance(base_index, faiss.IndexScalarQuantizer):
                             faissx_base = IndexScalarQuantizer(d)
                             faissx_base._local_index = base_index
                         else:
-                            raise ValueError(f"Unsupported base index type: {type(base_index)}")
+                            raise ValueError(
+                                f"Unsupported base index type: {type(base_index)}"
+                            )
 
                         # Create the IDMap/IDMap2 wrapper
                         wrapper_class = IndexIDMap2 if is_idmap2 else IndexIDMap
@@ -304,9 +360,13 @@ def read_index(fname: str, gpu: bool = False) -> Any:
                         # Restore the internal state
                         idmap_index.ntotal = ntotal
                         idmap_index._id_map = {row[0]: row[1] for row in id_map_data}
-                        idmap_index._rev_id_map = {row[1]: row[0] for row in id_map_data}
+                        idmap_index._rev_id_map = {
+                            row[1]: row[0] for row in id_map_data
+                        }
 
-                        logger.info(f"Successfully loaded IndexIDMap{'2' if is_idmap2 else ''} from {fname}")
+                        logger.info(
+                            f"Successfully loaded IndexIDMap{'2' if is_idmap2 else ''} from {fname}"
+                        )
                         return idmap_index
 
                     finally:
@@ -328,6 +388,7 @@ def read_index(fname: str, gpu: bool = False) -> Any:
         if gpu:
             try:
                 import faiss.contrib.gpu  # type: ignore
+
                 if faiss.get_num_gpus() > 0:
                     res = faiss.StandardGpuResources()
                     faiss_index = faiss.index_cpu_to_gpu(res, 0, faiss_index)
@@ -371,7 +432,9 @@ def read_index(fname: str, gpu: bool = False) -> Any:
             # Need to wrap the quantizer first
             quant = IndexFlatL2(d)
             quant._local_index = faiss_index.quantizer
-            index = IndexIVFPQ(quant, d, faiss_index.nlist, faiss_index.pq.M, faiss_index.pq.nbits)
+            index = IndexIVFPQ(
+                quant, d, faiss_index.nlist, faiss_index.pq.M, faiss_index.pq.nbits
+            )
             index._local_index = faiss_index
             index._nprobe = faiss_index.nprobe
             index.ntotal = faiss_index.ntotal
@@ -385,11 +448,11 @@ def read_index(fname: str, gpu: bool = False) -> Any:
             return index
 
         # Try to determine if it's an IDMap or IDMap2
-        elif hasattr(faiss_index, 'id_map'):
+        elif hasattr(faiss_index, "id_map"):
             # It's an IDMap, need to wrap the base index
-            base_index = read_index(fname + '.tmp', gpu=gpu)
+            base_index = read_index(fname + ".tmp", gpu=gpu)
 
-            if hasattr(faiss_index, 'replace_vector'):
+            if hasattr(faiss_index, "replace_vector"):
                 idmap = IndexIDMap2(base_index)
             else:
                 idmap = IndexIDMap(base_index)
@@ -418,29 +481,27 @@ def read_index(fname: str, gpu: bool = False) -> Any:
 
 def _infer_index_type(faiss_index) -> Optional[str]:
     """Helper to determine the index type from a FAISS index object."""
-    d = faiss_index.d
-
     # Most FAISS indices have a specific class name pattern
     class_name = type(faiss_index).__name__
 
-    if 'IndexFlat' in class_name:
-        return 'Flat'
-    elif 'IndexIVFFlat' in class_name:
-        nlist = getattr(faiss_index, 'nlist', 100)
+    if "IndexFlat" in class_name:
+        return "Flat"
+    elif "IndexIVFFlat" in class_name:
+        nlist = getattr(faiss_index, "nlist", 100)
         return f"IVF{nlist},Flat"
-    elif 'IndexIVFPQ' in class_name:
-        nlist = getattr(faiss_index, 'nlist', 100)
-        m = getattr(faiss_index.pq, 'M', 8)
-        nbits = getattr(faiss_index.pq, 'nbits', 8)
+    elif "IndexIVFPQ" in class_name:
+        nlist = getattr(faiss_index, "nlist", 100)
+        m = getattr(faiss_index.pq, "M", 8)
+        nbits = getattr(faiss_index.pq, "nbits", 8)
         return f"IVF{nlist},PQ{m}x{nbits}"
-    elif 'IndexPQ' in class_name:
-        m = getattr(faiss_index.pq, 'M', 8)
-        nbits = getattr(faiss_index.pq, 'nbits', 8)
+    elif "IndexPQ" in class_name:
+        m = getattr(faiss_index.pq, "M", 8)
+        nbits = getattr(faiss_index.pq, "nbits", 8)
         return f"PQ{m}x{nbits}"
-    elif 'IndexHNSW' in class_name:
-        m = getattr(faiss_index.hnsw, 'efConstruction', 16)
+    elif "IndexHNSW" in class_name:
+        m = getattr(faiss_index.hnsw, "efConstruction", 16)
         return f"HNSW{m}"
-    elif 'IndexScalar' in class_name:
-        return 'SQ8'
+    elif "IndexScalar" in class_name:
+        return "SQ8"
 
     return None

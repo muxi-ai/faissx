@@ -21,37 +21,31 @@
 """
 FAISSx Server Authentication Module
 
-This module handles API key authentication and tenant isolation for
-the FAISSx server.
+This module handles API key authentication and tenant isolation for the FAISSx server.
+It provides functions for managing API keys, loading credentials, validating requests,
+enforcing tenant-level access control, and handling auth/permission failures.
 
-It provides functions for:
-- Managing API keys and their associated tenant IDs
-- Loading auth credentials from environment variables or configuration
-- Validating requests based on API keys
-- Enforcing tenant-level access control to ensure data isolation
-- Custom exceptions for authentication and permission failures
-
-The authentication system ensures that each client can only access indices and
-vectors that belong to their assigned tenant, providing multi-tenant security.
+The authentication system ensures multi-tenant security by restricting clients to
+only access indices and vectors belonging to their assigned tenant.
 """
 
 import os
 from typing import Dict, Optional
 
-# Simple in-memory API key to tenant ID mapping
-# In production, this would be stored in a database or configuration file
+# In-memory storage for API key to tenant ID mappings
+# TODO: Replace with database or config file in production
 API_KEYS: Dict[str, str] = {}
 
 
 def set_api_keys(keys: Dict[str, str]):
     """
-    Set API keys programmatically in the global API_KEYS dictionary.
+    Initialize the global API_KEYS dictionary with provided key-tenant mappings.
 
-    This function is used by server.configure to initialize API keys.
-    It creates a copy of the input dictionary to prevent external modifications.
+    Used by server.configure to set up API keys. Creates a defensive copy to
+    prevent external modifications to the internal state.
 
     Args:
-        keys: Dictionary mapping API keys to tenant IDs
+        keys: Dictionary mapping API keys to their corresponding tenant IDs
     """
     global API_KEYS
     API_KEYS = keys.copy() if keys else {}
@@ -59,18 +53,16 @@ def set_api_keys(keys: Dict[str, str]):
 
 def load_api_keys_from_env():
     """
-    Load API keys from environment variables if available.
+    Load API key configurations from environment variables.
 
-    Expects environment variable 'faissx_API_KEYS' in format:
-    "key1:tenant1,key2:tenant2"
-
-    Updates the global API_KEYS dictionary with parsed key-tenant pairs.
-    Handles errors gracefully by printing error message if parsing fails.
+    Expects 'faissx_API_KEYS' env var in format: "key1:tenant1,key2:tenant2"
+    Parses the string into key-tenant pairs and updates the global API_KEYS dict.
+    Gracefully handles parsing errors by logging them.
     """
     env_keys = os.environ.get("faissx_API_KEYS")
     if env_keys:
         try:
-            # Parse comma-separated key:tenant pairs
+            # Split into individual key:tenant pairs and process each
             pairs = env_keys.split(",")
             for pair in pairs:
                 key, tenant = pair.split(":")
@@ -81,75 +73,76 @@ def load_api_keys_from_env():
 
 def get_tenant_id(api_key: str) -> Optional[str]:
     """
-    Get tenant ID from API key.
+    Retrieve the tenant ID associated with a given API key.
 
     Args:
-        api_key: API key from request header
+        api_key: The API key to look up from request headers
 
     Returns:
-        Optional[str]: Tenant ID for the API key or None if invalid
+        The tenant ID if the key exists, None otherwise
     """
     return API_KEYS.get(api_key)
 
 
 def validate_tenant_access(tenant_id: str, resource_tenant_id: str) -> bool:
     """
-    Validate that the tenant has access to the resource.
+    Verify if a tenant has permission to access a specific resource.
 
-    Simple equality check - tenant can only access their own resources.
-    In a more complex system, this could implement role-based access control.
+    Currently implements simple ownership check - tenants can only access their
+    own resources. Could be extended to support role-based access control.
 
     Args:
-        tenant_id: Tenant ID from API key
-        resource_tenant_id: Tenant ID of the resource being accessed
+        tenant_id: The tenant ID from the API key
+        resource_tenant_id: The tenant ID of the resource being accessed
 
     Returns:
-        bool: True if tenant has access, False otherwise
+        True if access is allowed, False otherwise
     """
     return tenant_id == resource_tenant_id
 
 
 class AuthError(Exception):
     """
-    Custom exception for authentication failures.
-    Raised when an invalid API key is provided.
+    Exception raised when API key validation fails.
+    Indicates the provided API key is invalid or missing.
     """
+
     pass
 
 
 class PermissionError(Exception):
     """
-    Custom exception for permission failures.
-    Raised when a tenant attempts to access resources they don't own.
+    Exception raised when a tenant attempts unauthorized resource access.
+    Indicates the tenant lacks permission to access the requested resource.
     """
+
     pass
 
 
 def authenticate_request(api_key: str, resource_tenant_id: Optional[str] = None):
     """
-    Authenticate a request and validate tenant access if applicable.
+    Perform two-step authentication and authorization check.
 
-    Two-step process:
-    1. Validate API key and get tenant ID
-    2. If resource_tenant_id provided, verify tenant has access to resource
+    1. Validates the API key and retrieves associated tenant ID
+    2. If resource_tenant_id is provided, verifies tenant has access rights
 
     Args:
-        api_key: API key from request
+        api_key: The API key from the request
         resource_tenant_id: Optional tenant ID of the resource being accessed
 
     Returns:
-        str: Tenant ID if authentication successful
+        The authenticated tenant ID
 
     Raises:
-        AuthError: If API key is invalid
-        PermissionError: If tenant does not have access to the resource
+        AuthError: When API key is invalid
+        PermissionError: When tenant lacks resource access permission
     """
-    # Step 1: Validate API key
+    # First step: Validate API key and get tenant ID
     tenant_id = get_tenant_id(api_key)
     if tenant_id is None:
         raise AuthError("Invalid API key")
 
-    # Step 2: Validate resource access if resource_tenant_id provided
+    # Second step: Check resource access permissions if applicable
     if resource_tenant_id is not None and not validate_tenant_access(
         tenant_id, resource_tenant_id
     ):

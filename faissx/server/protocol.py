@@ -21,8 +21,7 @@
 """
 FAISSx Protocol - Message Serialization and Deserialization
 
-This module defines the binary communication protocol used between
-FAISSx clients and servers.
+This module defines the binary communication protocol used between FAISSx clients and servers.
 
 It provides functions for:
 - Serializing and deserializing messages with headers / vector data / metadata
@@ -31,9 +30,8 @@ It provides functions for:
 - Formatting operation-specific messages (create_index, add_vectors, search, etc.)
 - Error handling and response formatting
 
-The protocol uses MessagePack for efficient binary serialization of
-structured data and raw binary encoding for vector data to minimize overhead
-and maximize performance.
+The protocol uses MessagePack for efficient binary serialization of structured data and raw binary
+encoding for vector data to minimize overhead and maximize performance.
 """
 
 import msgpack
@@ -48,6 +46,7 @@ VECTOR_DTYPE = np.float32  # Standard dtype for vector data
 
 class ProtocolError(Exception):
     """Custom exception for protocol-related errors during message parsing or formatting"""
+
     pass
 
 
@@ -136,7 +135,8 @@ def deserialize_message(
     """
     try:
         # 1. Extract sizes header by finding end of msgpack map
-        sizes_end = data.find(b"\xc0")  # \xc0 is msgpack's nil value, marking end of map
+        # \xc0 is msgpack's nil value, marking end of map
+        sizes_end = data.find(b"\xc0")
         if sizes_end == -1:
             raise ProtocolError("Invalid message format: can't find sizes header")
 
@@ -168,7 +168,8 @@ def deserialize_message(
                 dimension = header.get("dimension", 0)
                 if dimension > 0:
                     # Calculate number of vectors based on data size
-                    count = vector_size // (dimension * 4)  # 4 bytes per float32
+                    # 4 bytes per float32
+                    count = vector_size // (dimension * 4)
                     vectors = np.frombuffer(vector_data, dtype=VECTOR_DTYPE).reshape(
                         count, dimension
                     )

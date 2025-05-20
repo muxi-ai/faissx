@@ -21,9 +21,9 @@
 """
 FAISSx Server CLI
 
-Command-line interface for the FAISSx server. This module provides a CLI
-for running and managing the FAISSx vector database proxy server, including
-configuration of authentication, data persistence, and network settings.
+Command-line interface for the FAISSx server. This module provides a CLI for running and
+managing the FAISSx vector database proxy server, including configuration of authentication,
+data persistence, and network settings.
 """
 
 import sys
@@ -110,30 +110,33 @@ def setup_run_parser(subparsers):
     """
     Configure the argument parser for the 'run' command.
 
-    This function sets up all command-line arguments specific to running
-    the FAISSx server, including network settings, authentication options,
-    and data persistence configuration.
+    This function sets up all command-line arguments specific to running the FAISSx server,
+    including network settings, authentication options, and data persistence configuration.
 
     Args:
         subparsers: ArgumentParser subparsers object to add the run command to
     """
-    parser = subparsers.add_parser(
-        "run", help="Run the FAISSx server"
-    )
+    parser = subparsers.add_parser("run", help="Run the FAISSx server")
     # Network configuration
     parser.add_argument("--port", type=int, default=45678, help="Port to listen on")
     parser.add_argument("--bind-address", default="0.0.0.0", help="Address to bind to")
 
     # Authentication configuration
-    parser.add_argument("--auth-keys", help="API keys in format key1:tenant1,key2:tenant2")
+    parser.add_argument(
+        "--auth-keys", help="API keys in format key1:tenant1,key2:tenant2"
+    )
     parser.add_argument(
         "--auth-file",
-        help="Path to JSON file containing API keys mapping (e.g., {\"key1\": \"tenant1\"})"
+        help='Path to JSON file containing API keys mapping (e.g., {"key1": "tenant1"})',
     )
-    parser.add_argument("--enable-auth", action="store_true", help="Enable authentication")
+    parser.add_argument(
+        "--enable-auth", action="store_true", help="Enable authentication"
+    )
 
     # Data persistence
-    parser.add_argument("--data-dir", help="Directory to store FAISS indices (optional)")
+    parser.add_argument(
+        "--data-dir", help="Directory to store FAISS indices (optional)"
+    )
 
     # Set the function to call when this command is used
     parser.set_defaults(func=run_command)

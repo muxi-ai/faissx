@@ -31,7 +31,7 @@ from .base import uuid, np, Tuple, faiss, logging, get_client
 
 class IndexPQ:
     """
-    Proxy implementation of FAISS IndexPQ
+    Proxy implementation of FAISS IndexPQ.
 
     This class mimics the behavior of FAISS IndexPQ, which uses Product Quantization
     for efficient vector compression and similarity search. PQ significantly reduces
@@ -75,7 +75,7 @@ class IndexPQ:
         self.d = d
         self.M = M
         self.nbits = nbits
-        # Convert metric type to string representation
+        # Convert metric type to string representation for remote mode
         self.metric_type = "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
@@ -105,28 +105,30 @@ class IndexPQ:
                 self.client = get_client()
                 self._local_index = None
 
-                # Determine index type identifier
+                # Determine index type identifier for server
                 index_type = f"PQ{M}x{nbits}"
                 if self.metric_type == "IP":
                     index_type = f"{index_type}_IP"
 
                 # Create index on server
                 response = self.client.create_index(
-                    name=self.name,
-                    dimension=self.d,
-                    index_type=index_type
+                    name=self.name, dimension=self.d, index_type=index_type
                 )
 
                 self.index_id = response.get("index_id", self.name)
                 self.is_trained = response.get("is_trained", False)
 
                 # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = {}  # Maps local indices to server-side information
+                self._vector_mapping = (
+                    {}
+                )  # Maps local indices to server-side information
                 self._next_idx = 0  # Counter for local indices
                 return
 
         except Exception as e:
-            logging.warning(f"Error initializing remote mode: {e}, falling back to local mode")
+            logging.warning(
+                f"Error initializing remote mode: {e}, falling back to local mode"
+            )
 
         # Use local FAISS implementation by default
         self._using_remote = False
@@ -138,6 +140,7 @@ class IndexPQ:
             try:
                 # Import GPU-specific module
                 import faiss.contrib.gpu  # type: ignore
+
                 ngpus = faiss.get_num_gpus()
 
                 if ngpus > 0:
@@ -158,7 +161,9 @@ class IndexPQ:
                         # If GPU conversion fails, fall back to CPU
                         self._local_index = cpu_index
                         self._use_gpu = False
-                        logging.warning(f"Failed to create GPU PQ index: {e}, using CPU instead")
+                        logging.warning(
+                            f"Failed to create GPU PQ index: {e}, using CPU instead"
+                        )
                 else:
                     # No GPUs available, use CPU version
                     self._local_index = faiss.IndexPQ(d, M, nbits, metric)

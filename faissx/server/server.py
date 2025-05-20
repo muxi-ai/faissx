@@ -22,8 +22,7 @@
 """
 FAISSx Server - ZeroMQ Implementation
 
-This module provides the core server implementation for the FAISSx vector
-search service.
+This module provides the core server implementation for the FAISSx vector search service.
 
 It handles:
 - ZeroMQ socket communication and message processing
@@ -134,7 +133,9 @@ class FaissIndex:
                             index_params["M"] = int(M)  # Number of subquantizers
                             index_params["nbits"] = int(B)  # Bits per subquantizer
                         else:
-                            index_params["M"] = int(params)  # Just number of subquantizers
+                            index_params["M"] = int(
+                                params
+                            )  # Just number of subquantizers
                             index_params["nbits"] = 8  # Default 8 bits
                         main_type = "PQ"
                     except ValueError:
@@ -152,9 +153,13 @@ class FaissIndex:
                 index_params["metric"] = "L2"
 
             # Create appropriate index type
-            if main_type == "L2" or (main_type == index_type and index_params["metric"] == "L2"):
+            if main_type == "L2" or (
+                main_type == index_type and index_params["metric"] == "L2"
+            ):
                 index = faiss.IndexFlatL2(dimension)
-            elif main_type == "IP" or (main_type == index_type and index_params["metric"] == "IP"):
+            elif main_type == "IP" or (
+                main_type == index_type and index_params["metric"] == "IP"
+            ):
                 index = faiss.IndexFlatIP(dimension)
             elif main_type == "IVF":
                 # Default number of centroids if not specified
@@ -168,9 +173,14 @@ class FaissIndex:
 
                 # Create IVF index
                 index = faiss.IndexIVFFlat(
-                    quantizer, dimension, nlist,
-                    faiss.METRIC_INNER_PRODUCT if index_params["metric"] == "IP"
-                    else faiss.METRIC_L2
+                    quantizer,
+                    dimension,
+                    nlist,
+                    (
+                        faiss.METRIC_INNER_PRODUCT
+                        if index_params["metric"] == "IP"
+                        else faiss.METRIC_L2
+                    ),
                 )
 
                 # IVF indexes need to be trained before use
@@ -181,7 +191,9 @@ class FaissIndex:
 
                 # Create HNSW index
                 if index_params["metric"] == "IP":
-                    index = faiss.IndexHNSWFlat(dimension, M, faiss.METRIC_INNER_PRODUCT)
+                    index = faiss.IndexHNSWFlat(
+                        dimension, M, faiss.METRIC_INNER_PRODUCT
+                    )
                 else:
                     index = faiss.IndexHNSWFlat(dimension, M, faiss.METRIC_L2)
 
@@ -196,12 +208,14 @@ class FaissIndex:
                 if dimension % M != 0:
                     return {
                         "success": False,
-                        "error": f"PQ requires dimension ({dimension}) to be a multiple of M ({M})"
+                        "error": f"PQ requires dimension ({dimension}) to be a multiple of M ({M})",
                     }
 
                 # Create PQ index
                 if index_params["metric"] == "IP":
-                    index = faiss.IndexPQ(dimension, M, nbits, faiss.METRIC_INNER_PRODUCT)
+                    index = faiss.IndexPQ(
+                        dimension, M, nbits, faiss.METRIC_INNER_PRODUCT
+                    )
                 else:
                     index = faiss.IndexPQ(dimension, M, nbits, faiss.METRIC_L2)
 
@@ -222,14 +236,13 @@ class FaissIndex:
                 "dimension": dimension,
                 "type": index_type,
                 "is_trained": getattr(index, "is_trained", True),
-                "requires_training": main_type in ["IVF", "PQ"]
+                "requires_training": main_type in ["IVF", "PQ"],
             }
 
-            print(f"Created index {index_id} with dimension {dimension}, type {index_type}")
-            return {
-                "success": True,
-                **index_details
-            }
+            print(
+                f"Created index {index_id} with dimension {dimension}, type {index_type}"
+            )
+            return {"success": True, **index_details}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -326,13 +339,13 @@ class FaissIndex:
 
         try:
             # Check if the index supports range_search
-            if not hasattr(self.indexes[index_id], 'range_search'):
+            if not hasattr(self.indexes[index_id], "range_search"):
                 return {
                     "success": False,
                     "error": (
                         f"Index type {type(self.indexes[index_id]).__name__} "
                         f"does not support range search"
-                    )
+                    ),
                 }
 
             # Convert query vectors to numpy array and validate dimensions
@@ -351,7 +364,7 @@ class FaissIndex:
             for i in range(query_np.shape[0]):
                 # Range search one query at a time to avoid memory issues
                 lims, distances, indices = self.indexes[index_id].range_search(
-                    query_np[i:i+1], radius
+                    query_np[i:i + 1], radius
                 )
 
                 # Extract results for this query
@@ -359,11 +372,13 @@ class FaissIndex:
                 query_distances = distances[lims[0]:lims[1]].tolist()
                 query_indices = indices[lims[0]:lims[1]].tolist()
 
-                results.append({
-                    "distances": query_distances,
-                    "indices": query_indices,
-                    "count": len(query_distances)
-                })
+                results.append(
+                    {
+                        "distances": query_distances,
+                        "indices": query_indices,
+                        "count": len(query_distances),
+                    }
+                )
 
             print(
                 f"Range searched index {index_id} with {len(query_vectors)} "
@@ -437,8 +452,11 @@ class FaissIndex:
             index = self.indexes[index_id]
 
             # Check if index requires training
-            if not hasattr(index, 'is_trained') or index.is_trained:
-                return {"success": False, "error": "This index type does not require training"}
+            if not hasattr(index, "is_trained") or index.is_trained:
+                return {
+                    "success": False,
+                    "error": "This index type does not require training",
+                }
 
             # Convert vectors to numpy array and validate dimensions
             vectors_np = np.array(training_vectors, dtype=np.float32)
@@ -459,7 +477,7 @@ class FaissIndex:
                 "success": True,
                 "index_id": index_id,
                 "trained_with": len(training_vectors),
-                "is_trained": index.is_trained
+                "is_trained": index.is_trained,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

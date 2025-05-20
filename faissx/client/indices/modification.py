@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx index modification implementation.
 
@@ -39,11 +59,11 @@ def merge_indices(
 
     Args:
         indices: List of FAISSx indices to merge
-        output_type: Optional type of the output index as a FAISS-compatible string description
-                    (if None, use the same type as the first index)
+        output_type: Optional type of the output index as a FAISS-compatible string
+                    description (if None, use the same type as the first index)
         id_map: Whether to wrap the result in an IndexIDMap for custom IDs
-        id_map2: Whether to wrap the result in an IndexIDMap2 for updatable vectors with custom IDs
-                (takes precedence over id_map if both are True)
+        id_map2: Whether to wrap the result in an IndexIDMap2 for updatable vectors
+                with custom IDs (takes precedence over id_map if both are True)
 
     Returns:
         A new FAISSx index containing all vectors from the input indices
@@ -51,6 +71,7 @@ def merge_indices(
     Raises:
         ValueError: If indices are incompatible or empty
     """
+    # Validate input indices
     if not indices:
         raise ValueError("No indices provided for merging")
 
@@ -63,10 +84,9 @@ def merge_indices(
                 f"but index {i} has {idx.d} dimensions"
             )
 
-    # Determine the output index type
+    # Determine output index type and ID mapping settings
     if output_type is None:
         # Use the same type as the first index if not specified
-        # Check if the first index is an IDMap/IDMap2 wrapper
         if isinstance(indices[0], (IndexIDMap, IndexIDMap2)):
             base_index = indices[0].index
             first_type = _get_index_type_description(base_index)
@@ -93,25 +113,23 @@ def merge_indices(
 
         if isinstance(idx, (IndexIDMap, IndexIDMap2)):
             base_index = idx.index
-            # Collect ID mappings
+            # Collect ID mappings with adjusted indices for the merged index
             id_map_data = {}
             for internal_idx, external_id in idx._id_map.items():
-                # Adjust the internal index for the merged index
                 id_map_data[internal_idx + total_vectors] = external_id
 
-        # If the index has vectors, extract them
-        if getattr(base_index, 'ntotal', 0) > 0:
-            # Extract vectors using reconstruct method
+        # Extract vectors if the index has any
+        if getattr(base_index, "ntotal", 0) > 0:
             vectors = []
             try:
+                # Extract vectors using reconstruct method
                 for i in range(base_index.ntotal):
-                    # Skip any vectors that might have been removed internally
                     try:
                         vectors.append(base_index.reconstruct(i))
                     except Exception:
+                        # Skip any vectors that might have been removed internally
                         continue
             except AttributeError:
-                # If reconstruct isn't available, try to get vectors directly
                 raise ValueError(
                     f"Index of type {type(base_index).__name__} doesn't support reconstruction "
                     "and cannot be merged"
@@ -120,36 +138,33 @@ def merge_indices(
             if vectors:
                 vectors = np.vstack(vectors)
                 all_vectors.append(vectors)
-                # Keep track of ID mappings if needed
                 if id_map_data:
                     id_mappings.append(id_map_data)
-                # Update the total vector count
                 total_vectors += len(vectors)
 
-    # If no vectors were found, return an empty index
+    # Return empty index if no vectors found
     if not all_vectors:
         logger.warning("No vectors found in the provided indices")
         return merged_index
 
-    # Combine all vectors
+    # Combine and add vectors to the merged index
     combined_vectors = np.vstack(all_vectors)
 
     # Train the merged index if needed
-    if hasattr(merged_index, 'train') and not getattr(merged_index, 'is_trained', True):
+    if hasattr(merged_index, "train") and not getattr(merged_index, "is_trained", True):
         merged_index.train(combined_vectors)
 
     # Add the vectors to the merged index
     merged_index.add(combined_vectors)
 
-    # If we need to create an IDMap wrapper, do it now
+    # Create IDMap wrapper if needed
     if id_map or id_map2 or id_mappings:
         # Create the appropriate wrapper
         wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
         wrapped_index = wrapper_class(merged_index)
 
-        # If we have ID mappings from the source indices, restore them
+        # Restore ID mappings if available
         if id_mappings:
-            # Combine all ID mappings
             combined_mappings = {}
             for mapping in id_mappings:
                 combined_mappings.update(mapping)
@@ -167,7 +182,7 @@ def merge_indices(
 def split_index(
     index: Any,
     num_parts: int = 2,
-    split_method: str = 'sequential',
+    split_method: str = "sequential",
     custom_split_fn: Optional[Callable[[np.ndarray], List[int]]] = None,
     output_type: Optional[str] = None,
     preserve_ids: bool = True,
@@ -193,19 +208,17 @@ def split_index(
     Raises:
         ValueError: If the index is empty or split_method is invalid
     """
-    # Check if index is empty
-    if getattr(index, 'ntotal', 0) == 0:
+    # Validate input index
+    if getattr(index, "ntotal", 0) == 0:
         raise ValueError("Cannot split an empty index")
 
-    # Get the dimensionality of the index
+    # Get index properties
     d = index.d
-
-    # Determine if the input index uses custom IDs
     has_id_map = isinstance(index, (IndexIDMap, IndexIDMap2))
     is_id_map2 = isinstance(index, IndexIDMap2)
     base_index = index.index if has_id_map else index
 
-    # Determine the output index type
+    # Determine output index type
     if output_type is None:
         output_type = _get_index_type_description(base_index)
 
@@ -213,6 +226,7 @@ def split_index(
     vectors = []
     id_mappings = {}
 
+    # Extract vectors based on index type
     if has_id_map and preserve_ids:
         # For IDMap indices, extract vectors using the ID map
         for i in range(index.ntotal):
@@ -236,21 +250,18 @@ def split_index(
                 "and cannot be split"
             )
 
-    # Convert vectors to a numpy array
+    # Convert vectors to numpy array
     vectors = np.vstack(vectors) if vectors else np.zeros((0, d))
 
-    # Determine which vectors go into which part
-    if split_method == 'sequential':
+    # Determine vector partitioning based on split method
+    if split_method == "sequential":
         # Simple sequential partitioning
         part_size = len(vectors) // num_parts
-        part_indices = []
-        for i in range(len(vectors)):
-            part_indices.append(min(i // part_size, num_parts - 1))
+        part_indices = [min(i // part_size, num_parts - 1) for i in range(len(vectors))]
 
-    elif split_method == 'cluster':
+    elif split_method == "cluster":
         # Use k-means clustering to group similar vectors
         try:
-            # Create a small flat index for clustering
             kmeans = faiss.Kmeans(d, num_parts, niter=20, verbose=False)
             kmeans.train(vectors)
             _, part_indices = kmeans.index.search(vectors, 1)
@@ -259,7 +270,7 @@ def split_index(
             logger.error(f"Error during clustering: {e}")
             raise ValueError(f"Clustering failed: {e}")
 
-    elif split_method == 'custom':
+    elif split_method == "custom":
         # Use custom function to determine the split
         if custom_split_fn is None:
             raise ValueError("Custom split method requires a custom_split_fn")
@@ -274,7 +285,9 @@ def split_index(
             # Ensure all part indices are within range
             for idx in part_indices:
                 if idx < 0 or idx >= num_parts:
-                    raise ValueError(f"Invalid part index {idx}, must be 0 to {num_parts - 1}")
+                    raise ValueError(
+                        f"Invalid part index {idx}, must be 0 to {num_parts - 1}"
+                    )
         except Exception as e:
             logger.error(f"Error in custom split function: {e}")
             raise ValueError(f"Custom split function failed: {e}")
@@ -290,7 +303,9 @@ def split_index(
 
     # Group vectors by their part index
     grouped_vectors = [[] for _ in range(num_parts)]
-    grouped_ids = [[] for _ in range(num_parts)] if preserve_ids and has_id_map else None
+    grouped_ids = (
+        [[] for _ in range(num_parts)] if preserve_ids and has_id_map else None
+    )
 
     for i, part_idx in enumerate(part_indices):
         grouped_vectors[part_idx].append(vectors[i])
@@ -307,7 +322,7 @@ def split_index(
         part_index = result_indices[part_idx]
 
         # Train if needed
-        if hasattr(part_index, 'train') and not getattr(part_index, 'is_trained', True):
+        if hasattr(part_index, "train") and not getattr(part_index, "is_trained", True):
             part_index.train(part_vectors)
 
         # Add the vectors

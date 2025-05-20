@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Unified interface for LLM providers using OpenAI format
+# https://github.com/muxi-ai/faissx
+#
+# Copyright (C) 2025 Ran Aroussi
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 FAISSx IndexFlatL2 implementation.
 
@@ -6,7 +26,7 @@ This module provides a client-side implementation of the FAISS IndexFlatL2 class
 
 import uuid
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple
 
 import faiss
 import logging
@@ -52,7 +72,7 @@ class IndexFlatL2(FAISSxBaseIndex):
             # Move to GPU if requested
             if use_gpu:
                 try:
-                    import faiss.contrib.gpu
+                    import faiss.contrib.gpu   # type: ignore
                     if faiss.get_num_gpus() > 0:
                         self._gpu_resources = faiss.StandardGpuResources()
                         self._local_index = faiss.index_cpu_to_gpu(
@@ -186,7 +206,8 @@ class IndexFlatL2(FAISSxBaseIndex):
         # Reset parameters
         self.reset_parameters()
 
-    def range_search(self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def range_search(
+            self, x: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Search for all vectors within the specified radius.
 
@@ -294,7 +315,7 @@ class IndexFlatL2(FAISSxBaseIndex):
             raise RuntimeError("Cannot reconstruct from an empty index")
 
         if i0 < 0 or i0 + ni > self.ntotal:
-            raise IndexError(f"Index range out of bounds: {i0}:{i0+ni}, index has {self.ntotal} vectors")
+            raise IndexError(f"Index out of bounds: {i0}:{i0+ni}, index has {self.ntotal} vectors")
 
         client = get_client()
         if client is None:

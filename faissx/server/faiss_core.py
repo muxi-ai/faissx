@@ -21,8 +21,7 @@
 """
 FAISSx Core - Vector Index Management System
 
-This module provides the core implementation for managing FAISS vector
-indices in the FAISSx system.
+This module provides the core implementation for managing FAISS vector indices in the FAISSx system.
 
 It handles:
 - Creation and management of vector indices with multi-tenant isolation
@@ -32,9 +31,8 @@ It handles:
 - Index statistics and information retrieval
 - Efficient memory management for large-scale vector operations
 
-The FaissManager class acts as a central component that maintains the
-lifecycle of all vector indices, ensuring data isolation between tenants
-and providing efficient, scalable vector operations.
+FaissManager class acts as a central component that maintains the lifecycle of all vector indices,
+ensuring data isolation between tenants and providing efficient, scalable vector operations.
 """
 
 import os
@@ -76,8 +74,8 @@ class FaissManager:
     """
     Manager for FAISS indices with tenant isolation and persistence.
 
-    This class provides a thread-safe interface for managing FAISS vector indices
-    with support for multiple tenants and persistent storage.
+    This class provides a thread-safe interface for managing FAISS vector indices with support for
+    multiple tenants and persistent storage.
     """
 
     def __init__(self, data_dir: str = "./data"):
@@ -107,8 +105,8 @@ class FaissManager:
         """
         Load existing indices from disk storage.
 
-        This method traverses the data directory structure and loads all
-        valid FAISS indices and their associated metadata.
+        This method traverses the data directory structure and loads all valid FAISS indices and
+        their associated metadata.
         """
         if not self.data_dir.exists():
             return
