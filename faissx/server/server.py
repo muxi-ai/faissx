@@ -41,6 +41,7 @@ import zmq
 import numpy as np
 import faiss
 import msgpack
+import argparse
 from faissx import __version__ as faissx_version
 
 # Constants for server configuration
@@ -669,9 +670,17 @@ def run_server(
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("faissx_PORT", DEFAULT_PORT))
-    data_dir = os.environ.get("FAISS_DATA_DIR", None)
-    bind_address = os.environ.get("FAISS_BIND_ADDRESS", DEFAULT_BIND_ADDRESS)
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="FAISSx Server")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to listen on")
+    parser.add_argument("--bind-address", default=DEFAULT_BIND_ADDRESS, help="Address to bind to")
+    parser.add_argument("--data-dir", help="Directory for persistent storage")
+    args = parser.parse_args()
+
+    # Use environment variables as fallback, but prioritize command-line arguments
+    port = args.port
+    bind_address = args.bind_address
+    data_dir = args.data_dir or os.environ.get("FAISS_DATA_DIR")
 
     # Default to no authentication when run directly
     run_server(port, bind_address, auth_keys={}, enable_auth=False, data_dir=data_dir)
