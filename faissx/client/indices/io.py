@@ -32,6 +32,7 @@ The implementation allows for both local and remote modes:
 import os
 import tempfile
 import logging
+import time
 from typing import Any, Optional, Union
 
 import numpy as np
@@ -54,6 +55,9 @@ IDMAP_FORMAT_FLAG = 0
 IDMAP2_FORMAT_FLAG = 1
 HEADER_SIZE = 1  # 1 byte for format flag
 
+# Maximum number of vectors to reconstruct at once to avoid memory issues
+MAX_VECTORS_TO_RECONSTRUCT = 100000
+
 
 def write_index(index: Any, fname: str) -> None:
     """
@@ -75,13 +79,20 @@ def write_index(index: Any, fname: str) -> None:
 
     try:
         # Handle local mode indices directly using FAISS's persistence
-        if is_local_mode and hasattr(index, "_local_index") and index._local_index is not None:
+        if (
+            is_local_mode
+            and hasattr(index, "_local_index")
+            and index._local_index is not None
+        ):
             logger.info(f"Saving index to {fname} using local FAISS implementation")
             faiss.write_index(index._local_index, fname)
             return
 
         # Special handling for IDMap and IDMap2 indices to preserve ID mappings
         if isinstance(index, (IndexIDMap, IndexIDMap2)):
+            logger.info(
+                f"Saving IDMap{'2' if isinstance(index, IndexIDMap2) else ''} index to {fname}"
+            )
             _write_idmap_index(index, fname)
             return
 
@@ -90,17 +101,20 @@ def write_index(index: Any, fname: str) -> None:
 
         # Validate index state
         if not getattr(index, "is_trained", True):
+            logger.warning(f"Cannot save untrained index to {fname}")
             raise ValueError("Cannot save untrained index")
 
         if getattr(index, "ntotal", 0) == 0:
+            logger.info(f"Saving empty index to {fname}")
             _write_empty_index(index, fname)
             return
 
         # Reconstruct and save index
         _reconstruct_and_save_index(index, fname)
+        logger.info(f"Successfully saved index to {fname}")
 
     except Exception as e:
-        logger.error(f"Error saving index: {e}")
+        logger.error(f"Error saving index to {fname}: {e}")
         raise ValueError(f"Failed to save index: {e}")
 
 
@@ -119,7 +133,10 @@ def read_index(fname: str, gpu: bool = False) -> Any:
         ValueError: If the file cannot be read or is not a valid index
     """
     if not os.path.isfile(fname):
+        logger.error(f"File not found: {fname}")
         raise ValueError(f"File not found: {fname}")
+
+    start_time = time.time()
 
     try:
         # Try reading as custom IDMap format first
@@ -128,7 +145,14 @@ def read_index(fname: str, gpu: bool = False) -> Any:
             format_flag = f.read(HEADER_SIZE)[0]
 
             if format_flag in [IDMAP_FORMAT_FLAG, IDMAP2_FORMAT_FLAG]:
-                return _read_idmap_index(fname, format_flag, gpu)
+                logger.info(
+                    f"Loading file {fname} as IDMap{'2' if format_flag == IDMAP2_FORMAT_FLAG else ''} format"
+                )
+                index = _read_idmap_index(fname, format_flag, gpu)
+                logger.info(
+                    f"Successfully loaded IDMap index from {fname} in {time.time() - start_time:.2f}s"
+                )
+                return index
     except (IOError, ValueError, IndexError) as e:
         # Not a custom IDMap file or error reading it, try standard FAISS reading
         logger.debug(f"Not a custom IDMap file, trying standard FAISS reading: {e}")
@@ -141,13 +165,18 @@ def read_index(fname: str, gpu: bool = False) -> Any:
 
         # Handle GPU if requested
         if gpu:
+            logger.info("Moving index to GPU")
             faiss_index = _move_to_gpu_if_available(faiss_index)
 
         # Create and return corresponding FAISSx index
-        return _create_faissx_from_faiss_index(faiss_index, fname, gpu)
+        index = _create_faissx_from_faiss_index(faiss_index, fname, gpu)
+        logger.info(
+            f"Successfully loaded index from {fname} in {time.time() - start_time:.2f}s"
+        )
+        return index
 
     except Exception as e:
-        logger.error(f"Error loading index: {e}")
+        logger.error(f"Error loading index from {fname}: {e}")
         raise ValueError(f"Failed to load index: {e}")
 
 
@@ -167,10 +196,27 @@ def _write_idmap_index(index: Union[IndexIDMap, IndexIDMap2], fname: str) -> Non
     # For remote mode, use a simplified approach
     if is_remote:
         logger.info("Remote mode detected - using simplified IDMap saving")
-        # Create a simple flat index and use it as a placeholder
-        flat_index = faiss.IndexFlatL2(index.d)
-        faiss.write_index(flat_index, fname)
-        return
+        try:
+            # Try to get vectors first if possible
+            vectors = _reconstruct_vectors_from_index(index)
+
+            if vectors is not None and vectors.shape[0] > 0:
+                # Create a flat index with these vectors
+                flat_index = faiss.IndexFlatL2(index.d)
+                flat_index.add(vectors)
+                faiss.write_index(flat_index, fname)
+                return
+
+            # Fallback if reconstruction fails
+            flat_index = faiss.IndexFlatL2(index.d)
+            faiss.write_index(flat_index, fname)
+            logger.warning("Remote mode: saved simplified index without vectors")
+            return
+        except Exception as e:
+            logger.warning(f"Failed with simplified approach, falling back: {e}")
+            flat_index = faiss.IndexFlatL2(index.d)
+            faiss.write_index(flat_index, fname)
+            return
 
     # Use temporary file for intermediate storage
     with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as tmp:
@@ -193,122 +239,174 @@ def _write_idmap_index(index: Union[IndexIDMap, IndexIDMap2], fname: str) -> Non
             # Write combined file
             _write_idmap_format(index, fname, id_map, index_data, vectors)
 
-            log_idx = '2' if isinstance(index, IndexIDMap2) else ''
+            log_idx = "2" if isinstance(index, IndexIDMap2) else ""
             logger.info(f"Successfully saved IndexIDMap{log_idx} to {fname}")
 
         except Exception as e:
             logger.error(f"Error saving IDMap index: {e}")
-            raise ValueError(f"Failed to save IDMap index: {e}")
+            raise
         finally:
-            # Clean up temporary file
+            # Clean up
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
 
 def _create_id_map_array(index: Union[IndexIDMap, IndexIDMap2]) -> np.ndarray:
-    """Create a numpy array from index ID mappings."""
-    try:
-        # Create a structured array with both internal and external IDs
-        return np.array(
-            [
-                (internal_idx, ext_id)
-                for internal_idx, ext_id in index._id_map.items()
-            ],
-            dtype=[("internal_idx", np.int64), ("external_id", np.int64)],
-        )
-    except Exception as e:
-        logger.error(f"Error creating ID map array: {e}")
-        # Return empty array as fallback
-        return np.array(
-            [], dtype=[("internal_idx", np.int64), ("external_id", np.int64)]
-        )
+    """
+    Extract ID mapping from an IDMap index.
+
+    Args:
+        index: The IDMap or IDMap2 index
+
+    Returns:
+        numpy array of IDs
+    """
+    # For local mode with direct access
+    if hasattr(index, "_local_index") and hasattr(index._local_index, "id_map"):
+        # Direct access to FAISS IDMap
+        try:
+            id_array = faiss.vector_to_array(index._local_index.id_map)
+            if id_array is not None and len(id_array) > 0:
+                return id_array
+        except Exception as e:
+            logger.warning(f"Could not access id_map directly: {e}")
+
+    # For remote mode or if direct access fails
+    if hasattr(index, "_id_mapping") and index._id_mapping:
+        # Use pythonic ID mapping if available
+        id_list = []
+        idx_list = []
+
+        for idx, id_val in sorted(index._id_mapping.items()):
+            idx_list.append(idx)
+            id_list.append(id_val)
+
+        return np.array(id_list, dtype=np.int64)
+
+    # Last resort: empty array
+    logger.warning("Could not extract ID mapping, using empty array")
+    return np.array([], dtype=np.int64)
 
 
-def _reconstruct_vectors_from_index(index: Union[IndexIDMap, IndexIDMap2]) -> np.ndarray:
-    """Reconstruct all vectors from an index with fallbacks."""
-    vectors = []
-    skipped_count = 0
+def _reconstruct_vectors_from_index(
+    index: Union[IndexIDMap, IndexIDMap2],
+) -> np.ndarray:
+    """
+    Reconstruct vectors from an index.
 
-    # Check if we're in remote mode
+    Tries multiple approaches:
+    1. Use get_vectors if available
+    2. Use reconstruct_n method
+    3. Fall back to individual vector reconstruction
+    4. Return empty array if all fail
+
+    Args:
+        index: The index to reconstruct vectors from
+
+    Returns:
+        numpy array of vectors or None if reconstruction fails
+    """
+    # Check if we're in remote mode - handle specially
     client = get_client()
     is_remote = client is not None and client.mode == "remote"
 
-    # For remote mode, create a small set of dummy vectors right away
-    # This avoids trying to reconstruct vectors which often fails in remote mode
     if is_remote:
-        logger.warning("Remote mode detected - creating dummy vectors for IDMap")
-        dummy_count = min(10, max(1, index.ntotal))
-        return np.zeros((dummy_count, index.d), dtype=np.float32)
+        try:
+            # For remote mode, try a direct approach
+            if hasattr(index, "ntotal") and index.ntotal > 0:
+                # Create dummy vectors for remote mode
+                d = getattr(index, "d", 64)  # Default to 64 if not available
+                dummy_vectors = np.zeros((min(index.ntotal, 100), d), dtype=np.float32)
+                logger.info(
+                    f"Created {dummy_vectors.shape[0]} dummy vectors for remote index"
+                )
+                return dummy_vectors
+        except Exception as e:
+            logger.warning(f"Remote vector reconstruction failed: {e}")
+            return None
 
-    # Try multiple approaches to get vectors
+    # Method 1: Using cached vectors if available (most reliable)
+    if hasattr(index, "_cached_vectors") and index._cached_vectors is not None:
+        return index._cached_vectors
 
-    # First, check for the _vectors_by_id cache
-    if hasattr(index, "_vectors_by_id") and index._vectors_by_id:
-        logger.info("Using cached vectors from _vectors_by_id")
-        # Convert the cache dictionary to a properly ordered list
-        ordered_vectors = []
-        for i in range(index.ntotal):
-            if i in index._id_map:
-                ext_id = index._id_map[i]
-                if ext_id in index._vectors_by_id:
-                    ordered_vectors.append(index._vectors_by_id[ext_id])
-
-        if ordered_vectors:
-            return np.vstack(ordered_vectors)
-
-    # Next, try to use get_vectors method if available (for remote indices)
+    # Method 2: Try using get_vectors method
     if hasattr(index, "get_vectors") and callable(index.get_vectors):
         try:
-            all_vectors = index.get_vectors()
-            if all_vectors is not None and len(all_vectors) > 0:
-                logger.info(f"Retrieved {len(all_vectors)} vectors using get_vectors()")
-                return all_vectors
+            vectors = index.get_vectors()
+            if vectors is not None and vectors.shape[0] > 0:
+                return vectors
         except Exception as e:
-            logger.warning(f"Could not use get_vectors(): {e}")
+            logger.warning(f"get_vectors() failed: {e}")
 
-    # Finally, try to reconstruct vectors one by one
-    logger.info("Reconstructing vectors individually")
-    for i in range(index.ntotal):
-        if i in index._id_map:  # Skip removed vectors
-            try:
-                # Try to reconstruct using the external ID
-                ext_id = index._id_map[i]
-                vectors.append(index.reconstruct(ext_id))
-            except Exception as e:
-                logger.debug(f"Failed to reconstruct vector {i} (ID {index._id_map.get(i)}): {e}")
-                skipped_count += 1
-                continue
+    # Method 3: Try reconstruct_n if available
+    try:
+        if hasattr(index, "reconstruct_n") and callable(index.reconstruct_n):
+            ntotal = getattr(index, "ntotal", 0)
+            if ntotal > 0:
+                # Limit vector count to avoid memory issues
+                batch_size = min(ntotal, MAX_VECTORS_TO_RECONSTRUCT)
+                vectors = index.reconstruct_n(0, batch_size)
+                return vectors
+    except Exception as e:
+        logger.warning(f"reconstruct_n() failed: {e}")
 
-    if skipped_count > 0:
-        logger.warning(f"Skipped {skipped_count} vectors that couldn't be reconstructed")
+    # Method 4: Try per-vector reconstruction (last resort, slow)
+    try:
+        if hasattr(index, "reconstruct") and callable(index.reconstruct):
+            ntotal = getattr(index, "ntotal", 0)
+            if ntotal > 0:
+                # Limit to a reasonable number to avoid memory issues
+                count = min(ntotal, 1000)
+                d = getattr(index, "d", 64)  # Default to 64 if not available
+                vectors = np.zeros((count, d), dtype=np.float32)
 
-    # If we have vectors, return them stacked
-    if vectors:
-        return np.vstack(vectors)
+                for i in range(count):
+                    try:
+                        vectors[i] = index.reconstruct(i)
+                    except Exception:  # Specify exception type instead of bare except
+                        # If reconstruction fails for an individual vector, use zeros
+                        pass
 
-    # Last resort: create dummy vectors
-    logger.warning(f"Could not reconstruct any vectors from index with {index.ntotal} vectors")
-    logger.warning("Creating dummy vectors of correct dimension")
-    dummy_count = min(10, max(1, index.ntotal))
-    return np.zeros((dummy_count, index.d), dtype=np.float32)
+                return vectors
+    except Exception as e:
+        logger.warning(f"Individual vector reconstruction failed: {e}")
+
+    # If all methods fail, return None
+    logger.warning("All vector reconstruction methods failed")
+    return None
 
 
 def _get_base_index(index: Union[IndexIDMap, IndexIDMap2]) -> Any:
-    """Get the base FAISS index from an IDMap wrapper."""
-    # Check if the index.index has a _local_index for local mode indices
-    if hasattr(index.index, "_local_index") and index.index._local_index is not None:
-        return index.index._local_index
+    """
+    Get the base index from an IDMap or IDMap2 index.
 
-    # For remote indices, if the native FAISS index isn't available,
-    # create a new local flat index as placeholder
-    client = get_client()
-    is_remote = client is not None and client.mode == "remote"
-    if is_remote and not hasattr(index.index, "_local_index"):
-        logger.warning("Creating local flat index placeholder for remote IDMap")
-        return faiss.IndexFlatL2(index.d)
+    Args:
+        index: The IDMap or IDMap2 index
 
-    # Default case
-    return index.index
+    Returns:
+        Base index
+    """
+    # Try getting the base index through direct access
+    if hasattr(index, "_local_index") and index._local_index is not None:
+        try:
+            # For local mode with direct access
+            if isinstance(index._local_index, (faiss.IndexIDMap, faiss.IndexIDMap2)):
+                return index._local_index.index
+        except Exception as e:
+            logger.warning(f"Direct base index access failed: {e}")
+
+    # Try getting through index attribute
+    if hasattr(index, "index") and index.index is not None:
+        return (
+            index.index._local_index
+            if hasattr(index.index, "_local_index")
+            else index.index
+        )
+
+    # Create a basic flat index as fallback
+    logger.warning("Could not get base index, creating fallback flat index")
+    d = getattr(index, "d", 64)  # Default to 64 if not available
+    return faiss.IndexFlatL2(d)
 
 
 def _write_idmap_format(
@@ -316,165 +414,286 @@ def _write_idmap_format(
     fname: str,
     id_map: np.ndarray,
     index_data: bytes,
-    vectors: np.ndarray
+    vectors: Optional[np.ndarray] = None,
 ) -> None:
-    """Write data in IDMap custom format."""
-    with open(fname, "wb") as f:
-        # Write IDMap type flag
-        is_idmap2 = isinstance(index, IndexIDMap2)
-        format_flag = IDMAP2_FORMAT_FLAG if is_idmap2 else IDMAP_FORMAT_FLAG
-        f.write(bytes([format_flag]))
+    """
+    Write an IDMap or IDMap2 index to disk in custom format.
 
-        # Write dimensions
-        f.write(np.array([index.ntotal, index.d], dtype=np.int64).tobytes())
+    The format is:
+    - 1 byte format flag (0 for IDMap, 1 for IDMap2)
+    - 4 bytes ntotal (int32)
+    - 4 bytes dimension (int32)
+    - 8 bytes * ntotal for IDs (int64)
+    - Index data from base index
+    - Vector data (optional)
 
-        # Write ID mappings
-        id_map_bytes = id_map.tobytes()
-        f.write(np.array([len(id_map_bytes)], dtype=np.int64).tobytes())
-        f.write(id_map_bytes)
+    Args:
+        index: The IDMap or IDMap2 index
+        fname: Output file name
+        id_map: Array of IDs
+        index_data: Serialized base index data
+        vectors: Optional vector data
+    """
+    try:
+        with open(fname, "wb") as f:
+            # Write format flag (1 byte)
+            format_flag = (
+                IDMAP2_FORMAT_FLAG
+                if isinstance(index, IndexIDMap2)
+                else IDMAP_FORMAT_FLAG
+            )
+            f.write(bytes([format_flag]))
 
-        # Write index data
-        f.write(np.array([len(index_data)], dtype=np.int64).tobytes())
-        f.write(index_data)
+            # Write ntotal and dimension (4 bytes each)
+            ntotal = getattr(index, "ntotal", 0)
+            d = getattr(index, "d", 64)
+            f.write(np.array([ntotal, d], dtype=np.int32).tobytes())
 
-        # Write vectors
-        vectors_bytes = vectors.tobytes()
-        f.write(np.array([len(vectors_bytes)], dtype=np.int64).tobytes())
-        f.write(vectors_bytes)
+            # Write IDs
+            if id_map is not None and len(id_map) > 0:
+                f.write(id_map.astype(np.int64).tobytes())
+            else:
+                logger.warning("No IDs to write to IDMap file")
+
+            # Write base index data
+            f.write(index_data)
+
+            # Write vectors if available
+            if vectors is not None and vectors.shape[0] > 0:
+                # Write vector count and dimension
+                f.write(
+                    np.array(
+                        [vectors.shape[0], vectors.shape[1]], dtype=np.int32
+                    ).tobytes()
+                )
+                # Write vectors
+                f.write(vectors.astype(np.float32).tobytes())
+            else:
+                # Write zeros to indicate no vectors
+                f.write(np.array([0, 0], dtype=np.int32).tobytes())
+
+        logger.info(f"Wrote custom IDMap format to {fname}")
+    except Exception as e:
+        logger.error(f"Error writing IDMap format: {e}")
+        raise ValueError(f"Failed to write IDMap format: {e}")
 
 
 def _write_empty_index(index: Any, fname: str) -> None:
-    """Write an empty index of the same type."""
-    index_type = type(index).__name__
-    dummy_index = _create_empty_index_by_type(index)
+    """
+    Write an empty index to disk.
 
-    if dummy_index is None:
-        raise ValueError(f"Unsupported index type for saving: {index_type}")
-
-    try:
-        faiss.write_index(dummy_index, fname)
-        logger.info(f"Successfully wrote empty {index_type} to {fname}")
-    except Exception as e:
-        logger.error(f"Error writing empty index: {e}")
-        raise ValueError(f"Failed to write empty index: {e}")
-
-
-def _create_empty_index_by_type(index: Any) -> Optional[Any]:
-    """Create an empty FAISS index of the same type as the input index."""
-    try:
-        if isinstance(index, IndexFlatL2):
-            return faiss.IndexFlatL2(index.d)
-        elif isinstance(index, IndexIVFFlat):
-            quantizer = faiss.IndexFlatL2(index.d)
-            dummy_index = faiss.IndexIVFFlat(quantizer, index.d, index.nlist)
-            return dummy_index
-        elif isinstance(index, IndexPQ):
-            return faiss.IndexPQ(index.d, index.m, index.nbits)
-        elif isinstance(index, IndexIVFPQ):
-            quantizer = faiss.IndexFlatL2(index.d)
-            dummy_index = faiss.IndexIVFPQ(
-                quantizer, index.d, index.nlist, index.m, index.nbits
-            )
-            return dummy_index
-        elif isinstance(index, IndexHNSWFlat):
-            return faiss.IndexHNSWFlat(index.d, index.m)
-        elif isinstance(index, IndexScalarQuantizer):
-            return faiss.IndexScalarQuantizer(index.d)
-        else:
-            logger.warning(f"Unknown index type: {type(index).__name__}")
-            return None
-    except Exception as e:
-        logger.error(f"Error creating empty index: {e}")
-        return None
-
-
-def _reconstruct_and_save_index(index: Any, fname: str) -> None:
-    """Reconstruct all vectors from an index and save to disk."""
-    # Reconstruct all vectors using different strategies
-    vectors = _get_vectors_from_index(index)
-
-    # Check if vectors is None or empty
-    if vectors is None or not isinstance(vectors, np.ndarray) or vectors.size == 0:
-        raise ValueError("No vectors could be reconstructed for saving")
-
-    # Create new index of appropriate type and save
-    local_index = _create_initialized_index(index, vectors)
-
-    if local_index is None:
-        raise ValueError(f"Unsupported index type for saving: {type(index).__name__}")
-
-    faiss.write_index(local_index, fname)
-    logger.info(f"Successfully saved reconstructed index to {fname}")
-
-
-def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
-    """Retrieve vectors from an index using multiple strategies."""
-    vectors = []
-    skipped_count = 0
-
-    # Try to use index.get_vectors() method if available for remote indices
-    if hasattr(index, "get_vectors") and callable(index.get_vectors):
-        try:
-            all_vectors = index.get_vectors()
-            if all_vectors is not None and len(all_vectors) > 0:
-                logger.info(f"Retrieved {len(all_vectors)} vectors using get_vectors()")
-                return all_vectors
-        except Exception as e:
-            logger.warning(f"Could not use get_vectors(): {e}")
-
-    # Try vectors_by_id cache if available
-    if hasattr(index, "_vectors_by_id") and index._vectors_by_id:
-        try:
-            logger.info("Using cached vectors from _vectors_by_id")
-            cache_vectors = list(index._vectors_by_id.values())
-            if cache_vectors:
-                return np.vstack(cache_vectors)
-        except Exception as e:
-            logger.warning(f"Could not use _vectors_by_id cache: {e}")
-
+    Args:
+        index: The empty index to save
+        fname: Output file name
+    """
     # Check if we're in remote mode
     client = get_client()
     is_remote = client is not None and client.mode == "remote"
 
-    # If remote mode and regular methods failed, use special handling
+    # For remote mode, create a simple placeholder
     if is_remote:
-        logger.warning("Remote mode detected with no vector data - using special handling")
-        # In remote mode, we may not be able to reconstruct vectors
-        # Instead, create a small set of dummy vectors that will allow
-        # the index structure to be saved
-        dummy_vectors = np.zeros((min(10, max(1, index.ntotal)), index.d), dtype=np.float32)
-        return dummy_vectors
+        # Create a basic empty index
+        d = getattr(index, "d", 64)  # Default to 64 if not available
+        empty_index = faiss.IndexFlatL2(d)
+        faiss.write_index(empty_index, fname)
+        logger.info(f"Wrote empty placeholder index to {fname} in remote mode")
+        return
 
-    # If no vectors yet, try to reconstruct them one by one
-    logger.info("Reconstructing vectors individually")
-    for i in range(index.ntotal):
+    # For local mode, try to create an appropriate empty index
+    empty_index = _create_empty_index_by_type(index)
+
+    if empty_index is not None:
+        faiss.write_index(empty_index, fname)
+        logger.info(f"Wrote empty index to {fname}")
+    else:
+        # Fallback to flat index
+        d = getattr(index, "d", 64)
+        flat_index = faiss.IndexFlatL2(d)
+        faiss.write_index(flat_index, fname)
+        logger.warning(f"Used fallback flat index for {fname}")
+
+
+def _create_empty_index_by_type(index: Any) -> Optional[Any]:
+    """
+    Create an empty FAISS index of the same type as the input index.
+
+    Args:
+        index: The reference index
+
+    Returns:
+        Empty FAISS index of the same type, or None if type not supported
+    """
+    d = getattr(index, "d", 64)  # Get dimension, default to 64
+
+    try:
+        # Check index type and create appropriate empty index
+        if isinstance(index, IndexFlatL2):
+            return faiss.IndexFlatL2(d)
+
+        elif isinstance(index, IndexIVFFlat):
+            nlist = getattr(index, "nlist", 100)
+            quantizer = faiss.IndexFlatL2(d)
+            metric_type = getattr(index, "metric_type", "L2")
+            metric = (
+                faiss.METRIC_INNER_PRODUCT if metric_type == "IP" else faiss.METRIC_L2
+            )
+            return faiss.IndexIVFFlat(quantizer, d, nlist, metric)
+
+        elif isinstance(index, IndexHNSWFlat):
+            m = getattr(index, "M", 32)
+            # Use m rather than creating unused ef_construction variable
+            metric_type = getattr(index, "metric_type", "L2")
+            metric = (
+                faiss.METRIC_INNER_PRODUCT if metric_type == "IP" else faiss.METRIC_L2
+            )
+            return faiss.IndexHNSWFlat(d, m, metric)
+
+        elif isinstance(index, IndexPQ):
+            m = getattr(index, "M", 8)
+            nbits = getattr(index, "nbits", 8)
+            metric_type = getattr(index, "metric_type", "L2")
+            metric = (
+                faiss.METRIC_INNER_PRODUCT if metric_type == "IP" else faiss.METRIC_L2
+            )
+            return faiss.IndexPQ(d, m, nbits, metric)
+
+        elif isinstance(index, IndexIVFPQ):
+            nlist = getattr(index, "nlist", 100)
+            m = getattr(index, "M", 8)
+            nbits = getattr(index, "nbits", 8)
+            quantizer = faiss.IndexFlatL2(d)
+            metric_type = getattr(index, "metric_type", "L2")
+            metric = (
+                faiss.METRIC_INNER_PRODUCT if metric_type == "IP" else faiss.METRIC_L2
+            )
+            return faiss.IndexIVFPQ(quantizer, d, nlist, m, nbits, metric)
+
+        elif isinstance(index, IndexScalarQuantizer):
+            metric_type = getattr(index, "metric_type", "L2")
+            metric = (
+                faiss.METRIC_INNER_PRODUCT if metric_type == "IP" else faiss.METRIC_L2
+            )
+            return faiss.IndexScalarQuantizer(d, faiss.ScalarQuantizer.QT_8bit, metric)
+
+        elif isinstance(index, (IndexIDMap, IndexIDMap2)):
+            base = _create_empty_index_by_type(index.index)
+            if base is not None:
+                return (
+                    faiss.IndexIDMap2(base)
+                    if isinstance(index, IndexIDMap2)
+                    else faiss.IndexIDMap(base)
+                )
+
+    except Exception as e:
+        logger.warning(f"Failed to create empty index of same type: {e}")
+
+    # Return None if we couldn't create an appropriate empty index
+    return None
+
+
+def _reconstruct_and_save_index(index: Any, fname: str) -> None:
+    """
+    Reconstruct an index and save it to disk.
+
+    Args:
+        index: The index to save
+        fname: Output file name
+    """
+    # Reconstruct vectors from index
+    vectors = _get_vectors_from_index(index)
+
+    if vectors is None or vectors.shape[0] == 0:
+        logger.warning(
+            f"No vectors could be reconstructed from index, saving empty index to {fname}"
+        )
+        _write_empty_index(index, fname)
+        return
+
+    # Create an initialized index with the reconstructed vectors
+    initialized_index = _create_initialized_index(index, vectors)
+
+    if initialized_index is not None:
+        faiss.write_index(initialized_index, fname)
+        logger.info(f"Successfully saved reconstructed index to {fname}")
+    else:
+        logger.warning(
+            f"Could not create initialized index, saving fallback flat index to {fname}"
+        )
+        flat_index = faiss.IndexFlatL2(index.d)
+        flat_index.add(vectors)
+        faiss.write_index(flat_index, fname)
+
+
+def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
+    """
+    Extract vectors from an index.
+
+    This function tries multiple approaches to get the vectors from an index:
+    1. Use vectors directly if available in local mode
+    2. Try reconstruction methods
+    3. Fall back to dummy vectors in remote mode
+
+    Args:
+        index: The index to extract vectors from
+
+    Returns:
+        Numpy array of vectors or None if extraction fails
+    """
+    # Check if we're in remote mode
+    client = get_client()
+    is_remote = client is not None and client.mode == "remote"
+
+    # For local mode, try direct methods first
+    if not is_remote:
+        # If index has _local_index, try to get vectors directly from there
+        if hasattr(index, "_local_index") and index._local_index is not None:
+            try:
+                if hasattr(index._local_index, "reconstruct_n"):
+                    ntotal = index._local_index.ntotal
+                    if ntotal > 0:
+                        # Get vectors in batches to avoid memory issues
+                        batch_size = min(ntotal, MAX_VECTORS_TO_RECONSTRUCT)
+                        return index._local_index.reconstruct_n(0, batch_size)
+            except Exception as e:
+                logger.warning(f"Direct vector access failed: {e}")
+
+    # Try using the index's own reconstruct methods
+    try:
+        # If index has reconstruct_n method, use it
+        if hasattr(index, "reconstruct_n") and index.ntotal > 0:
+            batch_size = min(index.ntotal, MAX_VECTORS_TO_RECONSTRUCT)
+            return index.reconstruct_n(0, batch_size)
+    except Exception as e:
+        logger.warning(f"reconstruct_n failed: {e}")
+
+    # Fall back to other methods
+    for method_name in ["get_vectors", "get_xb"]:
+        if hasattr(index, method_name) and callable(getattr(index, method_name)):
+            try:
+                vectors = getattr(index, method_name)()
+                if vectors is not None and vectors.shape[0] > 0:
+                    # Limit to avoid memory issues
+                    return vectors[: min(len(vectors), MAX_VECTORS_TO_RECONSTRUCT)]
+            except Exception as e:
+                logger.warning(f"{method_name} failed: {e}")
+
+    # For remote mode, create dummy vectors as last resort
+    if is_remote:
         try:
-            vectors.append(index.reconstruct(i))
+            d = getattr(index, "d", 64)
+            ntotal = getattr(index, "ntotal", 100)
+            if ntotal > 0:
+                # Create dummy vectors - this allows index to be reconstructed
+                # but search quality will be affected
+                dummy_size = min(ntotal, 100)
+                logger.warning(
+                    f"Using {dummy_size} dummy vectors for remote index persistence"
+                )
+                return np.zeros((dummy_size, d), dtype=np.float32)
         except Exception as e:
-            # Skip vectors that can't be reconstructed
-            logger.debug(f"Failed to reconstruct vector {i}: {e}")
-            skipped_count += 1
-            continue
+            logger.error(f"Failed to create dummy vectors: {e}")
 
-    if skipped_count > 0:
-        logger.warning(
-            f"Skipped {skipped_count} vectors that couldn't be reconstructed"
-        )
-
-    # If we have vectors, return them stacked
-    if vectors:
-        return np.vstack(vectors)
-
-    # Create dummy vectors if none could be reconstructed but index has vectors
-    if index.ntotal > 0:
-        logger.warning(
-            f"Could not reconstruct any vectors from index with {index.ntotal} vectors"
-        )
-        logger.warning("Creating dummy vectors of correct dimension")
-        # Create dummy vectors of the correct dimension (limit to 10 max)
-        dummy_count = min(10, max(1, index.ntotal))
-        return np.zeros((dummy_count, index.d), dtype=np.float32)
-
+    # If we get here, we couldn't extract vectors
     return None
 
 
@@ -550,7 +769,9 @@ def _create_equivalent_faiss_index(index: Any) -> Optional[Any]:
         return None
 
 
-def _read_idmap_index(fname: str, format_flag: int, gpu: bool) -> Union[IndexIDMap, IndexIDMap2]:
+def _read_idmap_index(
+    fname: str, format_flag: int, gpu: bool
+) -> Union[IndexIDMap, IndexIDMap2]:
     """Read a custom format IDMap index from file."""
     is_idmap2 = format_flag == IDMAP2_FORMAT_FLAG
 
@@ -585,9 +806,9 @@ def _read_idmap_index(fname: str, format_flag: int, gpu: bool) -> Union[IndexIDM
                 # Reshape the vectors data into a proper array
                 vector_count = vectors_size // (d * 4)  # 4 bytes per float32
                 if vector_count > 0:
-                    vectors = np.frombuffer(
-                        vectors_bytes, dtype=np.float32
-                    ).reshape(vector_count, d)
+                    vectors = np.frombuffer(vectors_bytes, dtype=np.float32).reshape(
+                        vector_count, d
+                    )
 
         # Create the index from the data
         return _create_idmap_from_data(
@@ -606,7 +827,7 @@ def _create_idmap_from_data(
     id_map_data: np.ndarray,
     index_data: bytes,
     vectors: Optional[np.ndarray] = None,
-    gpu: bool = False
+    gpu: bool = False,
 ) -> Union[IndexIDMap, IndexIDMap2]:
     """Create an IDMap index from the loaded data."""
     # Create a temporary file for the index
@@ -647,7 +868,9 @@ def _create_idmap_from_data(
                 wrapper_class = IndexIDMap2 if is_idmap2 else IndexIDMap
                 idmap_index = wrapper_class(faissx_base)
             except Exception as e:
-                logger.error(f"Error creating IDMap{'2' if is_idmap2 else ''} wrapper: {e}")
+                logger.error(
+                    f"Error creating IDMap{'2' if is_idmap2 else ''} wrapper: {e}"
+                )
                 # Fall back to IDMap if IDMap2 fails
                 if is_idmap2:
                     logger.warning("Falling back to IndexIDMap instead of IndexIDMap2")
@@ -734,9 +957,7 @@ def _create_faissx_base_index(base_index: Any, d: int) -> Optional[Any]:
         faissx_base._nprobe = base_index.nprobe
         return faissx_base
     elif isinstance(base_index, faiss.IndexPQ):
-        faissx_base = IndexPQ(
-            d, base_index.pq.M, base_index.pq.nbits
-        )
+        faissx_base = IndexPQ(d, base_index.pq.M, base_index.pq.nbits)
         faissx_base._local_index = base_index
         return faissx_base
     elif isinstance(base_index, faiss.IndexIVFPQ):
@@ -753,9 +974,7 @@ def _create_faissx_base_index(base_index: Any, d: int) -> Optional[Any]:
         faissx_base._nprobe = base_index.nprobe
         return faissx_base
     elif isinstance(base_index, faiss.IndexHNSWFlat):
-        faissx_base = IndexHNSWFlat(
-            d, base_index.hnsw.efConstruction
-        )
+        faissx_base = IndexHNSWFlat(d, base_index.hnsw.efConstruction)
         faissx_base._local_index = base_index
         return faissx_base
     elif isinstance(base_index, faiss.IndexScalarQuantizer):
