@@ -28,13 +28,13 @@ It can operate in either local mode (using FAISS directly) or remote mode
 
 import uuid
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Any
 
 from ..client import get_client
-from .base import logger
+from .base import logger, FAISSxBaseIndex
 
 
-class IndexScalarQuantizer:
+class IndexScalarQuantizer(FAISSxBaseIndex):
     """
     Proxy implementation of FAISS IndexScalarQuantizer.
 
@@ -54,11 +54,6 @@ class IndexScalarQuantizer:
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
         index_id (str): Server-side index identifier (when in remote mode)
-        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
-        _next_idx (int): Next available local index (remote mode only)
-        _local_index: Local FAISS index (local mode only)
-        _gpu_resources: GPU resources if using GPU (local mode only)
-        _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
 
     def __init__(self, d: int, qtype=None, metric_type=None):
@@ -71,6 +66,8 @@ class IndexScalarQuantizer:
             metric_type: Distance metric, either faiss.METRIC_L2 or
                         faiss.METRIC_INNER_PRODUCT
         """
+        super().__init__()  # Initialize base class
+
         # Try to import faiss locally to avoid module-level dependency
         try:
             import faiss as local_faiss
@@ -88,6 +85,7 @@ class IndexScalarQuantizer:
 
         # Store core parameters
         self.d = d
+        self.qtype = qtype
         # Convert metric type to string representation for remote mode
         self.metric_type = "IP" if metric_type == METRIC_INNER_PRODUCT else "L2"
 
@@ -98,12 +96,14 @@ class IndexScalarQuantizer:
         # Initialize GPU-related attributes
         self._use_gpu = False
         self._gpu_resources = None
+        self._local_index = None
 
         # Generate unique name for the index
         self.name = f"index-sq-{uuid.uuid4().hex[:8]}"
+        self.index_id = self.name
 
         # Initialize vector mapping for remote mode
-        self._vector_mapping = {}  # Maps local indices to server-side information
+        self._vector_mapping = {}  # Maps server-side indices to local indices for faster lookup
         self._next_idx = 0  # Counter for local indices
 
         # Check if client exists and its mode
@@ -118,8 +118,73 @@ class IndexScalarQuantizer:
             logger.info(f"Creating remote IndexScalarQuantizer on server {client.server}")
             self._create_remote_index(client, d, qtype)
 
-    def _create_local_index(self, d, qtype, metric_type):
-        """Create a local FAISS scalar quantizer index."""
+    def _get_index_type_string(self, qtype=None) -> str:
+        """
+        Get standardized string representation of index type.
+
+        Args:
+            qtype: Quantizer type to convert to string
+
+        Returns:
+            String representation of index type
+        """
+        # Use internal qtype if none provided
+        if qtype is None:
+            qtype = self.qtype
+
+        # Handle different qtype formats
+        if isinstance(qtype, str):
+            # If qtype is already a string (e.g., "SQ8"), use it directly
+            qtype_str = qtype
+        elif qtype is None:
+            # Default to SQ8 if none specified
+            qtype_str = "SQ8"
+        else:
+            # Convert integer constant to string representation
+            # Map common quantizer types to string representations
+            qtype_map = {
+                1: "SQ8",  # QT_8bit
+                2: "SQ4",  # QT_4bit
+                5: "SQ16"  # QT_fp16
+            }
+            qtype_str = qtype_map.get(qtype, f"SQ{qtype}")
+
+        # Ensure the qtype_str has the "SQ" prefix if it doesn't already
+        if not qtype_str.startswith("SQ"):
+            qtype_str = f"SQ{qtype_str}"
+
+        # Add metric type suffix if needed
+        if self.metric_type == "IP":
+            qtype_str = f"{qtype_str}_IP"
+
+        return qtype_str
+
+    def _parse_server_response(self, response: Any, default_value: Any) -> Any:
+        """
+        Parse server response with consistent error handling.
+
+        Args:
+            response: Server response to parse
+            default_value: Default value to use if response isn't a dict
+
+        Returns:
+            Parsed value from response or default value
+        """
+        if isinstance(response, dict):
+            return response.get("index_id", default_value)
+        else:
+            logger.warning(f"Unexpected server response format: {response}")
+            return default_value
+
+    def _create_local_index(self, d: int, qtype: Any, metric_type: Any) -> None:
+        """
+        Create a local FAISS scalar quantizer index.
+
+        Args:
+            d (int): Vector dimension
+            qtype: Quantizer type
+            metric_type: Distance metric type
+        """
         try:
             import faiss
 
@@ -167,34 +232,18 @@ class IndexScalarQuantizer:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize FAISS index: {e}")
 
-    def _create_remote_index(self, client, d, qtype):
-        """Create a remote scalar quantizer index on the server."""
+    def _create_remote_index(self, client: Any, d: int, qtype: Any) -> None:
+        """
+        Create a remote scalar quantizer index on the server.
+
+        Args:
+            client: FAISSx client instance
+            d (int): Vector dimension
+            qtype: Quantizer type
+        """
         try:
-            # Handle different qtype formats
-            if isinstance(qtype, str):
-                # If qtype is already a string (e.g., "SQ8"), use it directly
-                qtype_str = qtype
-            elif qtype is None:
-                # Default to SQ8 if none specified
-                qtype_str = "SQ8"
-            else:
-                # Convert integer constant to string representation
-                # Map common quantizer types to string representations
-                qtype_map = {
-                    1: "SQ8",  # QT_8bit
-                    2: "SQ4",  # QT_4bit
-                    5: "SQ16"  # QT_fp16
-                }
-                qtype_str = qtype_map.get(qtype, f"SQ{qtype}")
-
-            # Ensure the qtype_str has the "SQ" prefix if it doesn't already
-            if not qtype_str.startswith("SQ"):
-                qtype_str = f"SQ{qtype_str}"
-
-            # Determine the final index type
-            index_type = qtype_str
-            if self.metric_type == "IP":
-                index_type = f"{index_type}_IP"
+            # Get index type string
+            index_type = self._get_index_type_string(qtype)
 
             # Create index on server
             logger.debug(f"Creating remote index {self.name} with type {index_type}")
@@ -205,14 +254,8 @@ class IndexScalarQuantizer:
             # Log the raw response for debugging
             logger.debug(f"Server response: {response}")
 
-            # Handle different response formats
-            if isinstance(response, dict):
-                self.index_id = response.get("index_id", self.name)
-            else:
-                # If response is not a dict (maybe a string or other type), use the name as ID
-                logger.warning(f"Unexpected server response format: {response}")
-                self.index_id = self.name
-
+            # Parse response to get index ID
+            self.index_id = self._parse_server_response(response, self.name)
             logger.info(f"Created remote index with ID: {self.index_id}")
         except Exception as e:
             # Raise a clear error instead of falling back to local mode
@@ -220,6 +263,22 @@ class IndexScalarQuantizer:
                 f"Failed to create remote scalar quantizer index: {e}. "
                 f"Server may not support SQ indices with type {index_type}."
             )
+
+    def _map_server_to_local_indices(self, server_indices: list) -> np.ndarray:
+        """
+        Map server indices to local indices using the mapping dictionary.
+
+        Args:
+            server_indices: List of server-side indices
+
+        Returns:
+            Array of local indices
+        """
+        local_indices = []
+        for server_idx in server_indices:
+            local_idx = self._vector_mapping.get(server_idx, -1)
+            local_indices.append(local_idx)
+        return np.array(local_indices, dtype=np.int64)
 
     def add(self, x: np.ndarray) -> None:
         """
@@ -231,6 +290,9 @@ class IndexScalarQuantizer:
         Raises:
             ValueError: If vector shape doesn't match index dimension
         """
+        # Register access for memory management
+        self.register_access()
+
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(
@@ -243,48 +305,73 @@ class IndexScalarQuantizer:
         client = get_client()
 
         if client is None or client.mode == "local":
-            # Local mode
-            logger.debug(f"Adding {len(vectors)} vectors to local index {self.name}")
-            # Make sure the index is trained before adding vectors
-            if not self._local_index.is_trained:
-                # For scalar quantizer, some require training
-                self._local_index.train(vectors)
-
-            # Use local FAISS implementation directly
-            self._local_index.add(vectors)
-            self.ntotal = self._local_index.ntotal
+            self._add_local(vectors)
         else:
-            # Remote mode
-            logger.debug(f"Adding {len(vectors)} vectors to remote index {self.index_id}")
-            # Add vectors to remote index
-            result = client.add_vectors(self.index_id, vectors)
+            self._add_remote(client, vectors)
 
-            # Log response
-            logger.debug(f"Server response: {result}")
+    def _add_local(self, vectors: np.ndarray) -> None:
+        """Add vectors to local index."""
+        logger.debug(f"Adding {len(vectors)} vectors to local index {self.name}")
 
-            # Update local tracking if addition was successful
-            if isinstance(result, dict) and result.get("success", False):
-                added_count = result.get("count", 0)
-                # Create mapping for each added vector
-                for i in range(added_count):
-                    self._vector_mapping[self._next_idx] = {
-                        "local_idx": self._next_idx,
-                        "server_idx": self.ntotal + i,
-                    }
-                    self._next_idx += 1
+        # Make sure the index is trained before adding vectors
+        if not self._local_index.is_trained:
+            # For scalar quantizer, some require training
+            self._local_index.train(vectors)
 
-                self.ntotal += added_count
-            elif not isinstance(result, dict):
-                # Handle non-dict responses (e.g., string)
-                logger.warning(f"Unexpected response format from server: {result}")
-                # Assume we added all vectors as a fallback
-                self.ntotal += len(vectors)
-                for i in range(len(vectors)):
-                    self._vector_mapping[self._next_idx] = {
-                        "local_idx": self._next_idx,
-                        "server_idx": self.ntotal - len(vectors) + i,
-                    }
-                    self._next_idx += 1
+        # Use local FAISS implementation directly
+        self._local_index.add(vectors)
+        self.ntotal = self._local_index.ntotal
+
+    def _add_remote(self, client: Any, vectors: np.ndarray) -> None:
+        """Add vectors to remote index."""
+        logger.debug(f"Adding {len(vectors)} vectors to remote index {self.index_id}")
+
+        # Get batch size parameter
+        batch_size = self.get_parameter('batch_size')
+        if batch_size <= 0:
+            batch_size = 1000  # Default if not set or invalid
+
+        # If vectors fit in a single batch, add them directly
+        if len(vectors) <= batch_size:
+            self._add_remote_batch(client, vectors)
+            return
+
+        # Otherwise, process in batches
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:min(i+batch_size, len(vectors))]
+            self._add_remote_batch(client, batch)
+
+    def _add_remote_batch(self, client: Any, vectors: np.ndarray) -> None:
+        """Add a batch of vectors to the remote index."""
+        # Add vectors to remote index
+        result = client.add_vectors(self.index_id, vectors)
+
+        # Log response
+        logger.debug(f"Server response: {result}")
+
+        # Update local tracking if addition was successful
+        if isinstance(result, dict) and result.get("success", False):
+            added_count = result.get("count", 0)
+            # Create mapping for each added vector
+            for i in range(added_count):
+                server_idx = self.ntotal + i
+                local_idx = self._next_idx
+                # Store mapping from server index to local index
+                self._vector_mapping[server_idx] = local_idx
+                self._next_idx += 1
+
+            self.ntotal += added_count
+        elif not isinstance(result, dict):
+            # Handle non-dict responses (e.g., string)
+            logger.warning(f"Unexpected response format from server: {result}")
+            # Assume we added all vectors as a fallback
+            for i in range(len(vectors)):
+                server_idx = self.ntotal + i
+                local_idx = self._next_idx
+                self._vector_mapping[server_idx] = local_idx
+                self._next_idx += 1
+
+            self.ntotal += len(vectors)
 
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -302,11 +389,23 @@ class IndexScalarQuantizer:
         Raises:
             ValueError: If query vector shape doesn't match index dimension
         """
+        # Register access for memory management
+        self.register_access()
+
         # Validate input shape
         if len(x.shape) != 2 or x.shape[1] != self.d:
             raise ValueError(
                 f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
             )
+
+        # Get k_factor parameter for oversampling, if set
+        k_factor = self.get_parameter('k_factor')
+        if k_factor <= 1.0:
+            k_factor = 1.0
+
+        # Calculate internal_k with k_factor and clamp to ntotal
+        internal_k = min(int(k * k_factor), max(1, self.ntotal))
+        need_reranking = (k_factor > 1.0 and internal_k > k)
 
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
@@ -314,58 +413,106 @@ class IndexScalarQuantizer:
         client = get_client()
 
         if client is None or client.mode == "local":
-            # Local mode
-            logger.debug(f"Searching {len(query_vectors)} vectors in local index {self.name}")
-            return self._local_index.search(query_vectors, k)
+            return self._search_local(query_vectors, k, internal_k, need_reranking)
         else:
-            # Remote mode
-            logger.debug(f"Searching {len(query_vectors)} vectors in remote index {self.index_id}")
-            # Perform search on remote index
-            result = client.search(self.index_id, query_vectors=query_vectors, k=k)
+            return self._search_remote(client, query_vectors, k, internal_k, need_reranking)
 
-            # Log response
-            logger.debug(f"Server response: {result}")
+    def _search_local(self, query_vectors: np.ndarray, k: int, internal_k: int,
+                      need_reranking: bool) -> Tuple[np.ndarray, np.ndarray]:
+        """Search in local index."""
+        logger.debug(f"Searching {len(query_vectors)} vectors in local index {self.name}")
 
-            n = x.shape[0]  # Number of query vectors
+        # Use local FAISS implementation directly
+        distances, indices = self._local_index.search(query_vectors, internal_k)
 
-            # Initialize output arrays with default values
-            distances = np.full((n, k), float("inf"), dtype=np.float32)
-            idx = np.full((n, k), -1, dtype=np.int64)
+        # If k_factor was applied, rerank and trim results
+        if need_reranking:
+            distances = distances[:, :k]
+            indices = indices[:, :k]
 
-            # Process results based on response format
-            if (isinstance(result, dict) and
-                "results" in result and
-                isinstance(result["results"], list)):
-                search_results = result["results"]
+        return distances, indices
 
-                # Process results for each query vector
-                for i in range(min(n, len(search_results))):
-                    result_data = search_results[i]
-                    if isinstance(result_data, dict):
-                        result_distances = result_data.get("distances", [])
-                        result_indices = result_data.get("indices", [])
+    def _search_remote(
+        self, client: Any, query_vectors: np.ndarray, k: int,
+        internal_k: int, need_reranking: bool
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Search in remote index."""
+        logger.debug(f"Searching {len(query_vectors)} vectors in remote index {self.index_id}")
 
-                        # Fill in results for this query vector
-                        for j in range(min(k, len(result_distances))):
-                            distances[i, j] = result_distances[j]
+        # Get batch size parameter
+        batch_size = self.get_parameter('batch_size')
+        if batch_size <= 0:
+            batch_size = 100  # Default if not set or invalid
 
-                            # Map server index back to local index
-                            server_idx = result_indices[j]
-                            found = False
-                            for local_idx, info in self._vector_mapping.items():
-                                if info["server_idx"] == server_idx:
-                                    idx[i, j] = local_idx
-                                    found = True
-                                    break
+        # If queries fit in a single batch, search directly
+        if len(query_vectors) <= batch_size:
+            return self._search_remote_batch(client, query_vectors, k, internal_k, need_reranking)
 
-                            # Keep -1 if mapping not found
-                            if not found:
-                                idx[i, j] = -1
-            else:
-                # Alternative response format handling
-                logger.warning(f"Unexpected search response format: {result}")
+        # Otherwise, process in batches and combine results
+        all_distances = []
+        all_indices = []
 
-            return distances, idx
+        for i in range(0, len(query_vectors), batch_size):
+            batch = query_vectors[i:min(i+batch_size, len(query_vectors))]
+            distances, indices = self._search_remote_batch(
+                client, batch, k, internal_k, need_reranking
+            )
+            all_distances.append(distances)
+            all_indices.append(indices)
+
+        # Combine results
+        if len(all_distances) == 1:
+            return all_distances[0], all_indices[0]
+        else:
+            return np.vstack(all_distances), np.vstack(all_indices)
+
+    def _search_remote_batch(self, client: Any, query_vectors: np.ndarray, k: int,
+                            internal_k: int, need_reranking: bool) -> Tuple[np.ndarray, np.ndarray]:
+        """Search a batch of queries in the remote index."""
+        # Perform search on remote index
+        result = client.search(self.index_id, query_vectors=query_vectors, k=internal_k)
+
+        # Log response
+        logger.debug(f"Server response: {result}")
+
+        n = query_vectors.shape[0]  # Number of query vectors
+
+        # Initialize output arrays with default values
+        distances = np.full((n, k), float("inf"), dtype=np.float32)
+        indices = np.full((n, k), -1, dtype=np.int64)
+
+        # Process results based on response format
+        if not isinstance(result, dict) or "results" not in result:
+            logger.warning(f"Unexpected search response format: {result}")
+            return distances, indices
+
+        # Extract results list
+        search_results = result["results"]
+        if not isinstance(search_results, list):
+            logger.warning(f"Invalid results format, expected list: {search_results}")
+            return distances, indices
+
+        # Process results for each query vector
+        for i in range(min(n, len(search_results))):
+            result_data = search_results[i]
+            if not isinstance(result_data, dict):
+                continue
+
+            result_distances = result_data.get("distances", [])
+            result_indices = result_data.get("indices", [])
+
+            # Limit to k results
+            max_j = min(k, len(result_distances))
+
+            # Fill distances directly
+            distances[i, :max_j] = result_distances[:max_j]
+
+            # Map server indices to local indices
+            for j in range(max_j):
+                server_idx = result_indices[j]
+                indices[i, j] = self._vector_mapping.get(server_idx, -1)
+
+        return distances, indices
 
     def range_search(
         self, x: np.ndarray, radius: float
@@ -387,6 +534,9 @@ class IndexScalarQuantizer:
             ValueError: If query vector shape doesn't match index dimension
             RuntimeError: If range search fails or isn't supported by the index type
         """
+        # Register access for memory management
+        self.register_access()
+
         # Implementation for range_search
         raise NotImplementedError(
             "Range search is not yet implemented for IndexScalarQuantizer"
@@ -396,87 +546,98 @@ class IndexScalarQuantizer:
         """
         Reset the index to its initial state.
         """
+        # Register access for memory management
+        self.register_access()
+
         client = get_client()
 
         if client is None or client.mode == "local":
-            # Local mode
-            logger.debug(f"Resetting local index {self.name}")
-            # Reset local FAISS index
-            self._local_index.reset()
-            self.ntotal = 0
+            self._reset_local()
         else:
-            # Remote mode
-            logger.debug(f"Resetting remote index {self.index_id}")
-            try:
-                # Create new index with modified name
-                new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
-                logger.debug(f"Creating new index {new_name} to replace {self.name}")
+            self._reset_remote(client)
 
-                # Determine index type using the same logic as in _create_remote_index
-                qtype_str = "SQ8"  # Default
-                if self.metric_type == "IP":
-                    index_type = f"{qtype_str}_IP"
-                else:
-                    index_type = qtype_str
+    def _reset_local(self) -> None:
+        """Reset local index."""
+        logger.debug(f"Resetting local index {self.name}")
+        # Reset local FAISS index
+        if self._local_index is not None:
+            self._local_index.reset()
+        self.ntotal = 0
 
-                response = client.create_index(
-                    name=new_name, dimension=self.d, index_type=index_type
-                )
+    def _reset_remote(self, client: Any) -> None:
+        """Reset remote index by creating a new one."""
+        logger.debug(f"Resetting remote index {self.index_id}")
 
-                # Log the raw response for debugging
-                logger.debug(f"Server response: {response}")
+        try:
+            # Create new index with modified name
+            new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+            logger.debug(f"Creating new index {new_name} to replace {self.name}")
 
-                # Handle different response formats
-                if isinstance(response, dict):
-                    self.index_id = response.get("index_id", new_name)
-                    self.name = new_name
-                else:
-                    # If response is not a dict, use the new name as ID
-                    logger.warning(f"Unexpected server response format: {response}")
-                    self.index_id = new_name
-                    self.name = new_name
+            # Get index type string
+            index_type = self._get_index_type_string()
 
-                logger.info(f"Reset index with new name: {self.name}")
-            except Exception as e:
-                # Recreate with same name if error occurs
-                logger.warning(f"Failed to create new index during reset: {e}")
-                logger.debug(f"Trying to recreate index with same name: {self.name}")
+            response = client.create_index(
+                name=new_name, dimension=self.d, index_type=index_type
+            )
 
-                # Determine index type using the same logic as in _create_remote_index
-                qtype_str = "SQ8"  # Default
-                if self.metric_type == "IP":
-                    index_type = f"{qtype_str}_IP"
-                else:
-                    index_type = qtype_str
+            # Log the raw response for debugging
+            logger.debug(f"Server response: {response}")
 
-                response = client.create_index(
-                    name=self.name, dimension=self.d, index_type=index_type
-                )
+            # Parse response
+            if isinstance(response, dict):
+                self.index_id = response.get("index_id", new_name)
+                self.name = new_name
+            else:
+                # If response is not a dict, use the new name as ID
+                logger.warning(f"Unexpected server response format: {response}")
+                self.index_id = new_name
+                self.name = new_name
 
-                # Log the raw response for debugging
-                logger.debug(f"Server response: {response}")
+            logger.info(f"Reset index with new name: {self.name}")
+        except Exception as e:
+            # Recreate with same name if error occurs
+            logger.warning(f"Failed to create new index during reset: {e}")
+            logger.debug(f"Trying to recreate index with same name: {self.name}")
 
-                # Handle different response formats
-                if isinstance(response, dict):
-                    self.index_id = response.get("index_id", self.name)
-                else:
-                    # If response is not a dict, use the name as ID
-                    logger.warning(f"Unexpected server response format: {response}")
-                    self.index_id = self.name
+            # Get index type string
+            index_type = self._get_index_type_string()
 
-            # Reset all local state
-            self.ntotal = 0
-            self._vector_mapping = {}
-            self._next_idx = 0
+            response = client.create_index(
+                name=self.name, dimension=self.d, index_type=index_type
+            )
+
+            # Log the raw response for debugging
+            logger.debug(f"Server response: {response}")
+
+            # Parse response
+            if isinstance(response, dict):
+                self.index_id = response.get("index_id", self.name)
+            else:
+                # If response is not a dict, use the name as ID
+                logger.warning(f"Unexpected server response format: {response}")
+                self.index_id = self.name
+
+        # Reset all local state
+        self.ntotal = 0
+        self._vector_mapping = {}
+        self._next_idx = 0
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()
+
+    def close(self):
+        """Clean up resources."""
+        if self._use_gpu and self._gpu_resources is not None:
+            self._gpu_resources = None
+        self._local_index = None
 
     def __del__(self) -> None:
         """
         Clean up resources when the index is deleted.
         """
-        # Clean up GPU resources if used
-        if self._use_gpu and self._gpu_resources is not None:
-            # Nothing explicit needed as StandardGpuResources has its own cleanup in __del__
-            self._gpu_resources = None
-
-        # Local index will be cleaned up by garbage collector
-        pass
+        self.close()
