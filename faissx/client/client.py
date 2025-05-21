@@ -27,8 +27,8 @@ from typing import Dict, Any, Optional
 import time
 from functools import wraps
 
-# Import the timeout decorator from our custom module
-from .timeout import timeout as operation_timeout, TimeoutError, TIMEOUT
+# Import from our custom timeout module
+from .timeout import timeout as operation_timeout, TimeoutError, set_timeout
 
 # Configure logging for the module
 logger = logging.getLogger(__name__)
@@ -87,6 +87,7 @@ class FaissXClient:
         self.context = None
         self.socket = None
         self.mode = "local"
+        self.timeout = 5.0  # Default timeout value
 
     def configure(
         self,
@@ -103,8 +104,11 @@ class FaissXClient:
             tenant_id: Tenant identifier for multi-tenant setups
             timeout: Connection timeout in seconds (default: 5.0)
         """
-        global TIMEOUT
-        TIMEOUT = timeout
+        # Update instance timeout
+        self.timeout = timeout
+
+        # Update the global TIMEOUT using the official method
+        set_timeout(timeout)
 
         self.server = server or self.server
         self.api_key = api_key or self.api_key
@@ -122,13 +126,36 @@ class FaissXClient:
 
     @retry_on_failure(max_retries=2)
     def connect(self):
-        """Establish connection to the FAISSx server with retry logic."""
+        """Establish connection to the FAISSx server with retry logic.
+
+        Sets up the ZMQ socket with appropriate timeout options and connects to the server.
+        """
         self.disconnect()
+
+        # Create a new context and socket
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REQ)
+
+        # Configure socket options
+        logger.debug(f"Setting socket timeout to {self.timeout}s ({int(self.timeout * 1000)}ms)")
+        self.socket.setsockopt(zmq.RCVTIMEO, int(self.timeout * 1000))  # Receive timeout in ms
+        self.socket.setsockopt(zmq.LINGER, 0)  # Don't wait on close
+
+        # Connect to server
+        logger.debug(f"Connecting to {self.server}...")
         self.socket.connect(self.server)
-        self._send_request({"action": "ping"})
-        logger.info(f"Connected to FAISSx server at {self.server}")
+
+        # Verify connection with ping
+        try:
+            response = self._send_request({"action": "ping"})
+            logger.info(
+                f"Connected to FAISSx server at {self.server} "
+                f"(response: {response})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to connect to {self.server}: {str(e)}")
+            self.disconnect()
+            raise
 
     def get_client(self):
         """Get an active client instance, creating one if necessary."""
@@ -153,32 +180,65 @@ class FaissXClient:
             Dictionary containing the server response
 
         Raises:
-            RuntimeError: If the request fails or server returns an error
             TimeoutError: If the request times out
+            RuntimeError: For other failures (with specific error messages)
         """
+        # Ensure we have a valid socket
+        if not self.socket:
+            raise RuntimeError("No active connection. Call connect() first.")
+
+        # Add authentication if available
         if self.api_key:
             request["api_key"] = self.api_key
         if self.tenant_id:
             request["tenant_id"] = self.tenant_id
 
         try:
-            self.socket.send(msgpack.packb(request))
-            response = self.socket.recv()
-            result = msgpack.unpackb(response, raw=False)
+            # Encode and send request
+            logger.debug(f"Sending request: {request.get('action', 'unknown')}")
+            encoded_request = msgpack.packb(request)
+            self.socket.send(encoded_request)
 
-            if not result.get("success", False) and "error" in result:
-                raise RuntimeError(f"FAISSx request failed: {result['error']}")
+            # Wait for and decode response
+            try:
+                response = self.socket.recv()
+                result = msgpack.unpackb(response, raw=False)
 
-            return result
+                # Check for server-side errors
+                if not result.get("success", False) and "error" in result:
+                    error_msg = result.get("error", "Unknown server error")
+                    logger.error(f"Server returned error: {error_msg}")
+                    raise RuntimeError(f"FAISSx server error: {error_msg}")
+
+                logger.debug(f"Request successful: {request.get('action', 'unknown')}")
+                return result
+
+            except zmq.Again:
+                # ZMQ socket timeout
+                action = request.get('action', 'unknown')
+                logger.error(f"Request timed out after {self.timeout}s: {action}")
+                self.disconnect()
+                raise TimeoutError(f"Request timed out after {self.timeout}s")
+
         except TimeoutError:
-            self.disconnect()  # Clean up resources
-            raise  # Re-raise the TimeoutError
+            # Decorator timeout
+            self.disconnect()
+            raise
+
         except zmq.ZMQError as e:
-            self.disconnect()  # Clean up resources
-            raise RuntimeError(f"ZMQ error: {str(e)}")
+            logger.error(f"ZMQ error: {str(e)}")
+            self.disconnect()
+            raise RuntimeError(f"ZMQ communication error: {str(e)}")
+
+        except msgpack.PackException as e:
+            logger.error(f"Message encoding/decoding error: {str(e)}")
+            self.disconnect()
+            raise RuntimeError(f"Message format error: {str(e)}")
+
         except Exception as e:
-            self.disconnect()  # Clean up resources
-            raise RuntimeError(f"FAISSx request failed: {str(e)}")
+            logger.error(f"Unexpected error during request: {str(e)}")
+            self.disconnect()
+            raise RuntimeError(f"Request failed: {str(e)}")
 
     def _prepare_vectors(self, vectors: np.ndarray) -> list:
         """Convert numpy arrays to a format suitable for serialization.
@@ -489,6 +549,7 @@ def configure(
     server: Optional[str] = None,
     api_key: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    timeout: float = 5.0,
 ) -> None:
     """Configure the global FaissXClient instance with server and auth settings.
 
@@ -499,9 +560,10 @@ def configure(
         server: ZeroMQ server address (e.g. "tcp://localhost:45678")
         api_key: API key for server authentication
         tenant_id: Tenant identifier for multi-tenant isolation
+        timeout: Connection timeout in seconds (default: 5.0)
     """
     global _client
 
     # Initialize client if needed and apply new configuration
     get_client()
-    _client.configure(server, api_key, tenant_id)
+    _client.configure(server, api_key, tenant_id, timeout)

@@ -43,6 +43,11 @@ class TimeoutError(RuntimeError):
     pass
 
 
+def set_timeout(timeout: float):
+    global TIMEOUT
+    TIMEOUT = timeout
+
+
 def interrupt_function(func_name: str, exception_cls: Type[Exception] = TimeoutError):
     """
     Interrupt the main thread with a timeout exception.
