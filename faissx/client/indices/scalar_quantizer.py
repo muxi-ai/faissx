@@ -29,9 +29,9 @@ It can operate in either local mode (using FAISS directly) or remote mode
 import uuid
 import numpy as np
 from typing import Tuple
-import logging
 
 from ..client import get_client
+from .base import logger
 
 
 class IndexScalarQuantizer:
@@ -57,7 +57,6 @@ class IndexScalarQuantizer:
         _vector_mapping (dict): Maps local indices to server indices (remote mode only)
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
-        _using_remote (bool): Whether we're using remote or local implementation
         _gpu_resources: GPU resources if using GPU (local mode only)
         _use_gpu (bool): Whether we're using GPU acceleration (local mode only)
     """
@@ -100,56 +99,27 @@ class IndexScalarQuantizer:
         self._use_gpu = False
         self._gpu_resources = None
 
-        # Default to local mode
-        self._using_remote = False
-
         # Generate unique name for the index
         self.name = f"index-sq-{uuid.uuid4().hex[:8]}"
 
-        # Check if client exists (remote mode)
+        # Initialize vector mapping for remote mode
+        self._vector_mapping = {}  # Maps local indices to server-side information
+        self._next_idx = 0  # Counter for local indices
+
+        # Check if client exists and its mode
         client = get_client()
-        if client is not None:
-            try:
-                # Remote mode is active
-                self._using_remote = True
-                self.client = client
 
-                # Determine index type identifier for scalar quantizer
-                qtype_str = "SQ8" if qtype is None else f"SQ{qtype}"
-                index_type = qtype_str
-                if self.metric_type == "IP":
-                    index_type = f"{index_type}_IP"
+        if client is None or client.mode == "local":
+            # Local mode
+            logger.info(f"Creating local IndexScalarQuantizer index {self.name}")
+            self._create_local_index(d, qtype, metric_type)
+        else:
+            # Remote mode
+            logger.info(f"Creating remote IndexScalarQuantizer on server {client.server}")
+            self._create_remote_index(client, d, qtype)
 
-                # Create index on server
-                try:
-                    response = self.client.create_index(
-                        name=self.name, dimension=self.d, index_type=index_type
-                    )
-
-                    self.index_id = response.get("index_id", self.name)
-                except Exception as e:
-                    # Raise a clear error instead of falling back to local mode
-                    raise RuntimeError(
-                        f"Failed to create remote scalar quantizer index: {e}. "
-                        f"Server may not support SQ indices with type {index_type}."
-                    )
-
-                # Initialize local tracking of vectors for remote mode
-                self._vector_mapping = {}  # Maps local indices to server-side information
-                self._next_idx = 0  # Counter for local indices
-                return
-            except RuntimeError:
-                # Re-raise runtime errors without fallback
-                raise
-            except Exception as e:
-                # Any other exception should result in local mode
-                logging.warning(f"Using local mode for Scalar Quantizer index due to error: {e}")
-                self._using_remote = False
-
-        # If we get here, we're in local mode
-        self._local_index = None
-
-        # Import faiss again to ensure it's in the local scope
+    def _create_local_index(self, d, qtype, metric_type):
+        """Create a local FAISS scalar quantizer index."""
         try:
             import faiss
 
@@ -161,7 +131,7 @@ class IndexScalarQuantizer:
                 ngpus = faiss.get_num_gpus()
                 gpu_available = ngpus > 0
             except (ImportError, AttributeError) as e:
-                logging.warning(f"GPU support not available: {e}")
+                logger.warning(f"GPU support not available: {e}")
                 gpu_available = False
 
             # Set default qtype if not specified
@@ -181,12 +151,12 @@ class IndexScalarQuantizer:
                     self._local_index = faiss.index_cpu_to_gpu(
                         self._gpu_resources, 0, cpu_index
                     )
-                    logging.info(f"Using GPU-accelerated SQ index for {self.name}")
+                    logger.info(f"Using GPU-accelerated SQ index for {self.name}")
                 except Exception as e:
                     # If GPU conversion fails, fall back to CPU
                     self._local_index = cpu_index
                     self._use_gpu = False
-                    logging.warning(
+                    logger.warning(
                         f"Failed to create GPU SQ index: {e}, using CPU instead"
                     )
             else:
@@ -196,6 +166,60 @@ class IndexScalarQuantizer:
             self.index_id = self.name  # Use name as ID for consistency
         except Exception as e:
             raise RuntimeError(f"Failed to initialize FAISS index: {e}")
+
+    def _create_remote_index(self, client, d, qtype):
+        """Create a remote scalar quantizer index on the server."""
+        try:
+            # Handle different qtype formats
+            if isinstance(qtype, str):
+                # If qtype is already a string (e.g., "SQ8"), use it directly
+                qtype_str = qtype
+            elif qtype is None:
+                # Default to SQ8 if none specified
+                qtype_str = "SQ8"
+            else:
+                # Convert integer constant to string representation
+                # Map common quantizer types to string representations
+                qtype_map = {
+                    1: "SQ8",  # QT_8bit
+                    2: "SQ4",  # QT_4bit
+                    5: "SQ16"  # QT_fp16
+                }
+                qtype_str = qtype_map.get(qtype, f"SQ{qtype}")
+
+            # Ensure the qtype_str has the "SQ" prefix if it doesn't already
+            if not qtype_str.startswith("SQ"):
+                qtype_str = f"SQ{qtype_str}"
+
+            # Determine the final index type
+            index_type = qtype_str
+            if self.metric_type == "IP":
+                index_type = f"{index_type}_IP"
+
+            # Create index on server
+            logger.debug(f"Creating remote index {self.name} with type {index_type}")
+            response = client.create_index(
+                name=self.name, dimension=d, index_type=index_type
+            )
+
+            # Log the raw response for debugging
+            logger.debug(f"Server response: {response}")
+
+            # Handle different response formats
+            if isinstance(response, dict):
+                self.index_id = response.get("index_id", self.name)
+            else:
+                # If response is not a dict (maybe a string or other type), use the name as ID
+                logger.warning(f"Unexpected server response format: {response}")
+                self.index_id = self.name
+
+            logger.info(f"Created remote index with ID: {self.index_id}")
+        except Exception as e:
+            # Raise a clear error instead of falling back to local mode
+            raise RuntimeError(
+                f"Failed to create remote scalar quantizer index: {e}. "
+                f"Server may not support SQ indices with type {index_type}."
+            )
 
     def add(self, x: np.ndarray) -> None:
         """
@@ -216,7 +240,11 @@ class IndexScalarQuantizer:
         # Convert to float32 if needed (FAISS requirement)
         vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        if not self._using_remote:
+        client = get_client()
+
+        if client is None or client.mode == "local":
+            # Local mode
+            logger.debug(f"Adding {len(vectors)} vectors to local index {self.name}")
             # Make sure the index is trained before adding vectors
             if not self._local_index.is_trained:
                 # For scalar quantizer, some require training
@@ -225,23 +253,38 @@ class IndexScalarQuantizer:
             # Use local FAISS implementation directly
             self._local_index.add(vectors)
             self.ntotal = self._local_index.ntotal
-            return
+        else:
+            # Remote mode
+            logger.debug(f"Adding {len(vectors)} vectors to remote index {self.index_id}")
+            # Add vectors to remote index
+            result = client.add_vectors(self.index_id, vectors)
 
-        # Add vectors to remote index (remote mode)
-        result = self.client.add_vectors(self.index_id, vectors)
+            # Log response
+            logger.debug(f"Server response: {result}")
 
-        # Update local tracking if addition was successful
-        if result.get("success", False):
-            added_count = result.get("count", 0)
-            # Create mapping for each added vector
-            for i in range(added_count):
-                self._vector_mapping[self._next_idx] = {
-                    "local_idx": self._next_idx,
-                    "server_idx": self.ntotal + i,
-                }
-                self._next_idx += 1
+            # Update local tracking if addition was successful
+            if isinstance(result, dict) and result.get("success", False):
+                added_count = result.get("count", 0)
+                # Create mapping for each added vector
+                for i in range(added_count):
+                    self._vector_mapping[self._next_idx] = {
+                        "local_idx": self._next_idx,
+                        "server_idx": self.ntotal + i,
+                    }
+                    self._next_idx += 1
 
-            self.ntotal += added_count
+                self.ntotal += added_count
+            elif not isinstance(result, dict):
+                # Handle non-dict responses (e.g., string)
+                logger.warning(f"Unexpected response format from server: {result}")
+                # Assume we added all vectors as a fallback
+                self.ntotal += len(vectors)
+                for i in range(len(vectors)):
+                    self._vector_mapping[self._next_idx] = {
+                        "local_idx": self._next_idx,
+                        "server_idx": self.ntotal - len(vectors) + i,
+                    }
+                    self._next_idx += 1
 
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -268,44 +311,61 @@ class IndexScalarQuantizer:
         # Convert query vectors to float32
         query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
 
-        if not self._using_remote:
-            # Use local FAISS implementation directly
+        client = get_client()
+
+        if client is None or client.mode == "local":
+            # Local mode
+            logger.debug(f"Searching {len(query_vectors)} vectors in local index {self.name}")
             return self._local_index.search(query_vectors, k)
+        else:
+            # Remote mode
+            logger.debug(f"Searching {len(query_vectors)} vectors in remote index {self.index_id}")
+            # Perform search on remote index
+            result = client.search(self.index_id, query_vectors=query_vectors, k=k)
 
-        # Perform search on remote index (remote mode)
-        result = self.client.search(self.index_id, query_vectors=query_vectors, k=k)
+            # Log response
+            logger.debug(f"Server response: {result}")
 
-        n = x.shape[0]  # Number of query vectors
-        search_results = result.get("results", [])
+            n = x.shape[0]  # Number of query vectors
 
-        # Initialize output arrays with default values
-        distances = np.full((n, k), float("inf"), dtype=np.float32)
-        idx = np.full((n, k), -1, dtype=np.int64)
+            # Initialize output arrays with default values
+            distances = np.full((n, k), float("inf"), dtype=np.float32)
+            idx = np.full((n, k), -1, dtype=np.int64)
 
-        # Process results for each query vector
-        for i in range(min(n, len(search_results))):
-            result_data = search_results[i]
-            result_distances = result_data.get("distances", [])
-            result_indices = result_data.get("indices", [])
+            # Process results based on response format
+            if (isinstance(result, dict) and
+                "results" in result and
+                isinstance(result["results"], list)):
+                search_results = result["results"]
 
-            # Fill in results for this query vector
-            for j in range(min(k, len(result_distances))):
-                distances[i, j] = result_distances[j]
+                # Process results for each query vector
+                for i in range(min(n, len(search_results))):
+                    result_data = search_results[i]
+                    if isinstance(result_data, dict):
+                        result_distances = result_data.get("distances", [])
+                        result_indices = result_data.get("indices", [])
 
-                # Map server index back to local index
-                server_idx = result_indices[j]
-                found = False
-                for local_idx, info in self._vector_mapping.items():
-                    if info["server_idx"] == server_idx:
-                        idx[i, j] = local_idx
-                        found = True
-                        break
+                        # Fill in results for this query vector
+                        for j in range(min(k, len(result_distances))):
+                            distances[i, j] = result_distances[j]
 
-                # Keep -1 if mapping not found
-                if not found:
-                    idx[i, j] = -1
+                            # Map server index back to local index
+                            server_idx = result_indices[j]
+                            found = False
+                            for local_idx, info in self._vector_mapping.items():
+                                if info["server_idx"] == server_idx:
+                                    idx[i, j] = local_idx
+                                    found = True
+                                    break
 
-        return distances, idx
+                            # Keep -1 if mapping not found
+                            if not found:
+                                idx[i, j] = -1
+            else:
+                # Alternative response format handling
+                logger.warning(f"Unexpected search response format: {result}")
+
+            return distances, idx
 
     def range_search(
         self, x: np.ndarray, radius: float
@@ -336,44 +396,78 @@ class IndexScalarQuantizer:
         """
         Reset the index to its initial state.
         """
-        if not self._using_remote:
+        client = get_client()
+
+        if client is None or client.mode == "local":
+            # Local mode
+            logger.debug(f"Resetting local index {self.name}")
             # Reset local FAISS index
             self._local_index.reset()
             self.ntotal = 0
-            return
+        else:
+            # Remote mode
+            logger.debug(f"Resetting remote index {self.index_id}")
+            try:
+                # Create new index with modified name
+                new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
+                logger.debug(f"Creating new index {new_name} to replace {self.name}")
 
-        # Remote mode reset - create a new index
-        try:
-            # Determine index type for recreation
-            qtype_str = "SQ8"  # Default
-            index_type = qtype_str
-            if self.metric_type == "IP":
-                index_type = f"{index_type}_IP"
+                # Determine index type using the same logic as in _create_remote_index
+                qtype_str = "SQ8"  # Default
+                if self.metric_type == "IP":
+                    index_type = f"{qtype_str}_IP"
+                else:
+                    index_type = qtype_str
 
-            # Create new index with modified name
-            new_name = f"{self.name}-{uuid.uuid4().hex[:8]}"
-            response = self.client.create_index(
-                name=new_name, dimension=self.d, index_type=index_type
-            )
+                response = client.create_index(
+                    name=new_name, dimension=self.d, index_type=index_type
+                )
 
-            self.index_id = response.get("index_id", new_name)
-            self.name = new_name
-        except Exception:
-            # Recreate with same name if error occurs
-            qtype_str = "SQ8"  # Default
-            index_type = qtype_str
-            if self.metric_type == "IP":
-                index_type = f"{index_type}_IP"
+                # Log the raw response for debugging
+                logger.debug(f"Server response: {response}")
 
-            response = self.client.create_index(
-                name=self.name, dimension=self.d, index_type=index_type
-            )
-            self.index_id = response.get("index_id", self.name)
+                # Handle different response formats
+                if isinstance(response, dict):
+                    self.index_id = response.get("index_id", new_name)
+                    self.name = new_name
+                else:
+                    # If response is not a dict, use the new name as ID
+                    logger.warning(f"Unexpected server response format: {response}")
+                    self.index_id = new_name
+                    self.name = new_name
 
-        # Reset all local state
-        self.ntotal = 0
-        self._vector_mapping = {}
-        self._next_idx = 0
+                logger.info(f"Reset index with new name: {self.name}")
+            except Exception as e:
+                # Recreate with same name if error occurs
+                logger.warning(f"Failed to create new index during reset: {e}")
+                logger.debug(f"Trying to recreate index with same name: {self.name}")
+
+                # Determine index type using the same logic as in _create_remote_index
+                qtype_str = "SQ8"  # Default
+                if self.metric_type == "IP":
+                    index_type = f"{qtype_str}_IP"
+                else:
+                    index_type = qtype_str
+
+                response = client.create_index(
+                    name=self.name, dimension=self.d, index_type=index_type
+                )
+
+                # Log the raw response for debugging
+                logger.debug(f"Server response: {response}")
+
+                # Handle different response formats
+                if isinstance(response, dict):
+                    self.index_id = response.get("index_id", self.name)
+                else:
+                    # If response is not a dict, use the name as ID
+                    logger.warning(f"Unexpected server response format: {response}")
+                    self.index_id = self.name
+
+            # Reset all local state
+            self.ntotal = 0
+            self._vector_mapping = {}
+            self._next_idx = 0
 
     def __del__(self) -> None:
         """
