@@ -93,7 +93,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         self.metric_type: str = "IP" if metric_type == METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
-        self.is_trained: bool = True  # Scalar quantizer doesn't need explicit training
+        self.is_trained: bool = False  # Match FAISS behavior of starting untrained
         self.ntotal: int = 0
 
         # Initialize GPU-related attributes

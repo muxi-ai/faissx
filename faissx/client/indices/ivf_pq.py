@@ -507,7 +507,7 @@ class IndexIVFPQ(FAISSxBaseIndex):
         try:
             start_idx = self._next_idx
             # Send vectors to server - ignore response as we track indices locally
-            client.add(self.index_id, vectors)
+            client.add_vectors(self.index_id, vectors)
 
             # Update vector mapping
             for i in range(vectors.shape[0]):
@@ -542,7 +542,7 @@ class IndexIVFPQ(FAISSxBaseIndex):
                 )
 
                 # Send batch to server - ignore response as we track indices locally
-                client.add(self.index_id, batch)
+                client.add_vectors(self.index_id, batch)
 
                 # Update vector mapping
                 for j in range(batch.shape[0]):
