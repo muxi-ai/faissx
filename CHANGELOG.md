@@ -1,23 +1,20 @@
 # Changelog
 
-## 0.0.4
-
-### Added
-
-- Implemented remote mode support for IndexIDMap and IndexIDMap2
-- Added vector caching for more efficient reconstruction operations
-- Improved handling of non-empty base indices for IndexIDMap types
-- Fixed environment variable handling for server port configuration
-- Added test scripts for IndexIDMap remote mode functionality
-- Fixed client connection issues with more robust error handling
-- Improved handling when get_client() connection fails
-
 ## 0.0.3
 
 ### Added
 
+#### Core Index Implementation
+- Created optimized implementations of core index types:
+  - IndexPQ with robust vector extraction and fallbacks
+  - IndexIVFScalarQuantizer with improved training strategies
+  - IndexIDMap and IndexIDMap2 for custom vector IDs
+  - Modification module with batched vector operations
+- Implemented vector caching across all index implementations
+- Added batched processing for large vector operations
+- Enhanced vector reconstruction with multiple fallback strategies
+
 #### Advanced Features
-- Implemented IndexIDMap and IndexIDMap2 for custom vector IDs
 - Added factory pattern (index_factory) for creating indices from string descriptions
 - Implemented direct index persistence (write_index/read_index)
 - Added index modification capabilities (merging and splitting indices)
@@ -33,22 +30,41 @@
   - Index caching with configurable thresholds
   - Automatic unloading of unused indices
   - I/O buffer size controls
-- Added error recovery and reconnection capabilities with automatic retries and exponential backoff:
+
+#### Error Handling and Resilience
+- Added robust error handling for server limitations
+- Implemented error recovery and reconnection capabilities:
   - Configurable retry attempts and backoff strategy
   - Automatic reconnection on network failures
   - Event callbacks for disconnect/reconnect events
   - Connection monitoring with health checks
   - Manual and automatic recovery options
+- Fixed client connection issues with more robust error handling
+- Improved handling when get_client() connection fails
 
-#### Core Improvements
-- Enhanced modular architecture with consistent interfaces
+#### Testing and Documentation
+- Created comprehensive test suite for all optimized implementations
+- Added test scripts for remote mode functionality
 - Extended example suite with comprehensive feature demonstrations
 - Improved documentation for advanced usage patterns
-- Added unit tests for new functionality
 
 ### Changed
+- Organized project structure for better maintainability:
+  - Moved all tests to logical locations (client/tests and server/tests)
+  - Created dedicated indices/ directory for index-specific tests
+  - Removed obsolete utility scripts and duplicate tests
+  - Consolidated documentation into a dedicated notes/ directory
 - Refactored index implementations for better performance
 - Improved memory efficiency for large indices
+- Enhanced documentation with updated README files
+- Consolidated development notes and technical documentation
+- Improved handling of non-empty base indices for IndexIDMap types
+- Fixed environment variable handling for server port configuration
+
+### Fixed
+- Addressed server-side limitations with client-side workarounds
+- Improved recovery from common error conditions
+- Enhanced compatibility for different server implementations
 - Enhanced error handling and validation
 
 ---
