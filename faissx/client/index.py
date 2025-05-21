@@ -35,7 +35,7 @@ Each index class matches the behavior of its FAISS counterpart while sending
 the actual computational work to the FAISSx server.
 """
 
-# For backward compatibility, make the index classes available directly from this module
+# Import index implementations from their respective modules
 from .indices.flat import IndexFlatL2
 from .indices.ivf_flat import IndexIVFFlat
 from .indices.hnsw_flat import IndexHNSWFlat
@@ -44,14 +44,14 @@ from .indices.ivf_pq import IndexIVFPQ
 from .indices.scalar_quantizer import IndexScalarQuantizer
 from .indices.id_map import IndexIDMap, IndexIDMap2
 
-# Define what's available via import
+# Define public API - symbols that can be imported directly from this module
 __all__ = [
-    'IndexFlatL2',
-    'IndexIVFFlat',
-    'IndexHNSWFlat',
-    'IndexPQ',
-    'IndexIVFPQ',
-    'IndexScalarQuantizer',
-    'IndexIDMap',
-    'IndexIDMap2'
+    'IndexFlatL2',      # L2 distance index
+    'IndexIVFFlat',     # IVF flat index
+    'IndexHNSWFlat',    # HNSW flat index
+    'IndexPQ',          # Product quantization index
+    'IndexIVFPQ',       # IVF product quantization index
+    'IndexScalarQuantizer',  # Scalar quantizer index
+    'IndexIDMap',       # ID mapping index
+    'IndexIDMap2'       # Extended ID mapping index
 ]
