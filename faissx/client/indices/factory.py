@@ -50,8 +50,18 @@ from .id_map import IndexIDMap, IndexIDMap2
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
+# Precompile regex patterns for better performance
+PATTERN_IDMAP = re.compile(r"^(IDMap2?),(.*)")
+PATTERN_HNSW = re.compile(r"^HNSW(\d+)$")
+PATTERN_IVF = re.compile(r"^IVF(\d+),(\w+)$")
+PATTERN_PQ = re.compile(r"^PQ(\d+)(x\d+)?$")
+PATTERN_SQ = re.compile(r"^SQ(\d+)$")
 
-def index_factory(d: int, description: str, metric: Optional[int] = None) -> Any:
+# Type information
+IndexType = Any  # Type for FAISS index objects
+
+
+def index_factory(d: int, description: str, metric: Optional[int] = None) -> IndexType:
     """
     Parse an index description string and create the corresponding index.
 
@@ -73,53 +83,99 @@ def index_factory(d: int, description: str, metric: Optional[int] = None) -> Any
     # Set default metric to L2 if not specified
     if metric is None:
         metric = faiss.METRIC_L2
+        logger.debug(f"Using default metric: L2 (metric_type={metric})")
+    else:
+        logger.debug(f"Using specified metric: {metric}")
 
     # Remove all whitespace from description for consistent parsing
     description = re.sub(r"\s+", "", description)
+    logger.debug(f"Creating index with dimension {d} and description: {description}")
 
-    # Handle IDMap and IDMap2 wrappers
-    # These allow mapping between arbitrary IDs and sequential indices
-    if description.startswith("IDMap") or description.startswith("IDMap2"):
-        is_idmap2 = description.startswith("IDMap2")
-        # Extract the sub-index description after the IDMap prefix
-        sub_description = (
-            description[len("IDMap2,"):] if is_idmap2 else description[len("IDMap,"):]
-        )
-        # Recursively create the sub-index
-        sub_index = index_factory(d, sub_description, metric)
-        # Wrap with appropriate IDMap type
-        return IndexIDMap2(sub_index) if is_idmap2 else IndexIDMap(sub_index)
+    try:
+        # Handle IDMap and IDMap2 wrappers
+        # These allow mapping between arbitrary IDs and sequential indices
+        idmap_match = PATTERN_IDMAP.match(description)
+        if idmap_match:
+            is_idmap2 = idmap_match.group(1) == "IDMap2"
+            # Extract the sub-index description after the IDMap prefix
+            sub_description = idmap_match.group(2)
+            logger.debug(
+                f"Creating {'IDMap2' if is_idmap2 else 'IDMap'} "
+                f"wrapper around {sub_description}"
+            )
 
-    # Handle Flat index - simplest case with no compression
-    if description == "Flat":
-        if metric == faiss.METRIC_L2:
-            return IndexFlatL2(d)
-        else:
-            # Currently only L2 distance is supported for Flat indices
-            raise ValueError(f"Metric {metric} not supported for Flat index")
+            # Recursively create the sub-index
+            try:
+                sub_index = index_factory(d, sub_description, metric)
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to create sub-index for {description}: {e}"
+                )
 
-    # Handle HNSW (Hierarchical Navigable Small World) index
-    # Format: HNSW<M> where M is the number of connections per layer
-    hnsw_match = re.match(r"HNSW(\d+)", description)
-    if hnsw_match:
-        m = int(hnsw_match.group(1))
-        return IndexHNSWFlat(d, m, metric)
+            # Wrap with appropriate IDMap type
+            return IndexIDMap2(sub_index) if is_idmap2 else IndexIDMap(sub_index)
 
-    # Handle IVF (Inverted File) indices
-    # Format: IVF<nlist>,<quantizer> where nlist is number of clusters
-    ivf_match = re.match(r"IVF(\d+),(\w+)", description)
-    if ivf_match:
-        nlist = int(ivf_match.group(1))
-        coarse_quantizer_type = ivf_match.group(2)
+        # Handle Flat index - simplest case with no compression
+        if description == "Flat":
+            logger.debug(f"Creating Flat index with dimension {d}")
+            if metric == faiss.METRIC_L2:
+                return IndexFlatL2(d)
+            else:
+                # Currently only L2 distance is supported for Flat indices
+                raise ValueError(f"Metric {metric} not supported for Flat index")
 
-        # Handle IVF with Flat quantizer
-        if coarse_quantizer_type == "Flat":
-            coarse_quantizer = IndexFlatL2(d)
-            return IndexIVFFlat(coarse_quantizer, d, nlist, metric)
+        # Handle HNSW (Hierarchical Navigable Small World) index
+        # Format: HNSW<M> where M is the number of connections per layer
+        hnsw_match = PATTERN_HNSW.match(description)
+        if hnsw_match:
+            m = int(hnsw_match.group(1))
+            logger.debug(f"Creating HNSW index with M={m}")
+            return IndexHNSWFlat(d, m, metric)
 
-        # Handle IVF with Product Quantization
+        # Handle IVF (Inverted File) indices
+        # Format: IVF<nlist>,<quantizer> where nlist is number of clusters
+        ivf_match = PATTERN_IVF.match(description)
+        if ivf_match:
+            nlist = int(ivf_match.group(1))
+            coarse_quantizer_type = ivf_match.group(2)
+            logger.debug(
+                f"Creating IVF index with nlist={nlist}, "
+                f"quantizer={coarse_quantizer_type}"
+            )
+
+            # Handle IVF with Flat quantizer
+            if coarse_quantizer_type == "Flat":
+                logger.debug("Using Flat quantizer for IVF index")
+                coarse_quantizer = IndexFlatL2(d)
+                return IndexIVFFlat(coarse_quantizer, d, nlist, metric)
+
+            # Handle IVF with Product Quantization
+            # Format: PQ<M>[x<nbits>] where M is subquantizers, nbits is bits per subquantizer
+            pq_match = PATTERN_PQ.match(coarse_quantizer_type)
+            if pq_match:
+                m = int(pq_match.group(1))  # Number of subquantizers
+                nbits = 8  # Default bits per subquantizer
+
+                # Parse optional bits per subquantizer specification
+                if pq_match.group(2):
+                    nbits = int(pq_match.group(2)[1:])
+
+                logger.debug(
+                    f"Using PQ quantizer for IVF index with m={m}, nbits={nbits}"
+                )
+                coarse_quantizer = IndexFlatL2(d)
+                return IndexIVFPQ(coarse_quantizer, d, nlist, m, nbits, metric)
+
+        # Handle Scalar Quantizer
+        # Format: SQ<nbits> where nbits is bits per dimension
+        sq_match = PATTERN_SQ.match(description)
+        if sq_match:
+            logger.debug("Creating Scalar Quantizer index")
+            return IndexScalarQuantizer(d, metric)
+
+        # Handle direct Product Quantization (without IVF)
         # Format: PQ<M>[x<nbits>] where M is subquantizers, nbits is bits per subquantizer
-        pq_match = re.match(r"PQ(\d+)(x\d+)?", coarse_quantizer_type)
+        pq_match = PATTERN_PQ.match(description)
         if pq_match:
             m = int(pq_match.group(1))  # Number of subquantizers
             nbits = 8  # Default bits per subquantizer
@@ -128,27 +184,16 @@ def index_factory(d: int, description: str, metric: Optional[int] = None) -> Any
             if pq_match.group(2):
                 nbits = int(pq_match.group(2)[1:])
 
-            coarse_quantizer = IndexFlatL2(d)
-            return IndexIVFPQ(coarse_quantizer, d, nlist, m, nbits, metric)
+            logger.debug(f"Creating PQ index with m={m}, nbits={nbits}")
+            return IndexPQ(d, m, nbits, metric)
 
-    # Handle Scalar Quantizer
-    # Format: SQ<nbits> where nbits is bits per dimension
-    sq_match = re.match(r"SQ(\d+)", description)
-    if sq_match:
-        return IndexScalarQuantizer(d, metric)
+        # If no matching index type was found, raise an error
+        raise ValueError(f"Unsupported index description: {description}")
 
-    # Handle direct Product Quantization (without IVF)
-    # Format: PQ<M>[x<nbits>] where M is subquantizers, nbits is bits per subquantizer
-    pq_match = re.match(r"PQ(\d+)(x\d+)?", description)
-    if pq_match:
-        m = int(pq_match.group(1))  # Number of subquantizers
-        nbits = 8  # Default bits per subquantizer
+    except ValueError:
+        # Re-raise ValueError exceptions as they're already formatted properly
+        raise
 
-        # Parse optional bits per subquantizer specification
-        if pq_match.group(2):
-            nbits = int(pq_match.group(2)[1:])
-
-        return IndexPQ(d, m, nbits, metric)
-
-    # If no matching index type was found, raise an error
-    raise ValueError(f"Unsupported index description: {description}")
+    except Exception as e:
+        # Wrap other exceptions with more context
+        raise ValueError(f"Error creating index from description '{description}': {str(e)}")
