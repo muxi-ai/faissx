@@ -109,14 +109,15 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         # Check if client exists and its mode
         client = get_client()
 
-        if client is None or client.mode == "local":
-            # Local mode
-            logger.info(f"Creating local IndexScalarQuantizer index {self.name}")
-            self._create_local_index(d, qtype, metric_type)
-        else:
+        # Explicit check for remote mode instead of just checking if client exists
+        if client is not None and client.mode == "remote":
             # Remote mode
             logger.info(f"Creating remote IndexScalarQuantizer on server {client.server}")
             self._create_remote_index(client, d, qtype)
+        else:
+            # Local mode
+            logger.info(f"Creating local IndexScalarQuantizer index {self.name}")
+            self._create_local_index(d, qtype, metric_type)
 
     def _get_index_type_string(self, qtype=None) -> str:
         """
@@ -304,10 +305,11 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
 
         client = get_client()
 
-        if client is None or client.mode == "local":
-            self._add_local(vectors)
-        else:
+        # Explicit check for remote mode instead of just checking if client exists
+        if client is not None and client.mode == "remote":
             self._add_remote(client, vectors)
+        else:
+            self._add_local(vectors)
 
     def _add_local(self, vectors: np.ndarray) -> None:
         """Add vectors to local index."""
@@ -412,10 +414,11 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
 
         client = get_client()
 
-        if client is None or client.mode == "local":
-            return self._search_local(query_vectors, k, internal_k, need_reranking)
-        else:
+        # Explicit check for remote mode instead of just checking if client exists
+        if client is not None and client.mode == "remote":
             return self._search_remote(client, query_vectors, k, internal_k, need_reranking)
+        else:
+            return self._search_local(query_vectors, k, internal_k, need_reranking)
 
     def _search_local(self, query_vectors: np.ndarray, k: int, internal_k: int,
                       need_reranking: bool) -> Tuple[np.ndarray, np.ndarray]:
@@ -518,43 +521,194 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         self, x: np.ndarray, radius: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Search for all vectors within the specified radius.
+        Search for vectors within a specified radius of query vectors.
 
         Args:
             x (np.ndarray): Query vectors, shape (n, d)
-            radius (float): Maximum distance threshold
+            radius (float): Maximum distance threshold for results
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                - lims: array of shape (n+1) giving the boundaries of results for each query
-                - distances: array of shape (sum_of_results) containing all distances
-                - indices: array of shape (sum_of_results) containing all indices
+                - lims: Boundaries of results for each query, shape (n+1)
+                - distances: Distances for each result, shape (sum_of_results)
+                - indices: Indices for each result, shape (sum_of_results)
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
-            RuntimeError: If range search fails or isn't supported by the index type
         """
         # Register access for memory management
         self.register_access()
 
-        # Implementation for range_search
-        raise NotImplementedError(
-            "Range search is not yet implemented for IndexScalarQuantizer"
-        )
+        # Validate input shape
+        if len(x.shape) != 2 or x.shape[1] != self.d:
+            raise ValueError(
+                f"Invalid vector shape: expected (n, {self.d}), got {x.shape}"
+            )
+
+        query_vectors = x.astype(np.float32) if x.dtype != np.float32 else x
+
+        client = get_client()
+
+        # Explicit check for remote mode instead of just checking if client exists
+        if client is not None and client.mode == "remote":
+            return self._range_search_remote(client, query_vectors, radius)
+        else:
+            return self._range_search_local(query_vectors, radius)
+
+    def _range_search_local(self, query_vectors: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Execute range search on the local index.
+
+        Args:
+            query_vectors: Query vectors
+            radius: Maximum distance threshold
+
+        Returns:
+            Tuple of lims, distances, and indices arrays
+        """
+        logger.debug(f"Range searching {len(query_vectors)} vectors in local index {self.name}")
+
+        if self._local_index is None:
+            raise RuntimeError("Local index not initialized")
+
+        try:
+            # Try to use the range_search method if it exists
+            if hasattr(self._local_index, 'range_search'):
+                lims, distances, indices = self._local_index.range_search(query_vectors, radius)
+                return lims, distances, indices
+            else:
+                # Fallback implementation for indices that don't support range_search directly
+                raise NotImplementedError(
+                    "Range search not supported by this index type in local mode"
+                )
+        except Exception as e:
+            logger.error(f"Error in local range search: {e}")
+            raise RuntimeError(f"Range search failed: {e}")
+
+    def _range_search_remote(self, client: Any, query_vectors: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Execute range search on the remote index.
+
+        Args:
+            client: The FAISSx client
+            query_vectors: Query vectors
+            radius: Maximum distance threshold
+
+        Returns:
+            Tuple of lims, distances, and indices arrays
+        """
+        logger.debug(f"Range searching {len(query_vectors)} vectors in remote index {self.index_id}")
+
+        # Get batch size parameter
+        batch_size = self.get_parameter('batch_size')
+        if batch_size <= 0:
+            batch_size = 100  # Default if not set
+
+        # If queries fit in a single batch, search directly
+        if len(query_vectors) <= batch_size:
+            return self._range_search_remote_batch(client, query_vectors, radius)
+
+        # Process in batches
+        all_lims = [0]  # Start with 0 for the first offset
+        all_distances = []
+        all_indices = []
+
+        for i in range(0, len(query_vectors), batch_size):
+            batch = query_vectors[i:min(i + batch_size, len(query_vectors))]
+            lims, distances, indices = self._range_search_remote_batch(client, batch, radius)
+
+            # Adjust lims to account for previous results
+            offset = all_lims[-1]
+            adjusted_lims = lims[1:] + offset  # Skip the first lim (0) and add offset
+            all_lims.extend(adjusted_lims)
+
+            # Add distances and indices
+            all_distances.extend(distances)
+            all_indices.extend(indices)
+
+        return np.array(all_lims, dtype=np.int64), np.array(all_distances, dtype=np.float32), np.array(all_indices, dtype=np.int64)
+
+    def _range_search_remote_batch(self, client: Any, query_vectors: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Execute range search for a batch of queries on the remote index.
+
+        Args:
+            client: The FAISSx client
+            query_vectors: Batch of query vectors
+            radius: Maximum distance threshold
+
+        Returns:
+            Tuple of lims, distances, and indices arrays
+        """
+        try:
+            # Send request to server
+            response = client.range_search(self.index_id, query_vectors, radius)
+
+            # Log response
+            logger.debug(f"Range search server response: {response}")
+
+            # Initialize default return values
+            n = query_vectors.shape[0]
+            lims = np.zeros(n + 1, dtype=np.int64)
+            distances = np.array([], dtype=np.float32)
+            indices = np.array([], dtype=np.int64)
+
+            # Process response
+            if not isinstance(response, dict) or "results" not in response:
+                logger.warning(f"Unexpected range search response format: {response}")
+                return lims, distances, indices
+
+            # Extract results list
+            search_results = response.get("results", [])
+            if not isinstance(search_results, list):
+                logger.warning(f"Invalid results format, expected list: {search_results}")
+                return lims, distances, indices
+
+            # Process results
+            if isinstance(search_results, list) and len(search_results) > 0:
+                # Check if results contain lims, distances, and indices
+                if "lims" in search_results[0] and "distances" in search_results[0] and "indices" in search_results[0]:
+                    # Extract and combine results
+                    lims = np.array(search_results[0]["lims"], dtype=np.int64)
+                    distances = np.array(search_results[0]["distances"], dtype=np.float32)
+                    indices = np.array(search_results[0]["indices"], dtype=np.int64)
+                else:
+                    # Alternative format: process individual per-query results
+                    total_results = 0
+                    for i, result in enumerate(search_results):
+                        if isinstance(result, dict) and "distances" in result and "indices" in result:
+                            result_distances = result.get("distances", [])
+                            result_indices = result.get("indices", [])
+
+                            lims[i + 1] = lims[i] + len(result_distances)
+                            distances = np.concatenate((distances, np.array(result_distances, dtype=np.float32)))
+                            indices = np.concatenate((indices, np.array(result_indices, dtype=np.int64)))
+
+                            total_results += len(result_distances)
+
+                    # Complete lims array
+                    lims[n] = total_results
+
+            return lims, distances, indices
+
+        except Exception as e:
+            logger.error(f"Error in remote range search: {e}")
+            raise RuntimeError(f"Range search failed on remote index: {e}")
 
     def reset(self) -> None:
         """
-        Reset the index to its initial state.
+        Reset the index to its initial state, removing all vectors.
         """
         # Register access for memory management
         self.register_access()
 
         client = get_client()
 
-        if client is None or client.mode == "local":
-            self._reset_local()
-        else:
+        # Explicit check for remote mode instead of just checking if client exists
+        if client is not None and client.mode == "remote":
             self._reset_remote(client)
+        else:
+            self._reset_local()
 
     def _reset_local(self) -> None:
         """Reset local index."""
@@ -630,7 +784,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         """Context manager exit."""
         self.close()
 
-    def close(self):
+    def close(self) -> None:
         """Clean up resources."""
         if self._use_gpu and self._gpu_resources is not None:
             self._gpu_resources = None
