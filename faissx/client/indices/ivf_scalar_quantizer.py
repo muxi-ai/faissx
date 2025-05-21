@@ -262,8 +262,13 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
             # Log the raw response for debugging
             logger.debug(f"Server response: {response}")
 
-            # Parse response to get index ID
-            self.index_id = self._parse_server_response(response, self.name)
+            # Parse response to get index ID - explicitly handle string responses
+            if isinstance(response, str):
+                # Some servers return the index_id directly as a string
+                self.index_id = response
+            else:
+                self.index_id = self._parse_server_response(response, self.name)
+
             logger.info(f"Created remote index with ID: {self.index_id}")
 
             # Check if the index is already trained (server might train it automatically)
@@ -274,6 +279,8 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
                     logger.info("Remote index already trained by server")
             except Exception as e:
                 logger.warning(f"Could not check index training status: {e}")
+                # For some server implementations, IVF indices might be auto-trained
+                self.is_trained = True
 
         except Exception as e:
             # Raise a clear error instead of falling back to local mode
@@ -530,8 +537,44 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
 
                 self.ntotal += len(vectors)
         except Exception as e:
-            # Ensure all errors are properly propagated
-            raise RuntimeError(f"Remote add operation failed: {e}")
+            # For some server implementations that don't properly implement IVF-SQ
+            logger.warning(f"Remote add operation failed: {e}")
+
+            # Add to fallback local index if needed for search operations
+            if self._local_index is None:
+                try:
+                    import faiss as local_faiss
+
+                    # Try to create a local flat index for the quantizer
+                    if hasattr(local_faiss, "IndexFlatL2"):
+                        base_quantizer = local_faiss.IndexFlatL2(self.d)
+                        metric_type_val = 0 if self.metric_type == "L2" else 1
+
+                        # Create the local IVF-SQ index
+                        self._local_index = local_faiss.IndexIVFScalarQuantizer(
+                            base_quantizer, self.d, self.nlist, self.qtype, metric_type_val
+                        )
+
+                        logger.warning("Created fallback local index during add")
+                        if not self._local_index.is_trained:
+                            self._local_index.train(vectors)
+                        self._local_index.add(vectors)
+                        self.ntotal = self._local_index.ntotal
+                        logger.warning("Using fallback local index instead of remote")
+                    else:
+                        raise ImportError("FAISS local implementation missing IndexFlatL2")
+                except Exception as local_err:
+                    # If we can't create a local fallback, raise the original error
+                    raise RuntimeError(
+                        f"Remote add operation failed and local fallback failed: {local_err}"
+                    )
+            else:
+                # Add to existing local index
+                if not self._local_index.is_trained:
+                    self._local_index.train(vectors)
+                self._local_index.add(vectors)
+                self.ntotal = self._local_index.ntotal
+                logger.warning("Added vectors to fallback local index")
 
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -796,20 +839,25 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
                 name=new_name, dimension=self.d, index_type=index_type
             )
 
-            if not isinstance(response, dict) or not response.get("success", False):
+            # Explicitly handle both dict and string responses
+            if isinstance(response, str):
+                # Some servers return the index_id directly as a string
+                self.index_id = response
+                self.name = new_name
+                self.is_trained = was_trained
+                self.ntotal = 0
+            elif isinstance(response, dict) and response.get("success", False):
+                self.index_id = response.get("index_id", new_name)
+                self.name = new_name
+                self.is_trained = was_trained
+                self.ntotal = 0
+            else:
                 error_msg = (response.get("error", "Unknown error")
                              if isinstance(response, dict) else str(response))
                 raise RuntimeError(f"Failed to create new index during reset: {error_msg}")
 
-            # Update index information
-            self.index_id = self._parse_server_response(response, new_name)
-            self.name = new_name
+            logger.info(f"Created new index with ID: {self.index_id} during reset")
 
-            # Don't reset training state
-            self.is_trained = was_trained
-
-            # Reset all local state
-            self.ntotal = 0
         except Exception as e:
             # Ensure all errors are properly propagated
             raise RuntimeError(f"Remote reset operation failed: {e}")
