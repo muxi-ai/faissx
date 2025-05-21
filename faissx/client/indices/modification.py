@@ -32,10 +32,15 @@ The implementation allows for both local and remote modes:
 
 import logging
 import numpy as np
+import time
 from typing import List, Any, Optional, Callable
 
-import faiss
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
+from ..client import get_client
 from .flat import IndexFlatL2
 from .ivf_flat import IndexIVFFlat
 from .hnsw_flat import IndexHNSWFlat
@@ -48,11 +53,107 @@ from .factory import index_factory
 logger = logging.getLogger(__name__)
 
 
+def _parse_server_response(response: Any, default_value: Any) -> Any:
+    """
+    Parse server response with consistent error handling.
+
+    Args:
+        response: Server response to parse
+        default_value: Default value to use if response isn't a dict
+
+    Returns:
+        Parsed value from response or default value
+    """
+    if isinstance(response, dict):
+        return response.get("index_id", default_value)
+    elif isinstance(response, str):
+        # Sometimes the server returns just a string
+        return response
+    else:
+        logger.warning(f"Unexpected server response format: {response}")
+        return default_value
+
+
+def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
+    """
+    Extract vectors from an index with robust error handling.
+
+    Attempts to use cached vectors, reconstruct from the index,
+    or fetch from server as appropriate.
+
+    Args:
+        index: FAISSx index to extract vectors from
+
+    Returns:
+        NumPy array of vectors or None if extraction fails
+    """
+    # Check for cached vectors first
+    if hasattr(index, "_cached_vectors") and index._cached_vectors is not None:
+        logger.debug(f"Using cached vectors from index {getattr(index, 'name', 'unknown')}")
+        return index._cached_vectors
+
+    # Next try get_vectors if available
+    if hasattr(index, "get_vectors"):
+        try:
+            start_time = time.time()
+            vectors = index.get_vectors()
+            elapsed = time.time() - start_time
+            logger.debug(f"Retrieved vectors using get_vectors in {elapsed:.2f}s")
+            return vectors
+        except Exception as e:
+            logger.warning(f"Failed to get vectors: {e}")
+
+    # Fallback to reconstruct method
+    try:
+        start_time = time.time()
+        vectors = []
+
+        # Try reconstruct_n first (more efficient)
+        if hasattr(index, "reconstruct_n") and index.ntotal > 0:
+            try:
+                vectors = index.reconstruct_n(0, index.ntotal)
+                elapsed = time.time() - start_time
+                logger.debug(
+                    f"Retrieved {len(vectors)} vectors using reconstruct_n in {elapsed:.2f}s"
+                )
+                return vectors
+            except Exception as e:
+                logger.warning(
+                    f"Failed to use reconstruct_n: {e}, "
+                    f"falling back to individual reconstruction"
+                )
+
+        # Fallback to individual reconstruction
+        if hasattr(index, "reconstruct"):
+            vectors = []
+            for i in range(index.ntotal):
+                try:
+                    vectors.append(index.reconstruct(i))
+                except Exception:
+                    # Skip any vectors that can't be reconstructed
+                    continue
+
+            if vectors:
+                vectors = np.vstack(vectors)
+                elapsed = time.time() - start_time
+                logger.debug(
+                    f"Retrieved {len(vectors)} vectors using individual "
+                    f"reconstruct in {elapsed:.2f}s"
+                )
+                return vectors
+    except Exception as e:
+        logger.warning(f"Failed to reconstruct vectors: {e}")
+
+    logger.warning("Could not extract vectors from index")
+    return None
+
+
 def merge_indices(
     indices: List[Any],
     output_type: Optional[str] = None,
     id_map: bool = False,
     id_map2: bool = False,
+    batch_size: int = 10000,  # Added batch_size parameter for large operations
 ) -> Any:
     """
     Merge multiple indices into a single index.
@@ -64,6 +165,7 @@ def merge_indices(
         id_map: Whether to wrap the result in an IndexIDMap for custom IDs
         id_map2: Whether to wrap the result in an IndexIDMap2 for updatable vectors
                 with custom IDs (takes precedence over id_map if both are True)
+        batch_size: Size of vector batches when processing large indices
 
     Returns:
         A new FAISSx index containing all vectors from the input indices
@@ -71,6 +173,9 @@ def merge_indices(
     Raises:
         ValueError: If indices are incompatible or empty
     """
+    # Start timing the operation
+    start_time = time.time()
+
     # Validate input indices
     if not indices:
         raise ValueError("No indices provided for merging")
@@ -83,6 +188,46 @@ def merge_indices(
                 f"Dimension mismatch: index 0 has {d} dimensions, "
                 f"but index {i} has {idx.d} dimensions"
             )
+
+    # Check if we should use remote mode
+    client = get_client()
+    use_remote = client is not None and client.mode == "remote"
+
+    # If remote mode, check if server supports merge operation directly
+    if use_remote:
+        try:
+            # Check if all indices are remote and have index_id
+            remote_indices = all(hasattr(idx, "index_id") for idx in indices)
+            if remote_indices:
+                logger.info("Attempting to merge indices directly on server")
+                index_ids = [idx.index_id for idx in indices]
+                remote_output_type = output_type or _get_index_type_description(indices[0])
+
+                try:
+                    response = client.merge_indices(index_ids, remote_output_type)
+                    merged_index_id = _parse_server_response(response, None)
+
+                    if merged_index_id:
+                        # Server successfully merged indices
+                        logger.info(f"Server merged indices into {merged_index_id}")
+                        merged_index = index_factory(d, remote_output_type)
+                        merged_index.index_id = merged_index_id
+                        merged_index.name = merged_index_id
+
+                        # Apply IDMap wrapper if needed
+                        if id_map or id_map2:
+                            wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
+                            merged_index = wrapper_class(merged_index)
+
+                        elapsed = time.time() - start_time
+                        logger.info(f"Remote merge completed in {elapsed:.2f}s")
+                        return merged_index
+                except Exception as e:
+                    logger.warning(
+                        f"Server-side merge failed: {e}, falling back to client-side merge"
+                    )
+        except Exception as e:
+            logger.warning(f"Error checking remote merge capability: {e}")
 
     # Determine output index type and ID mapping settings
     if output_type is None:
@@ -106,7 +251,8 @@ def merge_indices(
     total_vectors = 0
 
     # Process each source index
-    for idx in indices:
+    for i, idx in enumerate(indices):
+        logger.debug(f"Processing index {i+1}/{len(indices)}")
         # Handle IDMap/IDMap2 wrappers
         base_index = idx
         id_map_data = None
@@ -120,23 +266,9 @@ def merge_indices(
 
         # Extract vectors if the index has any
         if getattr(base_index, "ntotal", 0) > 0:
-            vectors = []
-            try:
-                # Extract vectors using reconstruct method
-                for i in range(base_index.ntotal):
-                    try:
-                        vectors.append(base_index.reconstruct(i))
-                    except Exception:
-                        # Skip any vectors that might have been removed internally
-                        continue
-            except AttributeError:
-                raise ValueError(
-                    f"Index of type {type(base_index).__name__} doesn't support reconstruction "
-                    "and cannot be merged"
-                )
+            vectors = _get_vectors_from_index(base_index)
 
-            if vectors:
-                vectors = np.vstack(vectors)
+            if vectors is not None and len(vectors) > 0:
                 all_vectors.append(vectors)
                 if id_map_data:
                     id_mappings.append(id_map_data)
@@ -149,13 +281,22 @@ def merge_indices(
 
     # Combine and add vectors to the merged index
     combined_vectors = np.vstack(all_vectors)
+    logger.info(f"Merged {total_vectors} vectors from {len(indices)} indices")
 
     # Train the merged index if needed
     if hasattr(merged_index, "train") and not getattr(merged_index, "is_trained", True):
+        logger.info(f"Training merged index with {len(combined_vectors)} vectors")
         merged_index.train(combined_vectors)
 
-    # Add the vectors to the merged index
-    merged_index.add(combined_vectors)
+    # Add the vectors to the merged index in batches to avoid memory issues
+    total_added = 0
+    for i in range(0, len(combined_vectors), batch_size):
+        batch = combined_vectors[i:i + batch_size]
+        merged_index.add(batch)
+        total_added += len(batch)
+        logger.debug(
+            f"Added batch of {len(batch)} vectors ({total_added}/{len(combined_vectors)})"
+        )
 
     # Create IDMap wrapper if needed
     if id_map or id_map2 or id_mappings:
@@ -174,8 +315,12 @@ def merge_indices(
             wrapped_index._rev_id_map = {v: k for k, v in combined_mappings.items()}
             wrapped_index.ntotal = merged_index.ntotal
 
+        elapsed = time.time() - start_time
+        logger.info(f"Merge with ID mapping completed in {elapsed:.2f}s")
         return wrapped_index
 
+    elapsed = time.time() - start_time
+    logger.info(f"Merge completed in {elapsed:.2f}s")
     return merged_index
 
 
@@ -186,6 +331,7 @@ def split_index(
     custom_split_fn: Optional[Callable[[np.ndarray], List[int]]] = None,
     output_type: Optional[str] = None,
     preserve_ids: bool = True,
+    batch_size: int = 10000,  # Added batch_size parameter for large operations
 ) -> List[Any]:
     """
     Split an index into multiple smaller indices.
@@ -201,6 +347,7 @@ def split_index(
                         a list of part indices for each vector (0 to num_parts-1)
         output_type: Optional type for the output indices (same as input if None)
         preserve_ids: Whether to preserve custom IDs for IndexIDMap/IndexIDMap2
+        batch_size: Size of vector batches when processing large indices
 
     Returns:
         List of FAISSx indices containing the split vectors
@@ -208,6 +355,9 @@ def split_index(
     Raises:
         ValueError: If the index is empty or split_method is invalid
     """
+    # Start timing the operation
+    start_time = time.time()
+
     # Validate input index
     if getattr(index, "ntotal", 0) == 0:
         raise ValueError("Cannot split an empty index")
@@ -222,47 +372,82 @@ def split_index(
     if output_type is None:
         output_type = _get_index_type_description(base_index)
 
+    # Check if we should use remote mode
+    client = get_client()
+    use_remote = client is not None and client.mode == "remote"
+
+    # If remote mode, check if server supports split operation directly
+    if use_remote:
+        try:
+            # Check if index is remote and has index_id
+            if hasattr(index, "index_id"):
+                logger.info("Attempting to split index directly on server")
+                remote_output_type = output_type
+
+                try:
+                    response = client.split_index(
+                        index.index_id,
+                        num_parts,
+                        split_method,
+                        remote_output_type
+                    )
+
+                    if isinstance(response, dict) and "index_ids" in response:
+                        # Server successfully split the index
+                        split_index_ids = response["index_ids"]
+                        logger.info(f"Server split index into {len(split_index_ids)} parts")
+
+                        result_indices = []
+                        for split_id in split_index_ids:
+                            split_index = index_factory(d, remote_output_type)
+                            split_index.index_id = split_id
+                            split_index.name = split_id
+
+                            # Apply IDMap wrapper if needed and preserve_ids is True
+                            if has_id_map and preserve_ids:
+                                wrapper_class = IndexIDMap2 if is_id_map2 else IndexIDMap
+                                split_index = wrapper_class(split_index)
+
+                            result_indices.append(split_index)
+
+                        elapsed = time.time() - start_time
+                        logger.info(f"Remote split completed in {elapsed:.2f}s")
+                        return result_indices
+                except Exception as e:
+                    logger.warning(f"Server-side split failed: {e}, falling back to client-side split")
+        except Exception as e:
+            logger.warning(f"Error checking remote split capability: {e}")
+
     # Extract vectors and IDs
-    vectors = []
+    vectors = _get_vectors_from_index(index)
     id_mappings = {}
 
-    # Extract vectors based on index type
-    if has_id_map and preserve_ids:
-        # For IDMap indices, extract vectors using the ID map
-        for i in range(index.ntotal):
-            if i in index._id_map:  # Only include vectors that aren't removed
-                external_id = index._id_map[i]
-                vector = index.reconstruct(external_id)
-                vectors.append(vector)
-                id_mappings[len(vectors) - 1] = external_id
-    else:
-        # For regular indices, extract all vectors
-        try:
-            for i in range(base_index.ntotal):
-                try:
-                    vectors.append(base_index.reconstruct(i))
-                except Exception:
-                    # Skip any vectors that can't be reconstructed
-                    continue
-        except AttributeError:
-            raise ValueError(
-                f"Index of type {type(base_index).__name__} doesn't support reconstruction "
-                "and cannot be split"
-            )
+    # If no vectors could be extracted, fail
+    if vectors is None or len(vectors) == 0:
+        raise ValueError("Could not extract vectors from the index")
 
-    # Convert vectors to numpy array
-    vectors = np.vstack(vectors) if vectors else np.zeros((0, d))
+    # Extract ID mappings if needed
+    if has_id_map and preserve_ids:
+        id_mappings = index._id_map
+
+    logger.info(f"Extracted {len(vectors)} vectors for splitting")
 
     # Determine vector partitioning based on split method
     if split_method == "sequential":
         # Simple sequential partitioning
         part_size = len(vectors) // num_parts
+        if part_size == 0:  # Handle case when num_parts > len(vectors)
+            part_size = 1
         part_indices = [min(i // part_size, num_parts - 1) for i in range(len(vectors))]
 
     elif split_method == "cluster":
         # Use k-means clustering to group similar vectors
         try:
+            if faiss is None:
+                raise ImportError("FAISS is required for clustering split method")
+
             kmeans = faiss.Kmeans(d, num_parts, niter=20, verbose=False)
+            logger.info("Training k-means for clustering-based split")
             kmeans.train(vectors)
             _, part_indices = kmeans.index.search(vectors, 1)
             part_indices = part_indices.flatten()
@@ -276,6 +461,7 @@ def split_index(
             raise ValueError("Custom split method requires a custom_split_fn")
 
         try:
+            logger.info("Using custom split function")
             part_indices = custom_split_fn(vectors)
             if len(part_indices) != len(vectors):
                 raise ValueError(
@@ -323,21 +509,43 @@ def split_index(
 
         # Train if needed
         if hasattr(part_index, "train") and not getattr(part_index, "is_trained", True):
+            logger.info(f"Training part {part_idx} with {len(part_vectors)} vectors")
             part_index.train(part_vectors)
 
-        # Add the vectors
+        # Add the vectors in batches to avoid memory issues
+        total_added = 0
         if preserve_ids and has_id_map and grouped_ids and grouped_ids[part_idx]:
             # Create IDMap/IDMap2 wrapper
             wrapper_class = IndexIDMap2 if is_id_map2 else IndexIDMap
             wrapped_index = wrapper_class(part_index)
-            # Add with IDs
+
+            # Add with IDs in batches
             part_ids = np.array(grouped_ids[part_idx])
-            wrapped_index.add_with_ids(part_vectors, part_ids)
+            for i in range(0, len(part_vectors), batch_size):
+                batch_end = min(i + batch_size, len(part_vectors))
+                batch = part_vectors[i:batch_end]
+                batch_ids = part_ids[i:batch_end]
+                wrapped_index.add_with_ids(batch, batch_ids)
+                total_added += len(batch)
+                logger.debug(
+                    f"Added batch of {len(batch)} vectors to part {part_idx} "
+                    f"({total_added}/{len(part_vectors)})"
+                )
+
             result_indices[part_idx] = wrapped_index
         else:
-            # Add without IDs
-            part_index.add(part_vectors)
+            # Add without IDs in batches
+            for i in range(0, len(part_vectors), batch_size):
+                batch = part_vectors[i:i + batch_size]
+                part_index.add(batch)
+                total_added += len(batch)
+                logger.debug(
+                    f"Added batch of {len(batch)} vectors to part {part_idx} "
+                    f"({total_added}/{len(part_vectors)})"
+                )
 
+    elapsed = time.time() - start_time
+    logger.info(f"Split completed in {elapsed:.2f}s")
     return result_indices
 
 
