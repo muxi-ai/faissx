@@ -33,7 +33,7 @@ The implementation allows for both local and remote modes:
 import logging
 import numpy as np
 import time
-from typing import List, Any, Optional, Callable
+from typing import List, Any, Optional, Callable, Dict, TypeVar
 
 try:
     import faiss
@@ -49,8 +49,12 @@ from .ivf_pq import IndexIVFPQ
 from .scalar_quantizer import IndexScalarQuantizer
 from .id_map import IndexIDMap, IndexIDMap2
 from .factory import index_factory
+from .base import FAISSxBaseIndex
 
 logger = logging.getLogger(__name__)
+
+# Define type for any FAISSx index
+FAISSxIndexType = TypeVar('FAISSxIndexType', bound=FAISSxBaseIndex)
 
 
 def _parse_server_response(response: Any, default_value: Any) -> Any:
@@ -74,7 +78,7 @@ def _parse_server_response(response: Any, default_value: Any) -> Any:
         return default_value
 
 
-def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
+def _get_vectors_from_index(index: FAISSxBaseIndex) -> Optional[np.ndarray]:
     """
     Extract vectors from an index with robust error handling.
 
@@ -106,7 +110,7 @@ def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
     # Fallback to reconstruct method
     try:
         start_time = time.time()
-        vectors = []
+        vectors: List[np.ndarray] = []
 
         # Try reconstruct_n first (more efficient)
         if hasattr(index, "reconstruct_n") and index.ntotal > 0:
@@ -125,22 +129,22 @@ def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
 
         # Fallback to individual reconstruction
         if hasattr(index, "reconstruct"):
-            vectors = []
+            vectors_list: List[np.ndarray] = []
             for i in range(index.ntotal):
                 try:
-                    vectors.append(index.reconstruct(i))
+                    vectors_list.append(index.reconstruct(i))
                 except Exception:
                     # Skip any vectors that can't be reconstructed
                     continue
 
-            if vectors:
-                vectors = np.vstack(vectors)
+            if vectors_list:
+                vectors_array = np.vstack(vectors_list)
                 elapsed = time.time() - start_time
                 logger.debug(
-                    f"Retrieved {len(vectors)} vectors using individual "
+                    f"Retrieved {len(vectors_list)} vectors using individual "
                     f"reconstruct in {elapsed:.2f}s"
                 )
-                return vectors
+                return vectors_array
     except Exception as e:
         logger.warning(f"Failed to reconstruct vectors: {e}")
 
@@ -149,12 +153,12 @@ def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
 
 
 def merge_indices(
-    indices: List[Any],
+    indices: List[FAISSxBaseIndex],
     output_type: Optional[str] = None,
     id_map: bool = False,
     id_map2: bool = False,
-    batch_size: int = 10000,  # Added batch_size parameter for large operations
-) -> Any:
+    batch_size: int = 10000,
+) -> FAISSxBaseIndex:
     """
     Merge multiple indices into a single index.
 
@@ -246,8 +250,8 @@ def merge_indices(
     merged_index = index_factory(d, output_type)
 
     # Prepare to collect all vectors and IDs if needed
-    all_vectors = []
-    id_mappings = []
+    all_vectors: List[np.ndarray] = []
+    id_mappings: List[Dict[int, int]] = []
     total_vectors = 0
 
     # Process each source index
@@ -255,7 +259,7 @@ def merge_indices(
         logger.debug(f"Processing index {i+1}/{len(indices)}")
         # Handle IDMap/IDMap2 wrappers
         base_index = idx
-        id_map_data = None
+        id_map_data: Optional[Dict[int, int]] = None
 
         if isinstance(idx, (IndexIDMap, IndexIDMap2)):
             base_index = idx.index
@@ -306,7 +310,7 @@ def merge_indices(
 
         # Restore ID mappings if available
         if id_mappings:
-            combined_mappings = {}
+            combined_mappings: Dict[int, int] = {}
             for mapping in id_mappings:
                 combined_mappings.update(mapping)
 
@@ -325,14 +329,14 @@ def merge_indices(
 
 
 def split_index(
-    index: Any,
+    index: FAISSxBaseIndex,
     num_parts: int = 2,
     split_method: str = "sequential",
     custom_split_fn: Optional[Callable[[np.ndarray], List[int]]] = None,
     output_type: Optional[str] = None,
     preserve_ids: bool = True,
-    batch_size: int = 10000,  # Added batch_size parameter for large operations
-) -> List[Any]:
+    batch_size: int = 10000,
+) -> List[FAISSxBaseIndex]:
     """
     Split an index into multiple smaller indices.
 
@@ -414,13 +418,15 @@ def split_index(
                         logger.info(f"Remote split completed in {elapsed:.2f}s")
                         return result_indices
                 except Exception as e:
-                    logger.warning(f"Server-side split failed: {e}, falling back to client-side split")
+                    logger.warning(
+                        f"Server-side split failed: {e}, falling back to client-side split"
+                    )
         except Exception as e:
             logger.warning(f"Error checking remote split capability: {e}")
 
     # Extract vectors and IDs
     vectors = _get_vectors_from_index(index)
-    id_mappings = {}
+    id_mappings: Dict[int, int] = {}
 
     # If no vectors could be extracted, fail
     if vectors is None or len(vectors) == 0:
@@ -449,8 +455,8 @@ def split_index(
             kmeans = faiss.Kmeans(d, num_parts, niter=20, verbose=False)
             logger.info("Training k-means for clustering-based split")
             kmeans.train(vectors)
-            _, part_indices = kmeans.index.search(vectors, 1)
-            part_indices = part_indices.flatten()
+            _, part_indices_array = kmeans.index.search(vectors, 1)
+            part_indices = part_indices_array.flatten().tolist()
         except Exception as e:
             logger.error(f"Error during clustering: {e}")
             raise ValueError(f"Clustering failed: {e}")
@@ -482,20 +488,21 @@ def split_index(
         raise ValueError(f"Unsupported split method: {split_method}")
 
     # Create the output indices
-    result_indices = []
+    result_indices: List[FAISSxBaseIndex] = []
     for _ in range(num_parts):
         # Create an index of the specified type
         result_indices.append(index_factory(d, output_type))
 
     # Group vectors by their part index
-    grouped_vectors = [[] for _ in range(num_parts)]
-    grouped_ids = (
+    grouped_vectors: List[List[np.ndarray]] = [[] for _ in range(num_parts)]
+    grouped_ids: Optional[List[List[int]]] = (
         [[] for _ in range(num_parts)] if preserve_ids and has_id_map else None
     )
 
     for i, part_idx in enumerate(part_indices):
         grouped_vectors[part_idx].append(vectors[i])
         if preserve_ids and has_id_map and i in id_mappings:
+            assert grouped_ids is not None  # For type checking
             grouped_ids[part_idx].append(id_mappings[i])
 
     # Add the vectors to each part
@@ -504,13 +511,13 @@ def split_index(
             logger.warning(f"Part {part_idx} has no vectors")
             continue
 
-        part_vectors = np.vstack(part_vectors)
+        part_vectors_array = np.vstack(part_vectors)
         part_index = result_indices[part_idx]
 
         # Train if needed
         if hasattr(part_index, "train") and not getattr(part_index, "is_trained", True):
-            logger.info(f"Training part {part_idx} with {len(part_vectors)} vectors")
-            part_index.train(part_vectors)
+            logger.info(f"Training part {part_idx} with {len(part_vectors_array)} vectors")
+            part_index.train(part_vectors_array)
 
         # Add the vectors in batches to avoid memory issues
         total_added = 0
@@ -521,27 +528,27 @@ def split_index(
 
             # Add with IDs in batches
             part_ids = np.array(grouped_ids[part_idx])
-            for i in range(0, len(part_vectors), batch_size):
-                batch_end = min(i + batch_size, len(part_vectors))
-                batch = part_vectors[i:batch_end]
+            for i in range(0, len(part_vectors_array), batch_size):
+                batch_end = min(i + batch_size, len(part_vectors_array))
+                batch = part_vectors_array[i:batch_end]
                 batch_ids = part_ids[i:batch_end]
                 wrapped_index.add_with_ids(batch, batch_ids)
                 total_added += len(batch)
                 logger.debug(
                     f"Added batch of {len(batch)} vectors to part {part_idx} "
-                    f"({total_added}/{len(part_vectors)})"
+                    f"({total_added}/{len(part_vectors_array)})"
                 )
 
             result_indices[part_idx] = wrapped_index
         else:
             # Add without IDs in batches
-            for i in range(0, len(part_vectors), batch_size):
-                batch = part_vectors[i:i + batch_size]
+            for i in range(0, len(part_vectors_array), batch_size):
+                batch = part_vectors_array[i:i + batch_size]
                 part_index.add(batch)
                 total_added += len(batch)
                 logger.debug(
                     f"Added batch of {len(batch)} vectors to part {part_idx} "
-                    f"({total_added}/{len(part_vectors)})"
+                    f"({total_added}/{len(part_vectors_array)})"
                 )
 
     elapsed = time.time() - start_time
@@ -549,9 +556,12 @@ def split_index(
     return result_indices
 
 
-def _get_index_type_description(index: Any) -> str:
+def _get_index_type_description(index: FAISSxBaseIndex) -> str:
     """
     Get a FAISS-compatible string description for an index type.
+
+    This function analyzes the index object and returns a string description that can be used
+    with index_factory to create an index of the same type.
 
     Args:
         index: FAISSx index instance

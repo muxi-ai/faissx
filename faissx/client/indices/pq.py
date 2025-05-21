@@ -24,9 +24,15 @@ FAISSx IndexPQ implementation.
 This module provides a client-side implementation of the FAISS IndexPQ class.
 It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
+
+Product Quantization (PQ) is a vector compression technique that:
+- Divides vectors into subvectors (M subquantizers)
+- Separately quantizes each subvector using a smaller codebook
+- Significantly reduces memory usage while preserving search accuracy
+- Enables efficient similarity search at scale
 """
 
-from typing import Any, Tuple, Optional
+from typing import Any, Tuple, Optional, TypeVar
 import uuid
 import numpy as np
 import time
@@ -38,6 +44,9 @@ except ImportError:
 
 from ..client import get_client
 from .base import logger, FAISSxBaseIndex
+
+# Type variable for self-referencing
+T = TypeVar('T', bound='IndexPQ')
 
 
 class IndexPQ(FAISSxBaseIndex):
@@ -60,7 +69,7 @@ class IndexPQ(FAISSxBaseIndex):
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
         index_id (str): Server-side index identifier (when in remote mode)
-        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _vector_mapping: Maps local indices to server indices (remote mode only)
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _gpu_resources: GPU resources if using GPU (local mode only)
@@ -68,7 +77,8 @@ class IndexPQ(FAISSxBaseIndex):
         _cached_vectors: Cached vectors for reconstruction and persistence
     """
 
-    def __init__(self, d: int, M: int = 8, nbits: int = 8, metric_type=None):
+    def __init__(self, d: int, M: int = 8, nbits: int = 8,
+                 metric_type: Optional[int] = None) -> None:
         """
         Initialize the PQ index with specified parameters.
 
@@ -76,7 +86,11 @@ class IndexPQ(FAISSxBaseIndex):
             d (int): Vector dimension (must be a multiple of M)
             M (int): Number of subquantizers
             nbits (int): Number of bits per subquantizer (default 8)
-            metric_type: Distance metric, either faiss.METRIC_L2 or faiss.METRIC_INNER_PRODUCT
+            metric_type: Distance metric, either faiss.METRIC_L2 or
+                         faiss.METRIC_INNER_PRODUCT (default: METRIC_L2)
+
+        Raises:
+            ValueError: If d is not a multiple of M
         """
         super().__init__()  # Initialize base class
 
@@ -100,31 +114,31 @@ class IndexPQ(FAISSxBaseIndex):
             raise ValueError(f"PQ requires dimension ({d}) to be a multiple of M ({M})")
 
         # Store core parameters
-        self.d = d
-        self.M = M
-        self.nbits = nbits
+        self.d: int = d
+        self.M: int = M
+        self.nbits: int = nbits
         # Convert metric type to string representation for remote mode
-        self.metric_type = "IP" if metric_type == metric_inner_product else "L2"
+        self.metric_type: str = "IP" if metric_type == metric_inner_product else "L2"
 
         # Initialize state variables
-        self.is_trained = False
-        self.ntotal = 0
+        self.is_trained: bool = False
+        self.ntotal: int = 0
 
         # For vector caching (helps with reconstruction for io.py)
-        self._cached_vectors = None
+        self._cached_vectors: Optional[np.ndarray] = None
 
         # Initialize GPU-related attributes
-        self._use_gpu = False
-        self._gpu_resources = None
-        self._local_index = None
+        self._use_gpu: bool = False
+        self._gpu_resources: Optional[Any] = None
+        self._local_index: Optional[Any] = None
 
         # Generate unique name for the index
-        self.name = f"index-pq-{uuid.uuid4().hex[:8]}"
-        self.index_id = self.name
+        self.name: str = f"index-pq-{uuid.uuid4().hex[:8]}"
+        self.index_id: str = self.name
 
         # Initialize vector mapping for remote mode
         self._vector_mapping = {}  # Maps local indices to server-side information
-        self._next_idx = 0  # Counter for local indices
+        self._next_idx: int = 0  # Counter for local indices
 
         # Check if client exists and its mode
         client = get_client()
@@ -144,7 +158,7 @@ class IndexPQ(FAISSxBaseIndex):
         Get standardized string representation of the PQ index type.
 
         Returns:
-            String representation of index type
+            String representation of index type (e.g. "PQ8x8" or "PQ16x8_IP")
         """
         # Create the index type string based on parameters
         index_type = f"PQ{self.M}x{self.nbits}"
@@ -183,6 +197,9 @@ class IndexPQ(FAISSxBaseIndex):
             M (int): Number of subquantizers
             nbits (int): Number of bits per subquantizer
             metric_type: Distance metric type
+
+        Raises:
+            RuntimeError: If index creation fails
         """
         try:
             import faiss as local_faiss
@@ -200,7 +217,9 @@ class IndexPQ(FAISSxBaseIndex):
 
             # Create the local index
             metric_type_val = 0 if self.metric_type == "L2" else 1
-            self._local_index = local_faiss.IndexPQ(self.d, self.M, self.nbits, metric_type_val)
+            self._local_index = local_faiss.IndexPQ(
+                self.d, self.M, self.nbits, metric_type_val
+            )
 
             if gpu_available:
                 # GPU is available, create resources and GPU index
@@ -238,6 +257,9 @@ class IndexPQ(FAISSxBaseIndex):
             d (int): Vector dimension
             M (int): Number of subquantizers
             nbits (int): Number of bits per subquantizer
+
+        Raises:
+            RuntimeError: If remote index creation fails
         """
         try:
             # Get index type string
@@ -292,11 +314,15 @@ class IndexPQ(FAISSxBaseIndex):
         """
         Train the index with the provided vectors.
 
+        Product Quantization requires training to create the codebooks used for vector
+        compression. The training vectors should be representative of the data that
+        will be added to the index later.
+
         Args:
             x (np.ndarray): Training vectors, shape (n, d)
 
         Raises:
-            ValueError: If vector shape doesn't match index dimension or already trained
+            ValueError: If vector shape doesn't match index dimension
             RuntimeError: If remote training operation fails
         """
         # Register access for memory management
@@ -941,6 +967,9 @@ class IndexPQ(FAISSxBaseIndex):
 
         Returns:
             Reconstructed vector
+
+        Raises:
+            ValueError: If index is out of range
         """
         if idx < 0 or idx >= self.ntotal:
             raise ValueError(f"Index {idx} out of range [0, {self.ntotal-1}]")
@@ -986,6 +1015,9 @@ class IndexPQ(FAISSxBaseIndex):
 
         Returns:
             Array of reconstructed vectors
+
+        Raises:
+            ValueError: If range is out of bounds
         """
         if idx < 0 or idx + n > self.ntotal:
             raise ValueError(f"Range {idx}:{idx+n} out of bounds [0, {self.ntotal}]")
@@ -1014,12 +1046,20 @@ class IndexPQ(FAISSxBaseIndex):
 
         return vectors
 
-    def __enter__(self):
+    def __enter__(self) -> 'IndexPQ':
         """Support context manager interface."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Clean up resources when exiting context."""
+    def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception],
+                 exc_tb: Optional[Any]) -> None:
+        """
+        Clean up resources when exiting context.
+
+        Args:
+            exc_type: Exception type if an exception was raised
+            exc_val: Exception value if an exception was raised
+            exc_tb: Exception traceback if an exception was raised
+        """
         self.close()
 
     def close(self) -> None:

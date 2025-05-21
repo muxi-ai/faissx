@@ -5,12 +5,20 @@
 IndexIDMap and IndexIDMap2 implementations for FAISSx.
 
 These classes provide a drop-in replacement for FAISS IndexIDMap and IndexIDMap2,
-supporting both local and remote execution modes.
+supporting both local and remote execution modes. They allow associating custom IDs with vectors,
+which is useful for applications that need to maintain their own identifier system alongside
+the vector database.
+
+Key features:
+- Transparent switching between local and remote execution
+- Vector reconstruction caching for performance
+- Batched operations for handling large datasets
+- Fallback mechanisms for error recovery
 """
 
 import numpy as np
 import uuid
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict, Optional, Union
 
 # Import the client utilities
 from faissx.client.client import get_client
@@ -25,7 +33,11 @@ class IndexIDMap(FAISSxBaseIndex):
     A drop-in replacement for FAISS IndexIDMap supporting both local and remote execution.
 
     IndexIDMap allows associating custom IDs with vectors, which can be useful
-    when vectors represent entities with existing identifiers.
+    when vectors represent entities with existing identifiers. The implementation handles
+    both local execution (using FAISS directly) and remote execution (through FAISSx server).
+
+    This class maintains bidirectional mappings between internal FAISS indices and user IDs,
+    and provides methods for adding, searching, and reconstructing vectors using these IDs.
 
     Attributes:
         index: The wrapped index object
@@ -34,18 +46,25 @@ class IndexIDMap(FAISSxBaseIndex):
         d (int): Vector dimension (same as wrapped index)
         _id_map (dict): Maps internal indices to user-provided IDs
         _rev_id_map (dict): Maps user-provided IDs to internal indices
-        _vectors_by_id (dict): Cache for vector reconstruction
+        _vectors_by_id (dict): Cache for vector reconstruction by ID
+        name (str): Unique identifier for this index instance
+        index_id (str): ID used for server communication
+        base_index_id (str): ID of the underlying base index
     """
 
-    def __init__(self, index):
+    def __init__(self, index: Any) -> None:
         """
         Initialize the IndexIDMap with the given underlying index.
+
+        This constructor sets up either a local FAISS IndexIDMap or a remote index on the FAISSx server.
+        It initializes ID mapping dictionaries and vector caching for efficient reconstruction operations.
 
         Args:
             index: The FAISS index to wrap (e.g., IndexFlatL2, IndexIVFFlat)
 
         Raises:
             RuntimeError: If there's an error creating the index
+            ValueError: If the base index lacks necessary properties in remote mode
         """
         # Initialize base class
         super().__init__()
@@ -57,11 +76,11 @@ class IndexIDMap(FAISSxBaseIndex):
         self.d = index.d  # Vector dimension from underlying index
 
         # Initialize bidirectional mapping dictionaries
-        self._id_map = {}  # Maps internal indices to user IDs
-        self._rev_id_map = {}  # Maps user IDs to internal indices
+        self._id_map: Dict[int, int] = {}  # Maps internal indices to user IDs
+        self._rev_id_map: Dict[int, int] = {}  # Maps user IDs to internal indices
 
         # Store vectors for reconstruction
-        self._vectors_by_id = {}
+        self._vectors_by_id: Dict[int, np.ndarray] = {}
 
         # Generate unique name for the index
         self.name = f"index-idmap-{uuid.uuid4().hex[:8]}"
@@ -88,12 +107,15 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Parse server response with consistent error handling.
 
+        Extracts the index_id from the server response with appropriate type checking.
+        Helps standardize response parsing across different server operations.
+
         Args:
-            response: Server response to parse
-            default_value: Default value to use if response isn't a dict
+            response: Server response to parse, expected to be a dictionary
+            default_value: Default value to use if response isn't a dict or doesn't contain index_id
 
         Returns:
-            Parsed value from response or default value
+            Parsed value from response or default value if parsing fails
         """
         if isinstance(response, dict):
             return response.get("index_id", default_value)
@@ -101,15 +123,18 @@ class IndexIDMap(FAISSxBaseIndex):
             logger.warning(f"Unexpected server response format: {response}")
             return default_value
 
-    def _get_batch_size(self, operation_type='default') -> int:
+    def _get_batch_size(self, operation_type: str = 'default') -> int:
         """
         Get batch size for different operations with fallback defaults.
+
+        Retrieves operation-specific batch sizes from parameters with reasonable defaults.
+        Different operations (search vs add) may benefit from different batch sizes.
 
         Args:
             operation_type: Type of operation ('default', 'search', etc.)
 
         Returns:
-            Batch size value
+            Batch size value appropriate for the specified operation
         """
         try:
             if operation_type == 'search':
@@ -122,6 +147,9 @@ class IndexIDMap(FAISSxBaseIndex):
     def _create_local_index(self) -> None:
         """
         Create a local FAISS IndexIDMap.
+
+        Initializes the underlying FAISS IndexIDMap using the local FAISS library.
+        Properly handles obtaining the base index from the wrapped index object.
         """
         try:
             import faiss
@@ -142,8 +170,11 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Create a remote IndexIDMap on the server.
 
+        Sends a request to the FAISSx server to create an IDMap index, wrapping the base index.
+        Handles server communication, response parsing, and error detection.
+
         Args:
-            client: FAISSx client instance
+            client: FAISSx client instance for server communication
 
         Raises:
             RuntimeError: If server doesn't support IndexIDMap operations
@@ -179,11 +210,14 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Prepare vectors for indexing or search.
 
+        Ensures vectors are in numpy array format with the correct dtype (float32)
+        as required by FAISS.
+
         Args:
-            vectors: Input vectors as numpy array
+            vectors: Input vectors as numpy array or array-like object
 
         Returns:
-            Normalized array with proper dtype
+            Normalized array with proper dtype (float32)
         """
         if not isinstance(vectors, np.ndarray):
             vectors = np.array(vectors)
@@ -195,12 +229,20 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Add vectors with explicit IDs.
 
+        This method associates each vector with a specific ID provided by the user. The vectors
+        are added to the index with their corresponding IDs, allowing later retrieval and searching
+        by these IDs.
+
+        The method stores vectors in a cache to support reconstruction operations, regardless
+        of execution mode. It handles both local and remote index operations transparently.
+
         Args:
             x (np.ndarray): Vectors to add, shape (n, d)
             ids (np.ndarray): IDs to associate with vectors, shape (n,)
 
         Raises:
             ValueError: If shapes don't match or if duplicate IDs are provided
+            RuntimeError: If adding to the remote index fails
         """
         # Register access for memory management
         self.register_access()
@@ -246,9 +288,15 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Add vectors with IDs to local index.
 
+        This helper method handles adding vectors to a local FAISS index and updates the
+        internal ID mappings accordingly. It's used when in local execution mode.
+
         Args:
             vectors: Prepared vectors to add
             ids: IDs to associate with vectors
+
+        Note:
+            This updates the internal _id_map and _rev_id_map dictionaries and the ntotal count.
         """
         logger.debug(
             f"Adding {len(vectors)} vectors with IDs to local index {self.name}"
@@ -270,10 +318,17 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Add vectors with IDs to remote index.
 
+        This helper method handles adding vectors to a remote FAISSx server index. It implements
+        batch processing for large vector sets and handles updating internal state based on
+        server responses.
+
         Args:
             client: The FAISSx client
             vectors: Prepared vectors to add
             ids: IDs to associate with vectors
+
+        Raises:
+            RuntimeError: If communication with the remote server fails
         """
         logger.debug(
             f"Adding {len(vectors)} vectors with IDs to remote index {self.index_id}"
@@ -302,10 +357,17 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Add a batch of vectors with IDs to remote index.
 
+        This method handles the actual communication with the server for a single batch
+        of vectors. It converts the numpy arrays to lists for serialization, sends the request,
+        and processes the response to update local state.
+
         Args:
             client: The FAISSx client
             vectors: Batch of vectors to add
             ids: Batch of IDs to associate with vectors
+
+        Raises:
+            RuntimeError: If server returns an error or communication fails
         """
         try:
             # Convert vectors and IDs to list for serialization
@@ -335,11 +397,11 @@ class IndexIDMap(FAISSxBaseIndex):
                         self._id_map[self.ntotal + i] = id_val_int
                         self._rev_id_map[id_val_int] = self.ntotal + i
 
-                # Update total count - for test compatibility, we'll use the number of unique IDs
+                # Update total count - for test compatibility
                 self.ntotal = len(self._rev_id_map)
 
-                # If there are no vectors in self._rev_id_map (empty index), but we're adding vectors,
-                # then set ntotal to the number of IDs we just added (for test compatibility)
+                # If empty index but adding vectors, set ntotal to added IDs count
+                # (for test compatibility)
                 if self.ntotal == 0 and len(ids) > 0:
                     self.ntotal = len(ids)
 
@@ -364,10 +426,14 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Add vectors with automatically generated IDs.
 
-        This will use the vector's position in the index as its ID.
+        This convenience method creates sequential numeric IDs starting from the current ntotal
+        count, effectively using the vector's position in the index as its ID.
 
         Args:
             x (np.ndarray): Vectors to add, shape (n, d)
+
+        Note:
+            This method delegates to add_with_ids with generated sequential IDs.
         """
         # Generate sequential IDs starting from current total
         n = x.shape[0]
@@ -380,6 +446,12 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Search for k nearest neighbors for each query vector.
 
+        Performs similarity search for each query vector, finding the k most similar vectors
+        in the index. Returns both distances and IDs of the nearest neighbors.
+
+        For ID mapping indices, the returned IDs are the user-provided IDs rather than internal
+        FAISS indices. This method supports both local and remote execution transparently.
+
         Args:
             x (np.ndarray): Query vectors, shape (n, d)
             k (int): Number of nearest neighbors to return
@@ -391,6 +463,7 @@ class IndexIDMap(FAISSxBaseIndex):
 
         Raises:
             ValueError: If query vector shape doesn't match index dimension
+            RuntimeError: If search operation fails
         """
         # Register access for memory management
         self.register_access()
@@ -417,12 +490,14 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Search using local FAISS index.
 
+        Delegates the search to the underlying local FAISS index.
+
         Args:
             query_vectors: Prepared query vectors
             k: Number of results requested
 
         Returns:
-            Tuple of (distances, indices)
+            Tuple of (distances, indices) where indices are the user-provided IDs
         """
         logger.debug(
             f"Searching local index {self.name} for {len(query_vectors)} queries, k={k}"
@@ -435,13 +510,20 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Search using remote index with batch processing.
 
+        This method handles searching on the remote FAISSx server, implementing batch
+        processing for large query sets. It aggregates results from multiple batches
+        when necessary.
+
         Args:
             client: FAISSx client
             query_vectors: Prepared query vectors
             k: Number of results requested
 
         Returns:
-            Tuple of (distances, indices)
+            Tuple of (distances, indices) where indices are the user-provided IDs
+
+        Raises:
+            RuntimeError: If search operation fails on the remote server
         """
         logger.debug(
             f"Searching remote index {self.index_id} for {len(query_vectors)} queries, k={k}"
@@ -481,13 +563,19 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Search a batch of queries using remote index.
 
+        This helper handles the actual server communication for a single batch of queries.
+        It processes the server response and formats the results into numpy arrays.
+
         Args:
             client: FAISSx client
             query_vectors: Batch of query vectors
             k: Number of results requested
 
         Returns:
-            Tuple of (distances, indices)
+            Tuple of (distances, indices) for this batch
+
+        Raises:
+            RuntimeError: If the server returns an error
         """
         try:
             # Perform search
@@ -528,11 +616,15 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Remove vectors with the specified IDs.
 
+        This method removes vectors from the index by their user-provided IDs. It handles
+        both local and remote execution modes transparently and updates all internal mappings.
+
         Args:
             ids (np.ndarray): IDs of vectors to remove
 
         Raises:
             ValueError: If any ID is not found
+            RuntimeError: If removal fails on the remote server
         """
         # Register access for memory management
         self.register_access()
@@ -625,6 +717,13 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Search for all vectors within the specified radius.
 
+        This method finds all vectors in the index that are within the given distance radius
+        from each query vector. It returns triplet of arrays that efficiently represent
+        the variable number of results per query.
+
+        The implementation supports both local and remote execution modes and maintains
+        ID mapping consistency.
+
         Args:
             x (np.ndarray): Query vectors, shape (n, d)
             radius (float): Maximum distance threshold
@@ -664,12 +763,18 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Range search using local FAISS index.
 
+        This helper method delegates to the local FAISS index's range_search method,
+        ensuring the underlying index supports this operation.
+
         Args:
             query_vectors: Prepared query vectors
             radius: Distance threshold
 
         Returns:
             Tuple of (lims, distances, indices)
+
+        Raises:
+            RuntimeError: If the underlying index doesn't support range search
         """
         logger.debug(f"Range searching local index {self.name} with radius={radius}")
 
@@ -684,6 +789,10 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Range search using remote index.
 
+        This helper method handles range search on the remote FAISSx server.
+        It processes the server response to properly format the results in the same
+        format as FAISS's native range_search method.
+
         Args:
             client: FAISSx client
             query_vectors: Prepared query vectors
@@ -691,6 +800,9 @@ class IndexIDMap(FAISSxBaseIndex):
 
         Returns:
             Tuple of (lims, distances, indices)
+
+        Raises:
+            RuntimeError: If the server returns an error or doesn't support range search
         """
         logger.debug(f"Range searching remote index {self.index_id} with radius={radius}")
 
@@ -747,11 +859,20 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Reconstruct a vector from its ID.
 
+        This method retrieves the original vector associated with the given ID. It uses
+        multiple fallback mechanisms to improve reliability:
+
+        1. First tries the local vector cache (_vectors_by_id)
+        2. If not found, tries the remote or local index reconstruction
+
+        The vector cache allows efficient vector retrieval even when the underlying index
+        may not support reconstruction.
+
         Args:
             id_val: The ID of the vector to reconstruct
 
         Returns:
-            The reconstructed vector
+            The reconstructed vector as a numpy array
 
         Raises:
             ValueError: If the ID is not found
@@ -778,11 +899,18 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Reconstruct a vector using local FAISS index.
 
+        Attempts to reconstruct the vector using the local FAISS index and caches
+        the result for future use to improve performance.
+
         Args:
             id_val: ID of the vector to reconstruct
 
         Returns:
             The reconstructed vector
+
+        Raises:
+            ValueError: If the ID is not found in the index
+            RuntimeError: If reconstruction is not supported by the underlying index
         """
         logger.debug(
             f"Reconstructing vector with ID {id_val} from local index {self.name}"
@@ -817,12 +945,19 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Reconstruct a vector using remote server.
 
+        Sends a request to the server to reconstruct the vector with the given ID.
+        Caches the result for future reconstruction requests to improve performance.
+
         Args:
             client: FAISSx client
             id_val: ID of the vector to reconstruct
 
         Returns:
             The reconstructed vector
+
+        Raises:
+            ValueError: If the ID is not found
+            RuntimeError: If reconstruction fails due to server error
         """
         logger.debug(
             f"Reconstructing vector with ID {id_val} from remote index {self.index_id}"
@@ -853,19 +988,26 @@ class IndexIDMap(FAISSxBaseIndex):
             logger.error(f"Error reconstructing vector from remote index: {e}")
             raise RuntimeError(f"Reconstruction failed: {e}")
 
-    def reconstruct_n(self, ids, n=None) -> np.ndarray:
+    def reconstruct_n(self, ids: Union[np.ndarray, int], n: Optional[int] = None) -> np.ndarray:
         """
         Reconstruct multiple vectors from their IDs.
-        This function handles both calling formats:
-        - reconstruct_n(ids, n) - where ids is a list/array of IDs and n is number to reconstruct
-        - reconstruct_n(offset, n) - offset = starting index and n is how many to reconstruct
+
+        This method handles two different calling formats:
+        1. reconstruct_n(ids, n) - where ids is an array of IDs and n is number to reconstruct
+        2. reconstruct_n(offset, n) - where offset is starting index and n is count to reconstruct
+
+        The method implements graceful error handling, filling with zeros for IDs that cannot
+        be reconstructed rather than failing completely.
 
         Args:
             ids: Array of IDs to reconstruct or starting index
             n: Number of vectors to reconstruct (optional if ids is an array)
 
         Returns:
-            Array of reconstructed vectors
+            Array of reconstructed vectors, shape (n, d)
+
+        Raises:
+            ValueError: If the arguments format is invalid
         """
         # Register access for memory management
         self.register_access()
@@ -887,6 +1029,9 @@ class IndexIDMap(FAISSxBaseIndex):
         elif isinstance(ids, int):
             # Format with offset and count
             offset = ids
+
+            if n is None:
+                raise ValueError("Number of vectors to reconstruct (n) must be specified")
 
             # Create an array of IDs to reconstruct
             id_array = []
@@ -913,8 +1058,15 @@ class IndexIDMap(FAISSxBaseIndex):
         """
         Train the underlying index if it requires training.
 
+        This method delegates to the underlying index's train method if it has one.
+        Many FAISS index types require training on representative data before adding vectors.
+
         Args:
             x (np.ndarray): Training vectors, shape (n, d)
+
+        Note:
+            For indices that don't require training, this method has no effect.
+            The is_trained flag is updated based on the underlying index's state.
         """
         # Register access for memory management
         self.register_access()
@@ -926,6 +1078,13 @@ class IndexIDMap(FAISSxBaseIndex):
     def reset(self) -> None:
         """
         Reset the index to its initial state.
+
+        This method clears all vectors and ID mappings from the index, returning it to
+        the state it was in immediately after creation. It handles both local and remote
+        execution modes.
+
+        For remote indices, this may create a new index with a different name/ID to ensure
+        a clean state.
         """
         # Register access for memory management
         self.register_access()
@@ -938,7 +1097,11 @@ class IndexIDMap(FAISSxBaseIndex):
             self._reset_local()
 
     def _reset_local(self) -> None:
-        """Reset local index."""
+        """
+        Reset local index.
+
+        Clears all vectors and ID mappings from the index.
+        """
         logger.debug(f"Resetting local index {self.name}")
 
         if hasattr(self._local_index, "reset"):
@@ -959,6 +1122,8 @@ class IndexIDMap(FAISSxBaseIndex):
     def _reset_remote(self, client: Any) -> None:
         """
         Reset remote index by creating a new one.
+
+        Creates a new index with a unique name and updates all internal references.
 
         Args:
             client: FAISSx client
@@ -1022,11 +1187,21 @@ class IndexIDMap(FAISSxBaseIndex):
                 raise RuntimeError(f"Failed to reset index: {e2}")
 
     def close(self) -> None:
-        """Clean up resources."""
+        """
+        Clean up resources.
+
+        This method is called explicitly to free resources. In most cases, no action
+        is needed as Python's garbage collection will handle resource cleanup.
+        """
         pass
 
     def __del__(self) -> None:
-        """Clean up when the object is deleted."""
+        """
+        Clean up when the object is deleted.
+
+        This method is called by Python's garbage collector when the object is deleted.
+        It ensures proper resource cleanup by calling the close method.
+        """
         self.close()
 
 
@@ -1034,15 +1209,35 @@ class IndexIDMap2(IndexIDMap):
     """
     A drop-in replacement for FAISS IndexIDMap2 supporting both local and remote execution.
 
-    IndexIDMap2 is a variant of IndexIDMap that supports replacement of existing vectors.
+    IndexIDMap2 extends IndexIDMap to support replacement of existing vectors while maintaining
+    their IDs. This is useful when vectors need to be updated over time without changing their
+    identifiers.
+
+    The implementation handles both local execution using FAISS directly and remote execution
+    through a FAISSx server. It maintains consistent ID mappings across both modes.
+
+    Key differences from IndexIDMap:
+    - Allows replacing vectors with the same ID (add_with_ids with existing IDs updates vectors)
+    - Adds a replace_vector method for explicit single vector replacement
+    - Handles vector updating on both client and server sides
+
+    IndexIDMap2 uses the same methods as IndexIDMap for search and reconstruction operations.
     """
 
-    def __init__(self, index):
+    def __init__(self, index: Any) -> None:
         """
         Initialize the IndexIDMap2 with the given underlying index.
 
+        This constructor first initializes the parent IndexIDMap, then adds IndexIDMap2-specific
+        functionality. It attempts to create an IndexIDMap2 index on the remote server if in
+        remote mode, or a local FAISS IndexIDMap2 for local execution.
+
         Args:
             index: The FAISS index to wrap (e.g., IndexFlatL2, IndexIVFFlat)
+
+        Raises:
+            RuntimeError: If the server doesn't support IndexIDMap2 or creation fails
+            ValueError: If the base index doesn't have required properties
         """
         # Initialize the parent class first (IndexIDMap)
         IndexIDMap.__init__(self, index)
@@ -1119,14 +1314,21 @@ class IndexIDMap2(IndexIDMap):
         """
         Add or update vectors with explicit IDs.
 
-        For IndexIDMap2, if an ID already exists, the corresponding vector will be replaced.
+        This is the key method that differentiates IndexIDMap2 from IndexIDMap. When
+        adding vectors with IDs that already exist in the index:
+        - IndexIDMap would error or have undefined behavior
+        - IndexIDMap2 replaces the existing vectors while maintaining their IDs
+
+        The method handles both cases transparently, keeping track of which IDs are new
+        vs. which ones are updates to existing vectors.
 
         Args:
-            x (np.ndarray): Vectors to add, shape (n, d)
+            x (np.ndarray): Vectors to add or update, shape (n, d)
             ids (np.ndarray): IDs to associate with vectors, shape (n,)
 
         Raises:
-            ValueError: If shapes don't match
+            ValueError: If shapes don't match or vector dimensions are invalid
+            RuntimeError: If the operation fails on the remote server
         """
         # Validate input shapes match
         if len(x) != len(ids):
@@ -1191,11 +1393,11 @@ class IndexIDMap2(IndexIDMap):
                             self._id_map[idx] = id_val_int
                             self._rev_id_map[id_val_int] = idx
 
-                    # Update total count - for test compatibility, we'll use the number of unique IDs
+                    # Update total count - using unique IDs for test compatibility
                     self.ntotal = len(self._rev_id_map)
 
-                    # If there are no vectors in self._rev_id_map (empty index), but we're adding vectors,
-                    # then set ntotal to the number of IDs we just added (for test compatibility)
+                    # If empty but adding vectors, use count of added IDs
+                    # (for test compatibility)
                     if self.ntotal == 0 and len(ids) > 0:
                         self.ntotal = len(ids)
 
@@ -1223,12 +1425,16 @@ class IndexIDMap2(IndexIDMap):
         """
         Replace a vector with a new one, preserving its ID.
 
+        This convenience method allows replacing a single vector by its ID.
+        It's a special case of add_with_ids for a single vector update.
+
         Args:
             id_val: ID of the vector to replace
-            vector: New vector data
+            vector: New vector data to associate with the ID
 
         Raises:
             ValueError: If the ID is not found or the vector has wrong dimensionality
+            RuntimeError: If the replacement operation fails on the server
         """
         # Validate vector dimension
         if len(vector.shape) == 1:

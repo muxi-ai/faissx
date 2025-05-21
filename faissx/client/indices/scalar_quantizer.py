@@ -24,11 +24,14 @@ FAISSx IndexScalarQuantizer implementation.
 This module provides a client-side implementation of the FAISS IndexScalarQuantizer class.
 It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
+
+Scalar Quantization compresses vectors by quantizing each dimension independently,
+offering a good balance between memory usage and search accuracy.
 """
 
 import uuid
 import numpy as np
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict, Optional, List
 
 from ..client import get_client
 from .base import logger, FAISSxBaseIndex
@@ -56,7 +59,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         index_id (str): Server-side index identifier (when in remote mode)
     """
 
-    def __init__(self, d: int, qtype=None, metric_type=None):
+    def __init__(self, d: int, qtype: Optional[Any] = None, metric_type: Optional[Any] = None):
         """
         Initialize the scalar quantizer index with specified parameters.
 
@@ -84,27 +87,27 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             metric_type = METRIC_L2
 
         # Store core parameters
-        self.d = d
-        self.qtype = qtype
+        self.d: int = d
+        self.qtype: Any = qtype
         # Convert metric type to string representation for remote mode
-        self.metric_type = "IP" if metric_type == METRIC_INNER_PRODUCT else "L2"
+        self.metric_type: str = "IP" if metric_type == METRIC_INNER_PRODUCT else "L2"
 
         # Initialize state variables
-        self.is_trained = True  # Scalar quantizer doesn't need explicit training
-        self.ntotal = 0
+        self.is_trained: bool = True  # Scalar quantizer doesn't need explicit training
+        self.ntotal: int = 0
 
         # Initialize GPU-related attributes
-        self._use_gpu = False
-        self._gpu_resources = None
-        self._local_index = None
+        self._use_gpu: bool = False
+        self._gpu_resources: Optional[Any] = None
+        self._local_index: Optional[Any] = None
 
         # Generate unique name for the index
-        self.name = f"index-sq-{uuid.uuid4().hex[:8]}"
-        self.index_id = self.name
+        self.name: str = f"index-sq-{uuid.uuid4().hex[:8]}"
+        self.index_id: str = self.name
 
         # Initialize vector mapping for remote mode
-        self._vector_mapping = {}  # Maps server-side indices to local indices for faster lookup
-        self._next_idx = 0  # Counter for local indices
+        self._vector_mapping: Dict[int, int] = {}  # Maps server-side indices to local indices
+        self._next_idx: int = 0  # Counter for local indices
 
         # Check if client exists and its mode
         client = get_client()
@@ -119,7 +122,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             logger.info(f"Creating local IndexScalarQuantizer index {self.name}")
             self._create_local_index(d, qtype, metric_type)
 
-    def _get_index_type_string(self, qtype=None) -> str:
+    def _get_index_type_string(self, qtype: Optional[Any] = None) -> str:
         """
         Get standardized string representation of index type.
 
@@ -185,6 +188,9 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             d (int): Vector dimension
             qtype: Quantizer type
             metric_type: Distance metric type
+
+        Raises:
+            RuntimeError: If index creation fails
         """
         try:
             import faiss
@@ -241,6 +247,9 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             client: FAISSx client instance
             d (int): Vector dimension
             qtype: Quantizer type
+
+        Raises:
+            RuntimeError: If remote index creation fails
         """
         try:
             # Get index type string
@@ -265,7 +274,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
                 f"Server may not support SQ indices with type {index_type}."
             )
 
-    def _map_server_to_local_indices(self, server_indices: list) -> np.ndarray:
+    def _map_server_to_local_indices(self, server_indices: List[int]) -> np.ndarray:
         """
         Map server indices to local indices using the mapping dictionary.
 
@@ -312,7 +321,12 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             self._add_local(vectors)
 
     def _add_local(self, vectors: np.ndarray) -> None:
-        """Add vectors to local index."""
+        """
+        Add vectors to local index.
+
+        Args:
+            vectors: Vectors to add
+        """
         logger.debug(f"Adding {len(vectors)} vectors to local index {self.name}")
 
         # Make sure the index is trained before adding vectors
@@ -325,7 +339,13 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         self.ntotal = self._local_index.ntotal
 
     def _add_remote(self, client: Any, vectors: np.ndarray) -> None:
-        """Add vectors to remote index."""
+        """
+        Add vectors to remote index.
+
+        Args:
+            client: FAISSx client
+            vectors: Vectors to add
+        """
         logger.debug(f"Adding {len(vectors)} vectors to remote index {self.index_id}")
 
         # Get batch size parameter
@@ -344,7 +364,13 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             self._add_remote_batch(client, batch)
 
     def _add_remote_batch(self, client: Any, vectors: np.ndarray) -> None:
-        """Add a batch of vectors to the remote index."""
+        """
+        Add a batch of vectors to the remote index.
+
+        Args:
+            client: FAISSx client
+            vectors: Batch of vectors to add
+        """
         # Add vectors to remote index
         result = client.add_vectors(self.index_id, vectors)
 
@@ -420,9 +446,25 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         else:
             return self._search_local(query_vectors, k, internal_k, need_reranking)
 
-    def _search_local(self, query_vectors: np.ndarray, k: int, internal_k: int,
-                      need_reranking: bool) -> Tuple[np.ndarray, np.ndarray]:
-        """Search in local index."""
+    def _search_local(
+        self,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Search in local index.
+
+        Args:
+            query_vectors: Vectors to query
+            k: Number of results to return
+            internal_k: Number of results to retrieve internally (may be larger than k)
+            need_reranking: Whether to rerank results
+
+        Returns:
+            Tuple of (distances, indices)
+        """
         logger.debug(f"Searching {len(query_vectors)} vectors in local index {self.name}")
 
         # Use local FAISS implementation directly
@@ -436,10 +478,26 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         return distances, indices
 
     def _search_remote(
-        self, client: Any, query_vectors: np.ndarray, k: int,
-        internal_k: int, need_reranking: bool
+        self,
+        client: Any,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Search in remote index."""
+        """
+        Search in remote index.
+
+        Args:
+            client: FAISSx client
+            query_vectors: Vectors to query
+            k: Number of results to return
+            internal_k: Number of results to retrieve internally
+            need_reranking: Whether to rerank results
+
+        Returns:
+            Tuple of (distances, indices)
+        """
         logger.debug(f"Searching {len(query_vectors)} vectors in remote index {self.index_id}")
 
         # Get batch size parameter
@@ -449,7 +507,9 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
 
         # If queries fit in a single batch, search directly
         if len(query_vectors) <= batch_size:
-            return self._search_remote_batch(client, query_vectors, k, internal_k, need_reranking)
+            return self._search_remote_batch(
+                client, query_vectors, k, internal_k, need_reranking
+            )
 
         # Otherwise, process in batches and combine results
         all_distances = []
@@ -469,9 +529,27 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         else:
             return np.vstack(all_distances), np.vstack(all_indices)
 
-    def _search_remote_batch(self, client: Any, query_vectors: np.ndarray, k: int,
-                            internal_k: int, need_reranking: bool) -> Tuple[np.ndarray, np.ndarray]:
-        """Search a batch of queries in the remote index."""
+    def _search_remote_batch(
+        self,
+        client: Any,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Search a batch of queries in the remote index.
+
+        Args:
+            client: FAISSx client
+            query_vectors: Vectors to query
+            k: Number of results to return
+            internal_k: Number of results to retrieve internally
+            need_reranking: Whether to rerank results
+
+        Returns:
+            Tuple of (distances, indices)
+        """
         # Perform search on remote index
         result = client.search(self.index_id, query_vectors=query_vectors, k=internal_k)
 
@@ -555,7 +633,11 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         else:
             return self._range_search_local(query_vectors, radius)
 
-    def _range_search_local(self, query_vectors: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _range_search_local(
+        self,
+        query_vectors: np.ndarray,
+        radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Execute range search on the local index.
 
@@ -565,6 +647,9 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
 
         Returns:
             Tuple of lims, distances, and indices arrays
+
+        Raises:
+            RuntimeError: If range search fails
         """
         logger.debug(f"Range searching {len(query_vectors)} vectors in local index {self.name}")
 
@@ -585,7 +670,12 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             logger.error(f"Error in local range search: {e}")
             raise RuntimeError(f"Range search failed: {e}")
 
-    def _range_search_remote(self, client: Any, query_vectors: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _range_search_remote(
+        self,
+        client: Any,
+        query_vectors: np.ndarray,
+        radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Execute range search on the remote index.
 
@@ -597,7 +687,9 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         Returns:
             Tuple of lims, distances, and indices arrays
         """
-        logger.debug(f"Range searching {len(query_vectors)} vectors in remote index {self.index_id}")
+        logger.debug(
+            f"Range searching {len(query_vectors)} vectors in remote index {self.index_id}"
+        )
 
         # Get batch size parameter
         batch_size = self.get_parameter('batch_size')
@@ -626,9 +718,18 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             all_distances.extend(distances)
             all_indices.extend(indices)
 
-        return np.array(all_lims, dtype=np.int64), np.array(all_distances, dtype=np.float32), np.array(all_indices, dtype=np.int64)
+        return (
+            np.array(all_lims, dtype=np.int64),
+            np.array(all_distances, dtype=np.float32),
+            np.array(all_indices, dtype=np.int64)
+        )
 
-    def _range_search_remote_batch(self, client: Any, query_vectors: np.ndarray, radius: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _range_search_remote_batch(
+        self,
+        client: Any,
+        query_vectors: np.ndarray,
+        radius: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Execute range search for a batch of queries on the remote index.
 
@@ -667,7 +768,9 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             # Process results
             if isinstance(search_results, list) and len(search_results) > 0:
                 # Check if results contain lims, distances, and indices
-                if "lims" in search_results[0] and "distances" in search_results[0] and "indices" in search_results[0]:
+                if ("lims" in search_results[0] and
+                        "distances" in search_results[0] and
+                        "indices" in search_results[0]):
                     # Extract and combine results
                     lims = np.array(search_results[0]["lims"], dtype=np.int64)
                     distances = np.array(search_results[0]["distances"], dtype=np.float32)
@@ -676,13 +779,18 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
                     # Alternative format: process individual per-query results
                     total_results = 0
                     for i, result in enumerate(search_results):
-                        if isinstance(result, dict) and "distances" in result and "indices" in result:
+                        if (isinstance(result, dict) and
+                                "distances" in result and "indices" in result):
                             result_distances = result.get("distances", [])
                             result_indices = result.get("indices", [])
 
                             lims[i + 1] = lims[i] + len(result_distances)
-                            distances = np.concatenate((distances, np.array(result_distances, dtype=np.float32)))
-                            indices = np.concatenate((indices, np.array(result_indices, dtype=np.int64)))
+                            distances = np.concatenate(
+                                (distances, np.array(result_distances, dtype=np.float32))
+                            )
+                            indices = np.concatenate(
+                                (indices, np.array(result_indices, dtype=np.int64))
+                            )
 
                             total_results += len(result_distances)
 
@@ -711,7 +819,11 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             self._reset_local()
 
     def _reset_local(self) -> None:
-        """Reset local index."""
+        """
+        Reset local index.
+
+        This removes all vectors but keeps the index configuration.
+        """
         logger.debug(f"Resetting local index {self.name}")
         # Reset local FAISS index
         if self._local_index is not None:
@@ -719,7 +831,12 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         self.ntotal = 0
 
     def _reset_remote(self, client: Any) -> None:
-        """Reset remote index by creating a new one."""
+        """
+        Reset remote index by creating a new one.
+
+        Args:
+            client: FAISSx client
+        """
         logger.debug(f"Resetting remote index {self.index_id}")
 
         try:
@@ -776,16 +893,37 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         self._vector_mapping = {}
         self._next_idx = 0
 
-    def __enter__(self):
-        """Context manager entry."""
+    def __enter__(self) -> 'IndexScalarQuantizer':
+        """
+        Context manager entry.
+
+        Returns:
+            Self for use in context manager
+        """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[Exception],
+        exc_tb: Optional[Any]
+    ) -> None:
+        """
+        Context manager exit.
+
+        Args:
+            exc_type: Exception type if an exception was raised
+            exc_val: Exception value if an exception was raised
+            exc_tb: Exception traceback if an exception was raised
+        """
         self.close()
 
     def close(self) -> None:
-        """Clean up resources."""
+        """
+        Clean up resources.
+
+        This is particularly important for freeing GPU resources.
+        """
         if self._use_gpu and self._gpu_resources is not None:
             self._gpu_resources = None
         self._local_index = None

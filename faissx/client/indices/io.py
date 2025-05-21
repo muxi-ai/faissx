@@ -33,7 +33,7 @@ import os
 import tempfile
 import logging
 import time
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, TypeVar
 
 import numpy as np
 import faiss
@@ -50,6 +50,9 @@ from .factory import index_factory
 
 logger = logging.getLogger(__name__)
 
+# Define a type alias for FAISS indices to improve readability
+FaissIndex = TypeVar('FaissIndex')
+
 # Constants for file format
 IDMAP_FORMAT_FLAG = 0
 IDMAP2_FORMAT_FLAG = 1
@@ -59,7 +62,7 @@ HEADER_SIZE = 1  # 1 byte for format flag
 MAX_VECTORS_TO_RECONSTRUCT = 100000
 
 
-def write_index(index: Any, fname: str) -> None:
+def write_index(index: FaissIndex, fname: str) -> None:
     """
     Write a FAISSx index to disk in a format compatible with FAISS.
 
@@ -118,7 +121,7 @@ def write_index(index: Any, fname: str) -> None:
         raise ValueError(f"Failed to save index: {e}")
 
 
-def read_index(fname: str, gpu: bool = False) -> Any:
+def read_index(fname: str, gpu: bool = False) -> FaissIndex:
     """
     Read a saved FAISSx index from disk.
 
@@ -145,13 +148,13 @@ def read_index(fname: str, gpu: bool = False) -> Any:
             format_flag = f.read(HEADER_SIZE)[0]
 
             if format_flag in [IDMAP_FORMAT_FLAG, IDMAP2_FORMAT_FLAG]:
-                logger.info(
-                    f"Loading file {fname} as IDMap{'2' if format_flag == IDMAP2_FORMAT_FLAG else ''} format"
-                )
+                id_map_type = "2" if format_flag == IDMAP2_FORMAT_FLAG else ""
+                logger.info(f"Loading file {fname} as IDMap{id_map_type} format")
+
                 index = _read_idmap_index(fname, format_flag, gpu)
-                logger.info(
-                    f"Successfully loaded IDMap index from {fname} in {time.time() - start_time:.2f}s"
-                )
+
+                elapsed = time.time() - start_time
+                logger.info(f"Successfully loaded IDMap index from {fname} in {elapsed:.2f}s")
                 return index
     except (IOError, ValueError, IndexError) as e:
         # Not a custom IDMap file or error reading it, try standard FAISS reading
@@ -181,14 +184,28 @@ def read_index(fname: str, gpu: bool = False) -> Any:
 
 
 def _ensure_directory_exists(file_path: str) -> None:
-    """Ensure the directory for a file path exists."""
+    """
+    Ensure the directory for a file path exists.
+
+    Args:
+        file_path: Path to file for which to ensure directory existence
+    """
     dirname = os.path.dirname(file_path)
     if dirname and not os.path.isdir(dirname):
         os.makedirs(dirname, exist_ok=True)
 
 
 def _write_idmap_index(index: Union[IndexIDMap, IndexIDMap2], fname: str) -> None:
-    """Write an IDMap or IDMap2 index to disk."""
+    """
+    Write an IDMap or IDMap2 index to disk.
+
+    This function handles saving both IndexIDMap and IndexIDMap2 instances with their
+    ID mappings preserved. It uses a custom format when necessary.
+
+    Args:
+        index: The IDMap or IDMap2 index to save
+        fname: Output file name where the index will be saved
+    """
     # Check if we're in remote mode
     client = get_client()
     is_remote = client is not None and client.mode == "remote"
@@ -255,6 +272,11 @@ def _create_id_map_array(index: Union[IndexIDMap, IndexIDMap2]) -> np.ndarray:
     """
     Extract ID mapping from an IDMap index.
 
+    This function attempts to extract ID mappings using multiple approaches:
+    1. Direct access to FAISS IDMap (local mode)
+    2. Use pythonic ID mapping if available
+    3. Fall back to an empty array
+
     Args:
         index: The IDMap or IDMap2 index
 
@@ -290,11 +312,11 @@ def _create_id_map_array(index: Union[IndexIDMap, IndexIDMap2]) -> np.ndarray:
 
 def _reconstruct_vectors_from_index(
     index: Union[IndexIDMap, IndexIDMap2],
-) -> np.ndarray:
+) -> Optional[np.ndarray]:
     """
     Reconstruct vectors from an index.
 
-    Tries multiple approaches:
+    Tries multiple approaches in order:
     1. Use get_vectors if available
     2. Use reconstruct_n method
     3. Fall back to individual vector reconstruction
@@ -380,11 +402,17 @@ def _get_base_index(index: Union[IndexIDMap, IndexIDMap2]) -> Any:
     """
     Get the base index from an IDMap or IDMap2 index.
 
+    This function attempts to extract the underlying base index from an IDMap wrapper
+    using several approaches:
+    1. Direct access through _local_index
+    2. Access through the index attribute
+    3. Create a fallback flat index if all else fails
+
     Args:
         index: The IDMap or IDMap2 index
 
     Returns:
-        Base index
+        The extracted base index or a fallback flat index
     """
     # Try getting the base index through direct access
     if hasattr(index, "_local_index") and index._local_index is not None:
@@ -419,7 +447,7 @@ def _write_idmap_format(
     """
     Write an IDMap or IDMap2 index to disk in custom format.
 
-    The format is:
+    The file format structure is:
     - 1 byte format flag (0 for IDMap, 1 for IDMap2)
     - 4 bytes ntotal (int32)
     - 4 bytes dimension (int32)
@@ -428,11 +456,14 @@ def _write_idmap_format(
     - Vector data (optional)
 
     Args:
-        index: The IDMap or IDMap2 index
+        index: The IDMap or IDMap2 index to save
         fname: Output file name
-        id_map: Array of IDs
-        index_data: Serialized base index data
-        vectors: Optional vector data
+        id_map: Array of IDs extracted from the index
+        index_data: Serialized base index data as bytes
+        vectors: Optional vector data (embeddings) to store
+
+    Raises:
+        ValueError: If the ID map format could not be written
     """
     try:
         with open(fname, "wb") as f:
@@ -478,9 +509,13 @@ def _write_idmap_format(
         raise ValueError(f"Failed to write IDMap format: {e}")
 
 
-def _write_empty_index(index: Any, fname: str) -> None:
+def _write_empty_index(index: FaissIndex, fname: str) -> None:
     """
     Write an empty index to disk.
+
+    This function creates and saves an empty index of the appropriate type.
+    For remote mode, it creates a simple placeholder index.
+    For local mode, it attempts to create an index of the same type.
 
     Args:
         index: The empty index to save
@@ -513,9 +548,12 @@ def _write_empty_index(index: Any, fname: str) -> None:
         logger.warning(f"Used fallback flat index for {fname}")
 
 
-def _create_empty_index_by_type(index: Any) -> Optional[Any]:
+def _create_empty_index_by_type(index: FaissIndex) -> Optional[Any]:
     """
     Create an empty FAISS index of the same type as the input index.
+
+    This function inspects the provided index and creates an empty FAISS index
+    with the same parameters (dimension, metric type, etc.) but without any data.
 
     Args:
         index: The reference index
@@ -591,9 +629,13 @@ def _create_empty_index_by_type(index: Any) -> Optional[Any]:
     return None
 
 
-def _reconstruct_and_save_index(index: Any, fname: str) -> None:
+def _reconstruct_and_save_index(index: FaissIndex, fname: str) -> None:
     """
     Reconstruct an index and save it to disk.
+
+    This function extracts vectors from the index and creates a new index
+    with the same parameters but containing only the extracted vectors.
+    If vectors cannot be extracted, it falls back to saving an empty index.
 
     Args:
         index: The index to save
@@ -624,14 +666,16 @@ def _reconstruct_and_save_index(index: Any, fname: str) -> None:
         faiss.write_index(flat_index, fname)
 
 
-def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
+def _get_vectors_from_index(index: FaissIndex) -> Optional[np.ndarray]:
     """
     Extract vectors from an index.
 
     This function tries multiple approaches to get the vectors from an index:
     1. Use vectors directly if available in local mode
-    2. Try reconstruction methods
-    3. Fall back to dummy vectors in remote mode
+    2. Try reconstruction methods (reconstruct_n, get_vectors, get_xb)
+    3. Fall back to dummy vectors in remote mode if needed
+
+    The function limits the number of vectors extracted to avoid memory issues.
 
     Args:
         index: The index to extract vectors from
@@ -697,8 +741,20 @@ def _get_vectors_from_index(index: Any) -> Optional[np.ndarray]:
     return None
 
 
-def _create_initialized_index(index: Any, vectors: np.ndarray) -> Optional[Any]:
-    """Create and initialize a FAISS index of the appropriate type."""
+def _create_initialized_index(index: FaissIndex, vectors: np.ndarray) -> Optional[Any]:
+    """
+    Create and initialize a FAISS index of the appropriate type.
+
+    This function creates a new index of the same type as the input index,
+    trains it if necessary, and adds the provided vectors to it.
+
+    Args:
+        index: Reference index that defines the type and parameters
+        vectors: Vectors to add to the newly created index
+
+    Returns:
+        Initialized FAISS index with vectors added, or None if creation fails
+    """
     local_index = None
     index_type = type(index).__name__
 
@@ -738,8 +794,19 @@ def _create_initialized_index(index: Any, vectors: np.ndarray) -> Optional[Any]:
         return None
 
 
-def _create_equivalent_faiss_index(index: Any) -> Optional[Any]:
-    """Create a native FAISS index equivalent to the FAISSx index."""
+def _create_equivalent_faiss_index(index: FaissIndex) -> Optional[Any]:
+    """
+    Create a native FAISS index equivalent to the FAISSx index.
+
+    This function creates a new FAISS index with the same parameters as the input
+    FAISSx index, but without adding any vectors.
+
+    Args:
+        index: The FAISSx index to create an equivalent for
+
+    Returns:
+        Equivalent empty FAISS index, or None if creation fails
+    """
     try:
         if isinstance(index, IndexFlatL2):
             return faiss.IndexFlatL2(index.d)
@@ -772,7 +839,23 @@ def _create_equivalent_faiss_index(index: Any) -> Optional[Any]:
 def _read_idmap_index(
     fname: str, format_flag: int, gpu: bool
 ) -> Union[IndexIDMap, IndexIDMap2]:
-    """Read a custom format IDMap index from file."""
+    """
+    Read a custom format IDMap index from file.
+
+    This function reads an index that was saved in the custom IDMap format,
+    extracts the ID mappings and vectors, and reconstructs the index.
+
+    Args:
+        fname: Path to the index file
+        format_flag: Flag indicating whether it's IDMap (0) or IDMap2 (1)
+        gpu: Whether to try loading the index on GPU if available
+
+    Returns:
+        Reconstructed IndexIDMap or IndexIDMap2 index
+
+    Raises:
+        ValueError: If the file cannot be read as an IDMap index
+    """
     is_idmap2 = format_flag == IDMAP2_FORMAT_FLAG
 
     try:
@@ -829,7 +912,30 @@ def _create_idmap_from_data(
     vectors: Optional[np.ndarray] = None,
     gpu: bool = False,
 ) -> Union[IndexIDMap, IndexIDMap2]:
-    """Create an IDMap index from the loaded data."""
+    """
+    Create an IDMap index from the loaded data.
+
+    This function reconstructs an IDMap/IDMap2 index from serialized components:
+    - Creates a base index from index_data
+    - Restores ID mappings from id_map_data
+    - Optionally caches vectors for future operations
+
+    Args:
+        fname: Original file name (for logging)
+        is_idmap2: Whether to create IDMap2 (True) or IDMap (False)
+        ntotal: Total number of vectors in the index
+        d: Dimension of the vectors
+        id_map_data: Array of ID mappings (internal to external IDs)
+        index_data: Serialized base index data
+        vectors: Optional vector data for caching
+        gpu: Whether to try using GPU if available
+
+    Returns:
+        Reconstructed IndexIDMap or IndexIDMap2 index
+
+    Raises:
+        ValueError: If the index cannot be created from the data
+    """
     # Create a temporary file for the index
     with tempfile.NamedTemporaryFile(suffix=".index", delete=False) as tmp:
         temp_path = tmp.name
@@ -929,7 +1035,18 @@ def _create_idmap_from_data(
 
 
 def _move_to_gpu_if_available(index: Any) -> Any:
-    """Move a FAISS index to GPU if GPU support is available."""
+    """
+    Move a FAISS index to GPU if GPU support is available.
+
+    This function attempts to transfer a FAISS index to GPU for faster processing.
+    If GPU support is not available, it returns the original index unchanged.
+
+    Args:
+        index: FAISS index to move to GPU
+
+    Returns:
+        GPU-enabled index if successful, otherwise the original index
+    """
     try:
         import faiss.contrib.gpu  # type: ignore
 
@@ -942,8 +1059,20 @@ def _move_to_gpu_if_available(index: Any) -> Any:
     return index
 
 
-def _create_faissx_base_index(base_index: Any, d: int) -> Optional[Any]:
-    """Create a FAISSx index wrapper for a FAISS index."""
+def _create_faissx_base_index(base_index: Any, d: int) -> Optional[FaissIndex]:
+    """
+    Create a FAISSx index wrapper for a FAISS index.
+
+    This function creates the appropriate FAISSx wrapper around a native FAISS index
+    based on the index type, copying necessary parameters and configurations.
+
+    Args:
+        base_index: Native FAISS index to wrap
+        d: Dimension of the vectors in the index
+
+    Returns:
+        FAISSx wrapper index or None if the index type is not supported
+    """
     if isinstance(base_index, faiss.IndexFlatL2):
         faissx_base = IndexFlatL2(d)
         faissx_base._local_index = base_index
@@ -985,8 +1114,24 @@ def _create_faissx_base_index(base_index: Any, d: int) -> Optional[Any]:
     return None
 
 
-def _create_faissx_from_faiss_index(faiss_index: Any, fname: str, gpu: bool) -> Any:
-    """Create a FAISSx index from a FAISS index."""
+def _create_faissx_from_faiss_index(faiss_index: Any, fname: str, gpu: bool) -> FaissIndex:
+    """
+    Create a FAISSx index from a FAISS index.
+
+    This function wraps a native FAISS index with the appropriate FAISSx wrapper
+    based on the index type.
+
+    Args:
+        faiss_index: Native FAISS index to wrap
+        fname: Original filename (for logging)
+        gpu: Whether the index was loaded on GPU
+
+    Returns:
+        FAISSx index wrapping the native FAISS index
+
+    Raises:
+        ValueError: If the index type is not supported
+    """
     d = faiss_index.d
 
     if isinstance(faiss_index, faiss.IndexFlatL2):
@@ -1054,7 +1199,20 @@ def _create_faissx_from_faiss_index(faiss_index: Any, fname: str, gpu: bool) -> 
 def _handle_idmap_faiss_index(
     faiss_index: Any, fname: str, gpu: bool
 ) -> Union[IndexIDMap, IndexIDMap2]:
-    """Handle an IDMap/IDMap2 FAISS index."""
+    """
+    Handle an IDMap/IDMap2 FAISS index.
+
+    This function creates a FAISSx IDMap or IDMap2 wrapper for a native FAISS IDMap index,
+    copying ID mappings and reconstructing vectors when possible.
+
+    Args:
+        faiss_index: Native FAISS IDMap/IDMap2 index
+        fname: Original filename (for logging)
+        gpu: Whether the index was loaded on GPU
+
+    Returns:
+        FAISSx IndexIDMap or IndexIDMap2 wrapper
+    """
     # Get dimension from the base index
     d = faiss_index.d
 
@@ -1101,8 +1259,19 @@ def _handle_idmap_faiss_index(
     return idmap
 
 
-def _infer_index_type(faiss_index) -> Optional[str]:
-    """Helper to determine the index type from a FAISS index object."""
+def _infer_index_type(faiss_index: Any) -> Optional[str]:
+    """
+    Helper to determine the index type from a FAISS index object.
+
+    This function analyzes a FAISS index and returns a string descriptor
+    that can be used with index_factory to recreate an equivalent index.
+
+    Args:
+        faiss_index: FAISS index to analyze
+
+    Returns:
+        String description of the index type or None if the type isn't recognized
+    """
     # Most FAISS indices have a specific class name pattern
     class_name = type(faiss_index).__name__
 

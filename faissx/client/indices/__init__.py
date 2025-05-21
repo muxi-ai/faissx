@@ -19,55 +19,53 @@
 # limitations under the License.
 
 """
-FAISSx Index Implementations Package
+Core index implementations and utilities for FAISSx.
 
-This package provides client-side implementations of FAISS index classes that support both local
-and remote operation modes. Local mode uses FAISS directly, while remote mode communicates with
-the FAISSx server for distributed vector operations.
+This module organizes and exports various FAISS index implementations and utility
+functions. It provides a clean public API for accessing different types of vector
+indices and their supporting operations.
 """
 
-# Core index implementations
+# Core index implementations - organized by type
 from .flat import IndexFlatL2  # Basic L2 distance-based index
 from .ivf_flat import IndexIVFFlat  # Inverted file index with flat vectors
 from .hnsw_flat import IndexHNSWFlat  # Hierarchical navigable small world graph
+
+# Quantization-based indices for memory-efficient vector storage
 from .pq import IndexPQ  # Product quantization for memory efficiency
 from .ivf_pq import IndexIVFPQ  # Combined IVF and PQ for large-scale search
 from .scalar_quantizer import IndexScalarQuantizer  # Scalar quantization
 from .ivf_scalar_quantizer import IndexIVFScalarQuantizer  # Scalar quantization
 
 # ID mapping implementations for custom vector identification
-# IndexIDMap: Basic ID mapping functionality
-# IndexIDMap2: Extended with vector update capabilities
-from .id_map import IndexIDMap, IndexIDMap2
+from .id_map import IndexIDMap, IndexIDMap2  # Basic and extended ID mapping
 
-# Factory function for creating indices from string descriptions
-# Compatible with FAISS's index_factory interface
-from .factory import index_factory
+# Factory and utility functions for index management
+from .factory import index_factory  # Index creation from string descriptions
+from .io import write_index, read_index  # Index persistence operations
+from .modification import merge_indices, split_index  # Index modification utilities
 
-# Index persistence operations
-# write_index: Save index to disk
-# read_index: Load index from disk
-from .io import write_index, read_index
-
-# Index modification utilities
-# merge_indices: Combine multiple indices
-# split_index: Divide index into smaller parts
-from .modification import merge_indices, split_index
-
-# Public API exports
+# Public API exports - organized by category for clear documentation
 __all__ = [
-    'IndexFlatL2',  # Basic L2 distance index
-    'IndexIVFFlat',  # IVF with flat vectors
-    'IndexHNSWFlat',  # HNSW graph index
-    'IndexPQ',  # Product quantization
-    'IndexIVFPQ',  # IVF with product quantization
-    'IndexScalarQuantizer',  # Scalar quantization
-    'IndexIVFScalarQuantizer',  # Scalar quantization
-    'IndexIDMap',  # Basic ID mapping
-    'IndexIDMap2',  # Extended ID mapping
-    'index_factory',  # Index creation factory
-    'write_index',  # Index persistence
-    'read_index',  # Index loading
-    'merge_indices',  # Index combination
-    'split_index',  # Index division
+    # Core indices - basic vector search implementations
+    'IndexFlatL2',  # Exact L2 distance search
+    'IndexIVFFlat',  # Approximate search with inverted file structure
+    'IndexHNSWFlat',  # Graph-based approximate search
+
+    # Quantization indices - memory-efficient implementations
+    'IndexPQ',  # Product quantization for reduced memory usage
+    'IndexIVFPQ',  # Combined IVF and PQ for large datasets
+    'IndexScalarQuantizer',  # Simple scalar quantization
+    'IndexIVFScalarQuantizer',  # IVF with scalar quantization
+
+    # ID mapping - custom vector identification
+    'IndexIDMap',  # Basic ID mapping wrapper
+    'IndexIDMap2',  # Extended ID mapping with additional features
+
+    # Utilities - index management operations
+    'index_factory',  # Create indices from string descriptions
+    'write_index',  # Save index to disk
+    'read_index',  # Load index from disk
+    'merge_indices',  # Combine multiple indices
+    'split_index',  # Split index into multiple parts
 ]

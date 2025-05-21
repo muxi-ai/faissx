@@ -24,11 +24,22 @@ FAISSx IndexIVFFlat implementation.
 This module provides a client-side implementation of the FAISS IndexIVFFlat class.
 It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
+
+The IVF (Inverted File) structure partitions the vector space into clusters and
+only searches a subset of these during queries, providing faster search at the
+cost of some accuracy.
+
+Key concepts of IVF indices:
+- Uses a coarse quantizer (usually a flat index) to partition the space into clusters
+- For search, only explores a subset of clusters (determined by nprobe parameter)
+- Requires a training phase before adding vectors
+- Offers significant speed improvements over flat indices for large datasets
+- Accuracy can be tuned via the nprobe parameter (higher = more accurate but slower)
 """
 
 import uuid
 import numpy as np
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict, Optional
 
 from ..client import get_client
 from .base import logger, FAISSxBaseIndex
@@ -64,7 +75,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
         _nprobe (int): Number of clusters to search (default: 1)
     """
 
-    def __init__(self, quantizer, d: int, nlist: int, metric_type=None):
+    def __init__(self, quantizer: Any, d: int, nlist: int, metric_type: Any = None) -> None:
         """
         Initialize the inverted file index with specified parameters.
 
@@ -103,17 +114,18 @@ class IndexIVFFlat(FAISSxBaseIndex):
         self._nprobe = 1  # Default number of probes
 
         # Initialize GPU-related attributes
-        self._use_gpu = False
-        self._gpu_resources = None
-        self._local_index = None
+        self._use_gpu: bool = False
+        self._gpu_resources: Optional[Any] = None
+        self._local_index: Optional[Any] = None
 
         # Generate unique name for the index
-        self.name = f"index-ivf-flat-{uuid.uuid4().hex[:8]}"
-        self.index_id = self.name
+        self.name: str = f"index-ivf-flat-{uuid.uuid4().hex[:8]}"
+        self.index_id: str = self.name
 
         # Initialize vector mapping for remote mode
-        self._vector_mapping = {}  # Maps local indices to server-side information
-        self._next_idx = 0  # Counter for local indices
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
+        # Maps local indices to server-side information for bidirectional lookup
+        self._next_idx: int = 0  # Counter for local indices
 
         # Check if client exists and its mode
         client = get_client()
@@ -132,8 +144,16 @@ class IndexIVFFlat(FAISSxBaseIndex):
         """
         Get standardized string representation of the IVF index type.
 
+        Constructs a string identifier that represents the index configuration, including:
+        - The IVF prefix
+        - The number of clusters (nlist)
+        - The distance metric (L2 or IP)
+
+        This string is used when creating indices on the server to ensure consistent
+        configuration between client and server.
+
         Returns:
-            String representation of index type
+            String representation of index type (e.g., "IVF100" or "IVF100_IP")
         """
         # Create the index type string based on nlist and metric type
         index_type = f"IVF{self.nlist}"
@@ -148,12 +168,16 @@ class IndexIVFFlat(FAISSxBaseIndex):
         """
         Parse server response with consistent error handling.
 
+        Extracts the index_id from server responses with graceful error handling for
+        unexpected response formats. Provides a consistent interface for handling
+        various server response structures.
+
         Args:
-            response: Server response to parse
-            default_value: Default value to use if response isn't a dict
+            response: Server response to parse, expected to be a dict with index_id
+            default_value: Default value to use if response isn't a dict or lacks index_id
 
         Returns:
-            Parsed value from response or default value
+            Parsed value from response or default value if response is invalid
         """
         if isinstance(response, dict):
             return response.get("index_id", default_value)
@@ -161,15 +185,25 @@ class IndexIVFFlat(FAISSxBaseIndex):
             logger.warning(f"Unexpected server response format: {response}")
             return default_value
 
-    def _create_local_index(self, quantizer, d: int, nlist: int, metric_type: Any) -> None:
+    def _create_local_index(self, quantizer: Any, d: int, nlist: int, metric_type: Any) -> None:
         """
         Create a local FAISS inverted file index.
 
+        Initializes a local FAISS IndexIVFFlat with the given parameters. If GPU acceleration
+        is available, the index will be transferred to GPU for faster processing. Handles
+        fallback to CPU if GPU initialization fails.
+
+        The quantizer (typically a flat index) defines the centroids used for the inverted file
+        structure and determines how vectors are assigned to clusters.
+
         Args:
-            quantizer: Quantizer object that defines the centroids
+            quantizer: Quantizer object that defines the centroids (usually IndexFlatL2)
             d (int): Vector dimension
             nlist (int): Number of clusters/partitions
-            metric_type: Distance metric type
+            metric_type: Distance metric type (METRIC_L2 or METRIC_INNER_PRODUCT)
+
+        Raises:
+            RuntimeError: If index initialization fails
         """
         try:
             import faiss
@@ -177,6 +211,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
             # Try to use GPU if available
             gpu_available = False
             try:
+                # Attempt to import GPU-specific modules
                 import faiss.contrib.gpu  # type: ignore
 
                 ngpus = faiss.get_num_gpus()
@@ -235,15 +270,25 @@ class IndexIVFFlat(FAISSxBaseIndex):
         except Exception as e:
             raise RuntimeError(f"Failed to initialize local FAISS IVF index: {e}")
 
-    def _create_remote_index(self, client: Any, quantizer, d: int, nlist: int) -> None:
+    def _create_remote_index(self, client: Any, quantizer: Any, d: int, nlist: int) -> None:
         """
         Create a remote IVF index on the server.
 
+        Sends a request to the FAISSx server to create a new IndexIVFFlat with the specified
+        parameters. The server will assign an index_id that's used for all subsequent
+        operations on this index.
+
+        Note that the quantizer is not directly sent to the server - instead, the server
+        will create its own quantizer based on the index type string.
+
         Args:
-            client: FAISSx client instance
-            quantizer: Quantizer object that defines the centroids
+            client: FAISSx client instance for server communication
+            quantizer: Quantizer object (not directly used in remote mode)
             d (int): Vector dimension
             nlist (int): Number of clusters/partitions
+
+        Raises:
+            RuntimeError: If remote index creation fails
         """
         try:
             # Get index type string
@@ -270,12 +315,12 @@ class IndexIVFFlat(FAISSxBaseIndex):
 
     # Add nprobe property getter and setter to handle it as an attribute
     @property
-    def nprobe(self):
+    def nprobe(self) -> int:
         """Get the current nprobe value"""
         return self._nprobe
 
     @nprobe.setter
-    def nprobe(self, value):
+    def nprobe(self, value: int) -> None:
         """Set the nprobe value and update the local index if present"""
         self.set_nprobe(value)
 
@@ -283,11 +328,21 @@ class IndexIVFFlat(FAISSxBaseIndex):
         """
         Train the index with the provided vectors.
 
+        IVF indices require a training step before adding vectors. Training identifies
+        cluster centroids that partition the vector space, allowing for faster searches.
+
+        For optimal performance, the training set should be representative of the vectors
+        you plan to index. Typically, using a subset (a few thousand vectors) of your
+        dataset is sufficient for training.
+
+        After training, the index is marked as trained (is_trained=True), and vectors
+        can be added.
+
         Args:
             x (np.ndarray): Training vectors, shape (n, d)
 
         Raises:
-            ValueError: If vector shape doesn't match index dimension or already trained
+            ValueError: If vector shape doesn't match index dimension
             RuntimeError: If remote training operation fails
         """
         # Register access for memory management
@@ -311,7 +366,16 @@ class IndexIVFFlat(FAISSxBaseIndex):
             self._train_local(vectors)
 
     def _train_local(self, vectors: np.ndarray) -> None:
-        """Train the local index with the provided vectors."""
+        """
+        Train the local index with the provided vectors.
+
+        Uses the built-in FAISS training algorithm to partition the vector space
+        and determine cluster centroids. The training complexity depends on the
+        number of clusters (nlist) and the dimensionality.
+
+        Args:
+            vectors (np.ndarray): Training vectors in float32 format
+        """
         logger.debug(f"Training local index {self.name} with {len(vectors)} vectors")
 
         # Use local FAISS implementation directly
@@ -319,7 +383,22 @@ class IndexIVFFlat(FAISSxBaseIndex):
         self.is_trained = self._local_index.is_trained
 
     def _train_remote(self, client: Any, vectors: np.ndarray) -> None:
-        """Train the remote index with the provided vectors."""
+        """
+        Train the remote index with the provided vectors.
+
+        Sends vectors to the FAISSx server for training the index. The server
+        follows the same training process as local mode but executes it remotely.
+
+        After successful training, the index is marked as trained and ready for
+        adding vectors.
+
+        Args:
+            client: FAISSx client instance
+            vectors (np.ndarray): Training vectors in float32 format
+
+        Raises:
+            RuntimeError: If the server returns an error or unexpected response
+        """
         logger.debug(f"Training remote index {self.index_id} with {len(vectors)} vectors")
 
         try:
@@ -327,7 +406,10 @@ class IndexIVFFlat(FAISSxBaseIndex):
 
             # Check for explicit error response
             if not isinstance(result, dict) or not result.get("success", False):
-                error_msg = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                error_msg = (
+                    result.get("error", "Unknown error")
+                    if isinstance(result, dict) else str(result)
+                )
                 raise RuntimeError(f"Remote training failed: {error_msg}")
 
             # Update local state based on training result
@@ -441,8 +523,15 @@ class IndexIVFFlat(FAISSxBaseIndex):
         """
         Set the number of clusters to visit during search (nprobe).
 
-        Higher values of nprobe will give more accurate results at the cost of
-        slower search. For IVF indices, nprobe should be between 1 and nlist.
+        The nprobe parameter is critical for IVF indices as it controls the trade-off
+        between search speed and accuracy:
+
+        - Lower nprobe values (1-10): Faster search but lower accuracy
+        - Higher nprobe values (>10): Better accuracy but slower search
+        - nprobe = nlist: Equivalent to exhaustive search (like a flat index)
+
+        For most applications, a value between 1-10% of nlist provides a good balance.
+        Increasing nprobe improves recall but increases search time nearly linearly.
 
         Args:
             nprobe (int): Number of clusters to search (between 1 and nlist)
@@ -453,6 +542,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
         # Register access for memory management
         self.register_access()
 
+        # Validate nprobe range (must be between 1 and nlist)
         if nprobe < 1:
             raise ValueError(f"nprobe must be at least 1, got {nprobe}")
         if nprobe > self.nlist:
@@ -460,6 +550,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
                 f"nprobe must not exceed nlist ({self.nlist}), got {nprobe}"
             )
 
+        # Store the value for both local and remote operations
         self._nprobe = nprobe
 
         # If using local implementation, update the index directly
@@ -471,6 +562,16 @@ class IndexIVFFlat(FAISSxBaseIndex):
     def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Search for k nearest neighbors for each query vector.
+
+        Performs the standard k-NN search using the IVF index. The search process:
+        1. Maps query vectors to their nearest centroids
+        2. Visits nprobe closest clusters to search for similar vectors
+        3. Returns top-k nearest neighbors for each query
+
+        The search accuracy depends primarily on:
+        - The nprobe value (higher = more accurate but slower)
+        - The number and quality of cluster centroids (nlist)
+        - How well the training set represented the search space
 
         Args:
             x (np.ndarray): Query vectors, shape (n, d)
@@ -506,6 +607,9 @@ class IndexIVFFlat(FAISSxBaseIndex):
             k_factor = 1.0
 
         # Calculate internal_k with k_factor and clamp to ntotal
+        # k_factor > 1.0 implements "oversampling" to improve result quality:
+        # - Retrieve more results than needed (internal_k)
+        # - Later trim down to the requested k
         internal_k = min(int(k * k_factor), max(1, self.ntotal))
         need_reranking = (k_factor > 1.0 and internal_k > k)
 
@@ -517,8 +621,10 @@ class IndexIVFFlat(FAISSxBaseIndex):
         else:
             return self._search_local(query_vectors, k, internal_k, need_reranking)
 
-    def _search_local(self, query_vectors: np.ndarray, k: int, internal_k: int,
-                     need_reranking: bool) -> Tuple[np.ndarray, np.ndarray]:
+    def _search_local(
+            self, query_vectors: np.ndarray, k: int, internal_k: int,
+            need_reranking: bool
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Search in local index."""
         logger.debug(f"Searching {len(query_vectors)} vectors in local index {self.name}")
 
@@ -698,7 +804,9 @@ class IndexIVFFlat(FAISSxBaseIndex):
         self, client: Any, query_vectors: np.ndarray, radius: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Range search in remote index."""
-        logger.debug(f"Range searching {len(query_vectors)} vectors in remote index {self.index_id}")
+        logger.debug(
+            f"Range searching {len(query_vectors)} vectors in remote index {self.index_id}"
+        )
 
         # Get batch size parameter
         batch_size = self.get_parameter('batch_size')
@@ -754,15 +862,15 @@ class IndexIVFFlat(FAISSxBaseIndex):
             logger.debug(f"Server response: {result}")
 
             if not isinstance(result, dict) or not result.get("success", False):
-                error = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                error = (
+                    result.get("error", "Unknown error")
+                    if isinstance(result, dict) else str(result)
+                )
                 raise RuntimeError(f"Range search failed in remote mode: {error}")
 
             # Process results
             search_results = result.get("results", [])
             n_queries = len(search_results)
-
-            # Calculate total number of results across all queries
-            total_results = sum(res.get("count", 0) for res in search_results)
 
             # Initialize arrays
             lims = np.zeros(n_queries + 1, dtype=np.int64)
@@ -810,8 +918,19 @@ class IndexIVFFlat(FAISSxBaseIndex):
         """
         Reset the index to its initial state, removing all vectors but keeping training.
 
-        This method removes all vectors from the index but preserves the training state.
-        After calling reset(), you don't need to retrain the index.
+        This method provides a way to clear all vectors from the index while preserving
+        the trained clustering structure. After reset, you can add new vectors without
+        needing to retrain.
+
+        Reset behavior differs between local and remote mode:
+
+        - Local mode: Uses the FAISS reset() method which efficiently clears vectors
+          while maintaining the trained clustering structure
+
+        - Remote mode: Creates a new server-side index with the same configuration,
+          as many servers don't support direct reset operations
+
+        In both cases, the index's dimensional parameters and trained state are preserved.
 
         Raises:
             RuntimeError: If remote reset operation fails
@@ -831,7 +950,15 @@ class IndexIVFFlat(FAISSxBaseIndex):
             self._reset_local(was_trained)
 
     def _reset_local(self, was_trained: bool) -> None:
-        """Reset the local index."""
+        """
+        Reset the local index.
+
+        Calls the FAISS reset() method on the underlying index to remove all vectors
+        while keeping the trained clustering structure intact.
+
+        Args:
+            was_trained (bool): Whether the index was trained before reset, to restore state
+        """
         logger.debug(f"Resetting local index {self.name}")
 
         # Reset local FAISS index
@@ -841,7 +968,21 @@ class IndexIVFFlat(FAISSxBaseIndex):
         self.is_trained = was_trained
 
     def _reset_remote(self, client: Any, was_trained: bool) -> None:
-        """Reset the remote index."""
+        """
+        Reset the remote index.
+
+        Since many FAISS servers don't support direct reset operations, this method:
+        1. Creates a new server-side index with the same configuration
+        2. Updates local references to point to the new index
+        3. Restores the original trained state
+
+        Args:
+            client: FAISSx client instance
+            was_trained (bool): Whether the index was trained before reset, to restore state
+
+        Raises:
+            RuntimeError: If creating the new index fails
+        """
         logger.debug(f"Resetting remote index {self.index_id}")
 
         try:
@@ -856,7 +997,10 @@ class IndexIVFFlat(FAISSxBaseIndex):
             )
 
             if not isinstance(response, dict) or not response.get("success", False):
-                error_msg = response.get("error", "Unknown error") if isinstance(response, dict) else str(response)
+                error_msg = (
+                    response.get("error", "Unknown error")
+                    if isinstance(response, dict) else str(response)
+                )
                 raise RuntimeError(f"Failed to create new index during reset: {error_msg}")
 
             # Update index information
@@ -874,11 +1018,11 @@ class IndexIVFFlat(FAISSxBaseIndex):
             # Ensure all errors are properly propagated
             raise RuntimeError(f"Remote reset operation failed: {e}")
 
-    def __enter__(self):
+    def __enter__(self) -> 'IndexIVFFlat':
         """Support context manager interface."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Clean up resources when exiting context."""
         self.close()
 

@@ -24,9 +24,12 @@ FAISSx IndexIVFPQ implementation.
 This module provides a client-side implementation of the FAISS IndexIVFPQ class.
 It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
+
+IVF-PQ combines inverted file indexing with product quantization for efficient
+similarity search and memory usage, making it ideal for large-scale applications.
 """
 
-from typing import Any, Tuple, Optional
+from typing import Any, Dict, Optional, Tuple
 import uuid
 import numpy as np
 import time
@@ -62,7 +65,7 @@ class IndexIVFPQ(FAISSxBaseIndex):
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
         index_id (str): Server-side index identifier (when in remote mode)
-        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _vector_mapping (Dict): Maps local indices to server indices (remote mode only)
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _gpu_resources: GPU resources if using GPU (local mode only)
@@ -72,13 +75,13 @@ class IndexIVFPQ(FAISSxBaseIndex):
 
     def __init__(
         self,
-        quantizer,
+        quantizer: Any,
         d: int,
         nlist: int,
         m: int,
         nbits: int,
-        metric_type=None,
-    ):
+        metric_type: Optional[Any] = None,
+    ) -> None:
         """
         Initialize the IVF-PQ index with specified parameters.
 
@@ -139,8 +142,9 @@ class IndexIVFPQ(FAISSxBaseIndex):
         self.index_id = self.name
 
         # Initialize vector mapping for remote mode
-        self._vector_mapping = {}  # Maps local indices to server-side information
-        self._next_idx = 0  # Counter for local indices
+        # Maps local indices to server-side information
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
+        self._next_idx: int = 0  # Counter for local indices
 
         # Check if client exists and its mode
         client = get_client()
@@ -300,12 +304,12 @@ class IndexIVFPQ(FAISSxBaseIndex):
             raise ValueError(f"Could not create remote index: {e}") from e
 
     @property
-    def nprobe(self):
+    def nprobe(self) -> int:
         """Get the number of clusters to search."""
         return self._nprobe
 
     @nprobe.setter
-    def nprobe(self, value):
+    def nprobe(self, value: int) -> None:
         """Set the number of clusters to search."""
         self.set_nprobe(value)
 
@@ -502,7 +506,8 @@ class IndexIVFPQ(FAISSxBaseIndex):
 
         try:
             start_idx = self._next_idx
-            response = client.add(self.index_id, vectors)
+            # Send vectors to server - ignore response as we track indices locally
+            client.add(self.index_id, vectors)
 
             # Update vector mapping
             for i in range(vectors.shape[0]):
@@ -536,7 +541,8 @@ class IndexIVFPQ(FAISSxBaseIndex):
                     f"({batch.shape[0]} vectors)"
                 )
 
-                response = client.add(self.index_id, batch)
+                # Send batch to server - ignore response as we track indices locally
+                client.add(self.index_id, batch)
 
                 # Update vector mapping
                 for j in range(batch.shape[0]):
@@ -554,12 +560,25 @@ class IndexIVFPQ(FAISSxBaseIndex):
         """
         Search for the k nearest neighbors of each query vector.
 
+        This method performs a k-nearest neighbor search for each query vector in x.
+        The search uses the IVF-PQ index structure where:
+          1. The query is assigned to its nearest centroids
+          2. The search is restricted to vectors in those centroid clusters
+          3. PQ codes are used to efficiently compute approximate distances
+
+        The search quality depends on:
+          - nprobe: Number of clusters to explore (higher gives better results)
+          - Training quality: How well the clusters represent the data distribution
+          - M (number of subquantizers): Higher values give better precision
+
         Args:
-            x: Query vectors as a 2D numpy array
-            k: Number of nearest neighbors to retrieve
+            x: Query vectors as a 2D numpy array, shape (n_queries, d)
+            k: Number of nearest neighbors to retrieve per query
 
         Returns:
-            Tuple of (distances, indices) as numpy arrays
+            Tuple[np.ndarray, np.ndarray]:
+                - distances: Array of shape (n_queries, k) with distances to nearest neighbors
+                - indices: Array of shape (n_queries, k) with indices of nearest neighbors
 
         Raises:
             ValueError: If the index is empty or if the query dimension is incorrect
@@ -597,19 +616,28 @@ class IndexIVFPQ(FAISSxBaseIndex):
             return self._search_local(x, k, internal_k, need_reranking)
 
     def _search_local(
-        self, query_vectors: np.ndarray, k: int, internal_k: int, need_reranking: bool
+        self,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Search using the local FAISS index.
 
+        Performs k-nearest neighbor search using the local FAISS implementation. The method
+        will automatically utilize GPU if available and handles reranking if needed.
+
         Args:
-            query_vectors: Query vectors
-            k: Number of results to return
+            query_vectors: Query vectors, shape (n, d)
+            k: Number of results to return per query
             internal_k: Number of results to retrieve internally (for reranking)
-            need_reranking: Whether reranking is needed
+            need_reranking: Whether to perform reranking of results
 
         Returns:
-            Tuple of (distances, indices)
+            Tuple of (distances, indices):
+                - distances: Array of shape (n, k) with distances to nearest neighbors
+                - indices: Array of shape (n, k) with indices of nearest neighbors
         """
         if self._local_index is not None:
             distances, indices = self._local_index.search(query_vectors, k)
@@ -941,8 +969,22 @@ class IndexIVFPQ(FAISSxBaseIndex):
         """
         Reset the index, removing all stored vectors but preserving training.
 
-        This is useful when you want to reuse the index with the same parameters
-        but different vectors.
+        This method clears all vectors from the index while maintaining the trained
+        clustering structure. After reset, the index can be reused with new vectors
+        without needing to retrain.
+
+        The reset behavior differs between local and remote mode:
+
+        - Local mode: Uses FAISS reset() if available, otherwise recreates the index
+          with the same parameters
+
+        - Remote mode: Attempts to use a server-side reset operation if available,
+          or creates a new server-side index if necessary
+
+        After reset:
+        - Vector count (ntotal) is set to 0
+        - Vector mapping is cleared
+        - Training state is preserved when possible
         """
         # Remember if the index was trained
         was_trained = self.is_trained
@@ -962,7 +1004,7 @@ class IndexIVFPQ(FAISSxBaseIndex):
         self.ntotal = 0
 
         # Reset vector mapping
-        self._vector_mapping = {}
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
         self._next_idx = 0
 
     def _reset_local(self, was_trained: bool) -> None:
@@ -1059,39 +1101,97 @@ class IndexIVFPQ(FAISSxBaseIndex):
             self.is_trained = was_trained
 
     @property
-    def pq(self):
-        """Access to the PQ parameters."""
+    def pq(self) -> 'IndexIVFPQ.PQProxy':
+        """
+        Access to the PQ parameters.
+
+        This property provides an interface to the PQ (Product Quantization) parameters
+        which control the compression and approximation of vectors.
+
+        Returns:
+            PQProxy: A proxy object allowing access to PQ-specific parameters
+        """
         return self.PQProxy(self)
 
-        class PQProxy:
-            """Proxy class for accessing PQ parameters."""
+    class PQProxy:
+        """
+        Proxy class for accessing PQ parameters.
 
-            def __init__(self, parent):
-                self.parent = parent
+        Product Quantization (PQ) parameters control how vectors are compressed and
+        approximated in the index. This proxy provides a convenient interface to
+        access these parameters.
+        """
 
-            @property
-            def M(self):
-                """Number of subquantizers."""
-                return self.parent.M
+        def __init__(self, parent: 'IndexIVFPQ') -> None:
+            """
+            Initialize the PQ proxy.
 
-            @property
-            def nbits(self):
-                """Number of bits per subquantizer."""
-                return self.parent.nbits
+            Args:
+                parent: The parent IndexIVFPQ instance
+            """
+            self.parent = parent
 
-    def __enter__(self):
-        """Support for context manager protocol."""
+        @property
+        def M(self) -> int:
+            """
+            Number of subquantizers.
+
+            Higher values give better precision but increase memory usage and
+            computational cost.
+            """
+            return self.parent.M
+
+        @property
+        def nbits(self) -> int:
+            """
+            Number of bits per subquantizer.
+
+            Controls the size of each subquantizer's codebook. Typical value is 8,
+            which allows for 256 codes per subquantizer.
+            """
+            return self.parent.nbits
+
+    def __enter__(self) -> 'IndexIVFPQ':
+        """
+        Support for context manager protocol.
+
+        Allows using the index with a 'with' statement for automatic resource cleanup.
+
+        Returns:
+            Self reference for use in the context manager block
+        """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Clean up resources when exiting context."""
+    def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception],
+                 exc_tb: Optional[Any]) -> None:
+        """
+        Clean up resources when exiting context.
+
+        Called automatically when leaving a 'with' block, ensuring resources
+        are properly released even if exceptions occur.
+
+        Args:
+            exc_type: Exception type if an exception was raised, None otherwise
+            exc_val: Exception value if an exception was raised, None otherwise
+            exc_tb: Exception traceback if an exception was raised, None otherwise
+        """
         self.close()
 
     def close(self) -> None:
         """
         Clean up resources used by the index.
 
-        This is especially important for GPU resources.
+        This method releases hardware resources (like GPU memory) and clears cached data.
+        It should be called when done using the index to prevent memory leaks, especially
+        when GPU resources are involved.
+
+        Important operations:
+        - Releases GPU resources if using GPU acceleration
+        - Clears the cached vectors to free memory
+        - Resets internal state tracking
+
+        Note: The index object can still be used after calling close(), but any GPU
+        acceleration will be lost and operations may be slower.
         """
         # Free GPU resources if using GPU
         if self._use_gpu and self._gpu_resources is not None:
@@ -1107,7 +1207,8 @@ class IndexIVFPQ(FAISSxBaseIndex):
 
         # Clear cached vectors to free memory
         self._cached_vectors = None
-        self._vector_mapping = {}
+        # Reset vector mapping to clear memory
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
 
     def __del__(self) -> None:
         """Destructor to ensure resources are released."""
@@ -1213,7 +1314,7 @@ class IndexIVFPQ(FAISSxBaseIndex):
         # Try using cached vectors first (most accurate)
         if self._cached_vectors is not None:
             if idx + n <= len(self._cached_vectors):
-                return self._cached_vectors[idx : idx + n]
+                return self._cached_vectors[idx:idx + n]
 
         # For local mode, use local index
         if self._local_index is not None:

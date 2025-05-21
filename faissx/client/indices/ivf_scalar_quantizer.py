@@ -7,9 +7,20 @@ FAISSx IndexIVFScalarQuantizer implementation.
 This module provides a client-side implementation of the FAISS IndexIVFScalarQuantizer class.
 It can operate in either local mode (using FAISS directly) or remote mode
 (using the FAISSx server).
+
+IVF Scalar Quantizer combines:
+- Inverted File (IVF) structure: Partitions the vector space into clusters for faster search
+- Scalar Quantization (SQ): Individually quantizes each dimension of the vectors to reduce memory
+  usage while maintaining reasonable search accuracy
+
+The IVF-SQ index offers a good trade-off between:
+- Memory usage (better than flat indices)
+- Search precision (better than PQ-based indices)
+- Search speed (faster than flat indices, though slower than PQ-based indices)
+- Construction time (faster than PQ-based indices)
 """
 
-from typing import Any, Tuple, Optional
+from typing import Any, Dict, Tuple, Optional
 import uuid
 import numpy as np
 import time
@@ -42,7 +53,7 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         ntotal (int): Total number of vectors in the index
         name (str): Unique identifier for the index
         index_id (str): Server-side index identifier (when in remote mode)
-        _vector_mapping (dict): Maps local indices to server indices (remote mode only)
+        _vector_mapping (Dict[int, Dict[str, int]]): Maps local indices to server indices
         _next_idx (int): Next available local index (remote mode only)
         _local_index: Local FAISS index (local mode only)
         _gpu_resources: GPU resources if using GPU (local mode only)
@@ -50,7 +61,14 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         _nprobe (int): Number of clusters to search (default: 1)
     """
 
-    def __init__(self, quantizer, d: int, nlist: int, qtype=None, metric_type=None):
+    def __init__(
+        self,
+        quantizer: Any,
+        d: int,
+        nlist: int,
+        qtype: Optional[int] = None,
+        metric_type: Optional[Any] = None
+    ) -> None:
         """
         Initialize the index with specified parameters.
 
@@ -109,8 +127,9 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         self.index_id = self.name
 
         # Initialize vector mapping for remote mode
-        self._vector_mapping = {}  # Maps local indices to server-side information
-        self._next_idx = 0  # Counter for local indices
+        # Maps local indices to server-side information
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
+        self._next_idx: int = 0  # Counter for local indices
 
         # Check if client exists and its mode
         client = get_client()
@@ -291,12 +310,12 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
 
     # Add nprobe property getter and setter to handle it as an attribute
     @property
-    def nprobe(self):
+    def nprobe(self) -> int:
         """Get the current nprobe value"""
         return self._nprobe
 
     @nprobe.setter
-    def nprobe(self, value):
+    def nprobe(self, value: int) -> None:
         """Set the nprobe value and update the local index if present"""
         self.set_nprobe(value)
 
@@ -580,6 +599,16 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         """
         Search for k nearest neighbors for each query vector.
 
+        This method performs a k-nearest neighbor search for each query vector in x.
+        The search process is accelerated by the IVF structure, which:
+        1. Identifies the closest clusters for each query vector
+        2. Only searches vectors within these clusters (controlled by nprobe)
+        3. Uses scalar quantization for efficient distance calculations
+
+        Search quality can be tuned by adjusting:
+        - nprobe: Higher values increase accuracy but slow down search
+        - qtype: Different quantizer types offer different precision/speed tradeoffs
+
         Args:
             x (np.ndarray): Query vectors, shape (n, d)
             k (int): Number of nearest neighbors to return
@@ -626,9 +655,27 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
             return self._search_local(query_vectors, k, internal_k, need_reranking)
 
     def _search_local(
-            self, query_vectors: np.ndarray, k: int, internal_k: int, need_reranking: bool
+        self,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Search in local index."""
+        """
+        Search in local index.
+
+        Performs the search operation using the local FAISS index with the specified parameters.
+        Handles timing and reranking if needed.
+
+        Args:
+            query_vectors: Query vectors, shape (n, d)
+            k: Number of results to return per query
+            internal_k: Number of results to retrieve internally (for reranking)
+            need_reranking: Whether reranking is needed
+
+        Returns:
+            Tuple of (distances, indices)
+        """
         logger.debug(f"Searching {len(query_vectors)} vectors in local index {self.name}")
 
         # Set nprobe for local index before searching
@@ -647,10 +694,29 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         return distances, indices
 
     def _search_remote(
-            self, client: Any, query_vectors: np.ndarray, k: int,
-            internal_k: int, need_reranking: bool
+        self,
+        client: Any,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Search in remote index."""
+        """
+        Search in remote index.
+
+        Performs the search operation using the remote server, with batching for large
+        query sets. Measures and logs search performance metrics.
+
+        Args:
+            client: FAISSx client instance
+            query_vectors: Query vectors, shape (n, d)
+            k: Number of results to return per query
+            internal_k: Number of results to retrieve internally (for reranking)
+            need_reranking: Whether to perform reranking of results
+
+        Returns:
+            Tuple of (distances, indices)
+        """
         logger.debug(f"Searching {len(query_vectors)} vectors in remote index {self.index_id}")
 
         # Get batch size parameter
@@ -694,10 +760,32 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         return result_distances, result_indices
 
     def _search_remote_batch(
-            self, client: Any, query_vectors: np.ndarray, k: int,
-            internal_k: int, need_reranking: bool
+        self,
+        client: Any,
+        query_vectors: np.ndarray,
+        k: int,
+        internal_k: int,
+        need_reranking: bool
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Search a batch of queries in the remote index."""
+        """
+        Search a batch of queries in the remote index.
+
+        Sends a single batch of queries to the remote server and processes
+        the results, mapping server indices back to local indices.
+
+        Args:
+            client: FAISSx client instance
+            query_vectors: Query vectors, shape (n, d)
+            k: Number of results to return per query
+            internal_k: Number of results to retrieve internally (for reranking)
+            need_reranking: Whether to perform reranking of results
+
+        Returns:
+            Tuple of (distances, indices)
+
+        Raises:
+            RuntimeError: If the remote search operation fails
+        """
         try:
             # Include nprobe parameter in the search request
             result = client.search(
@@ -767,8 +855,18 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         """
         Reset the index to its initial state, removing all vectors but keeping training.
 
-        This method removes all vectors from the index but preserves the training state.
-        After calling reset(), you don't need to retrain the index.
+        This method clears all vectors from the index while preserving the trained
+        clustering structure. After reset, you can add new vectors without needing to retrain.
+
+        The reset operation differs between local and remote mode:
+        - In local mode: Uses FAISS reset() method to efficiently clear vectors
+        - In remote mode: First tries to use server reset API, then falls back to
+          creating a new remote index with the same parameters if needed
+
+        After reset:
+        - Vector count (ntotal) is set to 0
+        - Vector mapping is cleared
+        - Training state is preserved when possible
 
         Raises:
             RuntimeError: If remote reset operation fails
@@ -791,7 +889,7 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
             self._reset_local(was_trained)
 
         # Reset vector mapping
-        self._vector_mapping = {}
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
         self._next_idx = 0
 
     def _reset_local(self, was_trained: bool) -> None:
@@ -890,11 +988,21 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         """
         Reconstruct a vector at the given index.
 
+        Attempts to reconstruct the original vector from its quantized representation.
+        Tries multiple approaches in this order:
+        1. Return from cached vectors (most accurate)
+        2. Reconstruct from local index if available
+        3. Request from remote server in remote mode
+        4. Fall back to zero vector if all else fails
+
         Args:
             idx: Index of the vector to reconstruct
 
         Returns:
-            Reconstructed vector
+            np.ndarray: Reconstructed vector as a 1D array of float32 values
+
+        Raises:
+            ValueError: If the index is out of range
         """
         if idx < 0 or idx >= self.ntotal:
             raise ValueError(f"Index {idx} out of range [0, {self.ntotal-1}]")
@@ -934,12 +1042,23 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
         """
         Reconstruct multiple vectors starting at the given index.
 
+        This method is more efficient than calling reconstruct() multiple times
+        when you need to retrieve multiple consecutive vectors.
+
+        The approach is similar to reconstruct() but optimized for batch retrieval:
+        1. Return slice from cached vectors if available
+        2. Use local index's reconstruct_n if available
+        3. Fall back to individual reconstruction for remote or complex cases
+
         Args:
             idx: Starting index
             n: Number of vectors to reconstruct
 
         Returns:
-            Array of reconstructed vectors
+            np.ndarray: 2D array of shape (n, d) containing reconstructed vectors
+
+        Raises:
+            ValueError: If the requested range is out of bounds
         """
         if idx < 0 or idx + n > self.ntotal:
             raise ValueError(f"Range {idx}:{idx+n} out of bounds [0, {self.ntotal}]")
@@ -968,19 +1087,44 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
 
         return vectors
 
-    def __enter__(self):
-        """Support context manager interface."""
+    def __enter__(self) -> 'IndexIVFScalarQuantizer':
+        """
+        Support context manager interface.
+
+        Allows using the index with a 'with' statement for automatic resource cleanup.
+
+        Returns:
+            Self reference for use in the context manager block
+        """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Clean up resources when exiting context."""
+    def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception],
+                 exc_tb: Optional[Any]) -> None:
+        """
+        Clean up resources when exiting context.
+
+        Called automatically when leaving a 'with' block, ensuring resources
+        are properly released even if exceptions occur.
+
+        Args:
+            exc_type: Exception type if an exception was raised, None otherwise
+            exc_val: Exception value if an exception was raised, None otherwise
+            exc_tb: Exception traceback if an exception was raised, None otherwise
+        """
         self.close()
 
     def close(self) -> None:
         """
         Release resources associated with this index.
 
-        This method should be called when you're done using the index to free resources.
+        This method frees hardware resources (like GPU memory) and clears cached data
+        to prevent memory leaks. It should be called when you're done using the index,
+        especially when GPU acceleration was used.
+
+        Operations performed:
+        - Releases GPU resources if using GPU
+        - Clears the local index reference
+        - Frees memory used by cached vectors and mapping data
         """
         # Clean up GPU resources if used
         if self._use_gpu and self._gpu_resources is not None:
@@ -992,7 +1136,7 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
 
         # Clear cached vectors to free memory
         self._cached_vectors = None
-        self._vector_mapping = {}
+        self._vector_mapping: Dict[int, Dict[str, int]] = {}
 
     def __del__(self) -> None:
         """
