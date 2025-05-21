@@ -17,6 +17,7 @@ A high-performance vector database service built on FAISS and ZeroMQ.
 - [Docker Deployment](#docker-deployment)
 - [Performance](#performance)
 - [Testing](#testing)
+- [Current Limitations](#current-limitations)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview
@@ -300,6 +301,47 @@ The FAISSx server is designed for high performance:
 - Configure FAISS indices appropriate for your use case (flat indices for small datasets, IVF/HNSW for larger datasets)
 - Run the server on machines with sufficient memory for your indices
 - Consider GPU acceleration for large-scale deployments
+
+## Current Limitations
+
+Recent client-side optimizations have identified several limitations in the current server implementation that will be addressed in future versions:
+
+### Missing API Methods
+
+1. **Vector Reconstruction**
+   - No implementation for `reconstruct` and `reconstruct_n`
+   - Missing `get_vectors` functionality for retrieving vectors
+
+2. **Index Management**
+   - No `reset` method to clear vectors while preserving training
+   - Missing `merge_indices` functionality for combining multiple indices
+   - Inconsistent handling of index training states
+
+3. **Parameter Controls**
+   - Limited support for setting index parameters like nprobe
+   - Inconsistent handling of training parameters
+
+### Inconsistent Response Formats
+
+- Some operations return raw values instead of structured responses
+- Inconsistent error message formatting
+- Index IDs sometimes returned as strings, sometimes as dictionaries
+
+### Training Behavior Issues
+
+- Some indices report "This index type does not require training" incorrectly
+- Inconsistent behavior when adding vectors to untrained indices
+- Unclear status reporting for training state
+
+### Planned Improvements
+
+The following improvements are planned to address these limitations:
+
+1. Implementation of vector reconstruction API
+2. Standardization of response formats
+3. Addition of index reset and merge functionality
+4. Improved training state management
+5. Enhanced parameter controls
 
 ## Testing
 

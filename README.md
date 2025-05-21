@@ -123,6 +123,9 @@ distances, indices = index.search(np.random.rand(1, 128).astype(np.float32), k=5
 | **💾 Memory management** | Advanced memory usage control and monitoring |
 | **🔀 Index modification** | Merge and split indices for flexible organization |
 | **🔌 Error recovery** | Automatic retries and reconnection with exponential backoff |
+| **📈 Robust implementations** | Optimized index implementations with fallback strategies |
+| **🔄 Vector caching** | Enhanced vector reconstruction with caching |
+| **⚡ Batched operations** | Efficient processing for large vector sets |
 
 ---
 
@@ -147,6 +150,7 @@ flowchart TD
    - Implements local FAISS by default when unconfigured
    - Supports remote execution when explicitly configured
    - Modular architecture with separate index class implementations
+   - Optimized implementations with robust fallback strategies
 
 2. **ZeroMQ Communication**: High-performance binary messaging
    - Zero-copy binary protocol
@@ -316,6 +320,30 @@ with_retry(index.add, vectors)
 
 This makes client applications more resilient to network issues and temporary server outages.
 
+### Recent Client-side Optimizations
+
+Recent versions include significant client-side optimizations:
+
+1. **Robust Vector Reconstruction**
+   - Multiple fallback methods for accessing vectors
+   - Vector caching for improved performance
+   - Batched operations to optimize large vector sets
+
+2. **Enhanced Index Implementations**
+   - Optimized IndexPQ with comprehensive fallbacks
+   - Improved IndexIVFScalarQuantizer with better error handling
+   - Enhanced index modification module for merging and splitting
+
+3. **Persistence Layer Improvements**
+   - Better handling for both local and remote modes
+   - Special handling for IDMap and IDMap2 classes
+   - Optimized file formats for different index types
+
+4. **Performance Enhancements**
+   - Detailed performance logging
+   - Batched processing for large operations
+   - More efficient error recovery
+
 ### Supported Index Types
 
 FAISSx currently supports these FAISS index implementations:
@@ -326,6 +354,7 @@ FAISSx currently supports these FAISS index implementations:
 - `IndexPQ` - Product quantization for memory-efficient storage
 - `IndexIVFPQ` - Combined IVF and PQ for efficiency
 - `IndexScalarQuantizer` - Efficient scalar quantization
+- `IndexIVFScalarQuantizer` - IVF with scalar quantization
 - `IndexIDMap` - Index wrapper for mapping external IDs to vectors
 - `IndexIDMap2` - Extended ID mapping with vector update capabilities
 - `IndexRandom` - Random index for testing and benchmarking
@@ -335,6 +364,7 @@ All indices support:
 - Parameter tuning for performance optimization
 - Memory usage management and monitoring
 - Persistence via write_index/read_index operations
+- Vector reconstruction with robust fallbacks
 
 The library also provides advanced factory pattern support with `index_factory()` for creating indices from string descriptions.
 
@@ -398,6 +428,13 @@ The ZeroMQ-based implementation provides significant performance improvements ov
 - Persistent connections reduce latency
 - Efficient vector operations through direct numpy integration
 - No JSON encoding/decoding overhead for large vector data
+- Enhanced vector caching for improved reconstruction operations
+
+Recent optimizations include:
+- Batched processing for large vector operations
+- More efficient error handling with graceful fallbacks
+- Improved serialization for vector data
+- Better memory management through vector caching
 
 ---
 
@@ -454,11 +491,30 @@ cd server
       pq.py                - IndexPQ implementation
       ivf_pq.py            - IndexIVFPQ implementation
       scalar_quantizer.py  - IndexScalarQuantizer implementation
+      ivf_sq.py            - IndexIVFScalarQuantizer implementation
+    /io                    - Persistence layer implementation
+    /optimization          - Performance optimization utilities
+    /modification          - Index modification functionality
+    /recovery              - Error recovery and reconnection utilities
 /server                    - Server utilities, docker configs, tests
 /client                    - Client utilities and tests
 /examples                  - Example code for both client and server
 /data                      - Default directory for FAISS data files
 ```
+
+---
+
+## Current Status and Next Steps
+
+FAISSx v0.0.4 has completed all high and medium priority features from the initial roadmap. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
+
+Current focus areas:
+- Server-side improvements to better match client capabilities
+- Enhanced vector reconstruction for remote operations
+- Standardized server response formats
+- Better handling of training behavior inconsistencies
+
+See [NEXT_STEPS.md](./NEXT_STEPS.md) for a detailed roadmap and current status.
 
 ---
 
