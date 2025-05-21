@@ -27,6 +27,9 @@ from typing import Dict, Any, Optional
 import time
 from functools import wraps
 
+# Import the timeout decorator from our custom module
+from .timeout import timeout as operation_timeout, TimeoutError, TIMEOUT
+
 # Configure logging for the module
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,7 @@ class FaissXClient:
         server: Optional[str] = None,
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        timeout: float = 5.0,
     ) -> None:
         """Configure the client with server details and authentication.
 
@@ -97,7 +101,11 @@ class FaissXClient:
             server: ZeroMQ server address
             api_key: API key for authentication
             tenant_id: Tenant identifier for multi-tenant setups
+            timeout: Connection timeout in seconds (default: 5.0)
         """
+        global TIMEOUT
+        TIMEOUT = timeout
+
         self.server = server or self.server
         self.api_key = api_key or self.api_key
         self.tenant_id = tenant_id or self.tenant_id
@@ -134,6 +142,7 @@ class FaissXClient:
         """Cleanup when the client is destroyed."""
         self.disconnect()
 
+    @operation_timeout()
     def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Send a request to the FAISSx server and handle the response.
 
@@ -145,6 +154,7 @@ class FaissXClient:
 
         Raises:
             RuntimeError: If the request fails or server returns an error
+            TimeoutError: If the request times out
         """
         if self.api_key:
             request["api_key"] = self.api_key
@@ -160,9 +170,14 @@ class FaissXClient:
                 raise RuntimeError(f"FAISSx request failed: {result['error']}")
 
             return result
+        except TimeoutError:
+            self.disconnect()  # Clean up resources
+            raise  # Re-raise the TimeoutError
         except zmq.ZMQError as e:
+            self.disconnect()  # Clean up resources
             raise RuntimeError(f"ZMQ error: {str(e)}")
         except Exception as e:
+            self.disconnect()  # Clean up resources
             raise RuntimeError(f"FAISSx request failed: {str(e)}")
 
     def _prepare_vectors(self, vectors: np.ndarray) -> list:
@@ -238,13 +253,16 @@ class FaissXClient:
         results = {"success": True, "count": 0, "total": 0}
 
         for i in range(0, total_vectors, batch_size):
-            batch = vectors[i : min(i + batch_size, total_vectors)]
+            batch = vectors[i:min(i + batch_size, total_vectors)]
             batch_result = self.add_vectors(index_id, batch)
 
             if not batch_result.get("success", False):
                 return {
                     "success": False,
-                    "error": f"Failed at batch {i//batch_size}: {batch_result.get('error', 'Unknown error')}",
+                    "error": (
+                        f"Failed at batch {i//batch_size}: "
+                        f"{batch_result.get('error', 'Unknown error')}"
+                    ),
                     "count": total_added,
                     "total": batch_result.get("total", 0),
                 }
@@ -313,14 +331,17 @@ class FaissXClient:
         # Process queries in batches
         for i in range(0, total_queries, batch_size):
             # Extract current batch of vectors
-            batch = query_vectors[i : min(i + batch_size, total_queries)]
+            batch = query_vectors[i:min(i + batch_size, total_queries)]
             batch_result = self.search(index_id, batch, k, params)
 
             # Handle batch failure
             if not batch_result.get("success", False):
                 return {
                     "success": False,
-                    "error": f"Failed at batch {i//batch_size}: {batch_result.get('error', 'Unknown error')}",
+                    "error": (
+                        f"Failed at batch {i//batch_size}: "
+                        f"{batch_result.get('error', 'Unknown error')}"
+                    ),
                 }
 
             # Accumulate results
@@ -378,14 +399,17 @@ class FaissXClient:
         # Process queries in batches
         for i in range(0, total_queries, batch_size):
             # Extract current batch of vectors
-            batch = query_vectors[i : min(i + batch_size, total_queries)]
+            batch = query_vectors[i:min(i + batch_size, total_queries)]
             batch_result = self.range_search(index_id, batch, radius)
 
             # Handle batch failure
             if not batch_result.get("success", False):
                 return {
                     "success": False,
-                    "error": f"Failed at batch {i//batch_size}: {batch_result.get('error', 'Unknown error')}",
+                    "error": (
+                        f"Failed at batch {i//batch_size}: "
+                        f"{batch_result.get('error', 'Unknown error')}"
+                    ),
                 }
 
             # Accumulate results
