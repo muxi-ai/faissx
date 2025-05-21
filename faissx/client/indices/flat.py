@@ -66,8 +66,9 @@ class IndexFlatL2(FAISSxBaseIndex):
         self.name = f"index-flat-l2-{uuid.uuid4().hex[:8]}"
 
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode - create a FAISS index directly
+            logger.info("Creating local IndexFlatL2")
             self._local_index = native_faiss.IndexFlatL2(d)
 
             # Move to GPU if requested
@@ -83,6 +84,7 @@ class IndexFlatL2(FAISSxBaseIndex):
                     logger.warning("GPU requested but FAISS GPU support not available")
         else:
             # Remote mode - create a FAISS index on the server
+            logger.info(f"Creating remote IndexFlatL2 on server {client.server}")
             client.create_index(self.name, d, "L2")
 
     def add(self, x: np.ndarray) -> None:
@@ -102,12 +104,14 @@ class IndexFlatL2(FAISSxBaseIndex):
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode
+            logger.debug(f"Adding {len(x)} vectors to local index")
             self._local_index.add(x)
             self.ntotal = self._local_index.ntotal
         else:
             # Remote mode
+            logger.debug(f"Adding {len(x)} vectors to remote index {self.name}")
             # Get the batch size for adding vectors
             batch_size = self.get_parameter('batch_size')
 
@@ -155,8 +159,9 @@ class IndexFlatL2(FAISSxBaseIndex):
         need_reranking = (k_factor > 1.0 and internal_k > k)
 
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode
+            logger.debug(f"Searching {len(x)} vectors in local index")
             distances, indices = self._local_index.search(x, internal_k)
 
             # If k_factor was applied, rerank and trim results
@@ -167,6 +172,9 @@ class IndexFlatL2(FAISSxBaseIndex):
             return distances, indices
         else:
             # Remote mode
+            logger.debug(
+                f"Searching {len(x)} vectors in remote index {self.name}"
+            )
             # Get the batch size for search operations
             batch_size = self.get_parameter('batch_size')
 
@@ -176,15 +184,37 @@ class IndexFlatL2(FAISSxBaseIndex):
 
             for i in range(0, len(x), batch_size):
                 batch = x[i:i+batch_size]
-                distances, indices = client.search(self.name, batch, internal_k)
+                response = client.search(self.name, batch, internal_k)
 
-                # If k_factor was applied, rerank and trim results
-                if need_reranking:
-                    distances = distances[:, :k]
-                    indices = indices[:, :k]
+                # Log response for debugging
+                logger.debug(f"Server response: {response}")
 
-                all_distances.append(distances)
-                all_indices.append(indices)
+                # Extract distances and indices from response
+                if "results" in response and isinstance(response["results"], list):
+                    for result in response["results"]:
+                        if "distances" in result and "indices" in result:
+                            distances = np.array(result["distances"])
+                            indices = np.array(result["indices"])
+
+                            # If k_factor was applied, rerank and trim results
+                            if need_reranking:
+                                distances = distances[:k]
+                                indices = indices[:k]
+
+                            all_distances.append(distances.reshape(1, -1))
+                            all_indices.append(indices.reshape(1, -1))
+                else:
+                    # Fallback for direct response format
+                    distances = np.array(response.get("distances", []))
+                    indices = np.array(response.get("indices", []))
+
+                    # If k_factor was applied, rerank and trim results
+                    if need_reranking:
+                        distances = distances[:, :k]
+                        indices = indices[:, :k]
+
+                    all_distances.append(distances)
+                    all_indices.append(indices)
 
             # Combine results
             if len(all_distances) == 1:
@@ -197,13 +227,15 @@ class IndexFlatL2(FAISSxBaseIndex):
         Reset the index to its initial state.
         """
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode
+            logger.debug("Resetting local index")
             if self._local_index is not None:
                 self._local_index.reset()
                 self.ntotal = 0
         else:
             # Remote mode
+            logger.debug(f"Resetting remote index {self.name}")
             # Delete and recreate the index on the server
             client.delete_index(self.name)
             client.create_index(self.name, self.d, "L2")
@@ -237,17 +269,24 @@ class IndexFlatL2(FAISSxBaseIndex):
             raise ValueError(f"Invalid vector shape: expected (n, {self.d}), got {x.shape}")
 
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode
+            logger.debug(f"Range searching {len(x)} vectors in local index")
             return self._local_index.range_search(x, radius)
         else:
             # Remote mode
+            logger.debug(f"Range searching {len(x)} vectors in remote index {self.name}")
             # Get the batch size for search operations
             batch_size = self.get_parameter('batch_size')
 
             # Process in batches
             if len(x) <= batch_size:
-                return client.range_search(self.name, x, radius)
+                response = client.range_search(self.name, x, radius)
+                return (
+                    np.array(response.get("lims", [])),
+                    np.array(response.get("distances", [])),
+                    np.array(response.get("indices", []))
+                )
             else:
                 # Handle large batches by breaking them up and combining results
                 all_lims = [0]
@@ -256,7 +295,10 @@ class IndexFlatL2(FAISSxBaseIndex):
 
                 for i in range(0, len(x), batch_size):
                     batch = x[i:i+batch_size]
-                    lims, distances, indices = client.range_search(self.name, batch, radius)
+                    response = client.range_search(self.name, batch, radius)
+                    lims = np.array(response.get("lims", []))
+                    distances = np.array(response.get("distances", []))
+                    indices = np.array(response.get("indices", []))
 
                     # Adjust lims for concatenation (except first entry which is always 0)
                     if all_distances:
@@ -292,12 +334,15 @@ class IndexFlatL2(FAISSxBaseIndex):
             raise IndexError(f"Index out of bounds: {i}, index has {self.ntotal} vectors")
 
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode
+            logger.debug(f"Reconstructing vector {i} from local index")
             return self._local_index.reconstruct(i)
         else:
             # Remote mode
-            return client.reconstruct(self.name, i)
+            logger.debug(f"Reconstructing vector {i} from remote index {self.name}")
+            response = client.reconstruct(self.name, i)
+            return np.array(response.get("vector", []))
 
     def reconstruct_n(self, i0: int, ni: int) -> np.ndarray:
         """
@@ -324,14 +369,17 @@ class IndexFlatL2(FAISSxBaseIndex):
             raise IndexError(f"Index out of bounds: {i0}:{i0+ni}, index has {self.ntotal} vectors")
 
         client = get_client()
-        if client is None:
+        if client is None or client.mode == "local":
             # Local mode
+            logger.debug(f"Reconstructing vectors {i0}:{i0+ni} from local index")
             return self._local_index.reconstruct_n(i0, ni)
         else:
             # Remote mode
+            logger.debug(f"Reconstructing vectors {i0}:{i0+ni} from remote index {self.name}")
             # For small batches, use a direct call
             if ni <= 100:
-                return client.reconstruct_n(self.name, i0, ni)
+                response = client.reconstruct_n(self.name, i0, ni)
+                return np.array(response.get("vectors", []))
             else:
                 # For larger batches, break up into smaller pieces
                 batch_size = 100
@@ -339,6 +387,7 @@ class IndexFlatL2(FAISSxBaseIndex):
 
                 for i in range(i0, i0 + ni, batch_size):
                     current_ni = min(batch_size, i0 + ni - i)
-                    result.append(client.reconstruct_n(self.name, i, current_ni))
+                    response = client.reconstruct_n(self.name, i, current_ni)
+                    result.append(np.array(response.get("vectors", [])))
 
                 return np.vstack(result)
