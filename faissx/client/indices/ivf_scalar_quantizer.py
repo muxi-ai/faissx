@@ -400,7 +400,7 @@ class IndexIVFScalarQuantizer(FAISSxBaseIndex):
                         return
                     else:
                         error_msg = (result.get("error", "Unknown error")
-                                    if isinstance(result, dict) else str(result))
+                                     if isinstance(result, dict) else str(result))
                         logger.warning(f"Training attempt with {method_name} failed: {error_msg}")
 
             # If we get here, none of the training methods worked
