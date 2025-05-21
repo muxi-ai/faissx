@@ -15,6 +15,9 @@ The FAISSx client provides:
    - Remote mode: Uses a FAISSx server via ZeroMQ (activated by calling `configure()`)
 3. **Identical API** to the original FAISS library
 4. **High-performance binary protocol** for efficient remote vector operations
+5. **Optimized implementations** with robust fallback strategies
+6. **Vector caching** for enhanced retrieval and reconstruction
+7. **Batched processing** for large vector operations
 
 ## Installation
 
@@ -95,6 +98,38 @@ faiss.configure(
 )
 ```
 
+## Recent Optimizations
+
+FAISSx client has been significantly optimized in recent versions:
+
+### Vector Reconstruction and Caching
+
+- Multiple fallback methods for retrieving vectors
+- Vector caching for improved performance
+- Batched operations for large vector sets
+- Robust error handling for remote operations
+
+### Enhanced Index Implementations
+
+- Optimized IndexPQ with comprehensive training strategies
+- Improved IndexIVFScalarQuantizer with better error recovery
+- Enhanced index modification capabilities (merging, splitting)
+- Detailed performance logging for all operations
+
+### Persistence Layer Improvements
+
+- Better handling for both local and remote modes
+- Special handling for IDMap and IDMap2 classes
+- More robust vector reconstruction for saved indices
+- Optimized file formats for different index types
+
+### Error Recovery
+
+- Improved error recovery with graceful fallbacks
+- Automatic retries with exponential backoff
+- Better handling of server limitations
+- Informative logging for troubleshooting
+
 ## Supported FAISS Features
 
 The FAISSx client currently supports:
@@ -102,10 +137,21 @@ The FAISSx client currently supports:
 | Feature | Status | Notes |
 |---------|--------|-------|
 | IndexFlatL2 | ✅ | Fully supported |
+| IndexIVFFlat | ✅ | Fully supported with parameter tuning |
+| IndexHNSWFlat | ✅ | Fully supported |
+| IndexPQ | ✅ | Optimized with robust fallbacks |
+| IndexIVFPQ | ✅ | Fully supported |
+| IndexScalarQuantizer | ✅ | Fully supported |
+| IndexIVFScalarQuantizer | ✅ | Optimized with error recovery |
+| IndexIDMap/IDMap2 | ✅ | Fully supported with special persistence |
 | Vector Addition | ✅ | Identical to FAISS |
-| Vector Search | ✅ | Identical to FAISS |
-| Index Reset | ✅ | Clears the index |
-| Other Index Types | 🔄 | Coming soon |
+| Vector Search | ✅ | Identical to FAISS with batching |
+| Range Search | ✅ | Supported with server fallbacks |
+| Index Reset | ✅ | Clears the index (recreates in remote mode) |
+| Vector Reconstruction | ✅ | Multiple fallback methods |
+| Index Persistence | ✅ | Optimized read_index/write_index support |
+| Index Modification | ✅ | Merge and split with batched operations |
+| Parameter Controls | ✅ | Fine-grained tuning for performance |
 
 ## API Reference
 
@@ -119,44 +165,43 @@ Configures the client to use a remote FAISSx server.
 - **api_key**: API key for authentication
 - **tenant_id**: Tenant ID for multi-tenant isolation
 
-### IndexFlatL2 Class
+### Common Index Methods
+
+Most index classes implement these standard methods:
 
 ```python
-class IndexFlatL2:
-    def __init__(self, d: int):
-        """
-        Initialize the index with specified dimension.
+def add(self, x: np.ndarray) -> None:
+    """Add vectors to the index."""
 
-        Args:
-            d (int): Vector dimension for the index
-        """
+def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Search for k nearest neighbors for each query vector."""
 
-    def add(self, x: np.ndarray) -> None:
-        """
-        Add vectors to the index.
+def reset(self) -> None:
+    """Reset the index to its initial state."""
 
-        Args:
-            x (np.ndarray): Vectors to add, shape (n, d)
-        """
+def reconstruct(self, i: int) -> np.ndarray:
+    """Reconstruct vector i from the index."""
 
-    def search(self, x: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Search for k nearest neighbors for each query vector.
+def reconstruct_n(self, i0: int, ni: int) -> np.ndarray:
+    """Reconstruct ni vectors from the index, starting from i0."""
 
-        Args:
-            x (np.ndarray): Query vectors, shape (n, d)
-            k (int): Number of nearest neighbors to return
+def train(self, x: np.ndarray) -> None:
+    """Train the index on the given vectors."""
 
-        Returns:
-            Tuple[np.ndarray, np.ndarray]:
-                - Distances array of shape (n, k)
-                - Indices array of shape (n, k)
-        """
+def set_parameter(self, name: str, value: Any) -> None:
+    """Set a parameter for the index."""
+```
 
-    def reset(self) -> None:
-        """
-        Reset the index to its initial state.
-        """
+### Index Modification Utilities
+
+```python
+from faissx.client.modification import merge_indices, split_index
+
+# Merge multiple indices
+merged_index = merge_indices([index1, index2, index3])
+
+# Split an index into multiple parts
+split_indices = split_index(index, 3)  # Split into 3 parts
 ```
 
 ## Performance Considerations
@@ -169,20 +214,42 @@ When using the remote mode:
 
 3. **Serialization**: Vectors are serialized using msgpack for efficient binary transfer.
 
+4. **Batched Operations**: Large vector sets are automatically processed in batches to optimize memory usage and network transfer.
+
+5. **Vector Caching**: Reconstructed vectors can be cached to improve performance of subsequent operations.
+
 ## Advanced Usage
 
 ### Error Handling
 
 ```python
 from faissx import client as faiss
+from faissx.client.recovery import with_retry, configure_recovery
+
+# Configure recovery behavior
+configure_recovery(max_retries=5, initial_backoff=1.0, backoff_factor=2.0)
 
 try:
-    faiss.configure(server="tcp://non-existent-server:45678")
-except RuntimeError as e:
-    # will use local mode instead
-    print(f"Connection error: {e}")
+    faiss.configure(server="tcp://your-server:45678")
 
-index = faiss.IndexFlatL2(128)
+    # Use automatic retry for operations
+    index = faiss.IndexFlatL2(128)
+    with_retry(index.add, vectors)
+
+except RuntimeError as e:
+    print(f"Connection error: {e}")
+    # Handle the error appropriately
+```
+
+### Memory Management
+
+```python
+from faissx.client.optimization import memory_manager
+
+# Set memory usage options
+memory_manager.set_option('max_memory_usage_mb', 1024)  # 1GB limit
+memory_manager.set_option('use_memory_mapping', True)  # Use mmap for large indices
+memory_manager.set_option('cache_vectors', True)  # Enable vector caching
 ```
 
 ### Working with Existing FAISS Code
@@ -210,6 +277,9 @@ Check out the example scripts in the repository:
 
 - [Simple Client](../examples/simple_client.py): Basic usage of the client
 - [Remote Search Example](../examples/remote_search.py): Using remote search operations
+- [Advanced Index Examples](../examples/advanced_indices.py): Working with various index types
+- [Persistence Example](../examples/persistence.py): Saving and loading indices
+- [Index Modification Example](../examples/modification.py): Merging and splitting indices
 
 ## Troubleshooting
 
@@ -228,6 +298,15 @@ If you get dimension mismatch errors, ensure:
 1. Your index was created with the correct dimension
 2. All vectors have the same dimension as the index
 3. All vectors are properly converted to float32 type
+
+### Server Limitations
+
+When using remote mode, be aware of potential server limitations:
+
+1. Some server implementations may not support all methods (vector reconstruction, reset, etc.)
+2. The client will attempt to work around these limitations with fallback strategies
+3. Check the server logs for detailed error information
+4. For critical operations, consider using local mode if possible
 
 ## License
 
