@@ -75,6 +75,7 @@ def run_command(args):
             auth_file=args.auth_file,
             enable_auth=args.enable_auth,
             data_dir=args.data_dir,
+            log_level=args.log_level,
         )
     except ValueError as e:
         print(f"Error configuring server: {e}")
@@ -136,6 +137,15 @@ def setup_run_parser(subparsers):
     # Data persistence
     parser.add_argument(
         "--data-dir", help="Directory to store FAISS indices (optional)"
+    )
+
+    # Logging configuration
+    parser.add_argument(
+        "--log-level",
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL",
+                 "debug", "info", "warning", "error", "critical"],
+        help="Logging level (default: WARNING)"
     )
 
     # Set the function to call when this command is used

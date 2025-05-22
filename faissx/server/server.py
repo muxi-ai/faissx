@@ -197,7 +197,7 @@ class FaissIndex:
         self.data_dir = data_dir
         self.base_indexes = {}  # Add initialization for base_indexes
         self.task_worker = TaskWorker()
-        logger.info("FAISSx server initialized (version %s)", faissx_version)
+        # logger.info("FAISSx server initialized (version %s)", faissx_version)
 
     def _run_with_timeout(self, func, *args, timeout=None, **kwargs):
         """
@@ -2118,11 +2118,48 @@ def run_server(
         linger (int): Linger time in milliseconds
         log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     """
+    # print("=== Starting run_server function in faissx/server/server.py ===")
+    # print(f"Port: {port}, Bind address: {bind_address}, Enable auth: {enable_auth}")
+    # print(f"Log level: {log_level}, Data dir: {data_dir}")
+
+    print("\n---------------------------------------------\n")
+    print("███████╗█████╗ ██╗███████╗███████╗")
+    print("██╔════██╔══██╗██║██╔════╝██╔════╝")
+    print("█████╗ ███████║██║███████╗███████╗ ██╗ ██╗")
+    print("██╔══╝ ██╔══██║██║╚════██║╚════██║ ╚═██╔╝")
+    print("██║    ██║  ██║██║███████║███████║ ██╔╝██╗")
+    print("╚═╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝ ╚═╝ ╚═╝")
+    print("\n---------------------------------------------")
+    print(f"* FAISSx {faissx_version} (c) Ran Aroussi")
+    print(f"* FAISS {faiss.__version__} (c) Meta Platforms, Inc.")
+    print("---------------------------------------------")
+
     # Set the log level (case-insensitive)
     log_level = log_level.upper()
     numeric_level = getattr(logging, log_level, logging.WARNING)
     logger.setLevel(numeric_level)
-    logger.info(f"Log level set to {log_level}")
+
+    # Add a console handler to ensure logger messages are displayed
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(numeric_level)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+
+    # Check if logger already has handlers to avoid duplicates
+    if not logger.handlers:
+        logger.addHandler(console_handler)
+
+    # logger.info(f"Log level set to {log_level}")
+    # logger.info("FAISSx server initializing...")
+
+    # Print concise startup message
+    storage_mode = f"persistent ({data_dir})" if data_dir else "in-memory"
+    auth_status = "enabled" if enable_auth else "disabled"
+
+    print("\nStarting using:")
+    print(f" - Storage: {storage_mode}")
+    print(f" - Authentication: {auth_status}")
+    print(f" - Log level: {log_level}")
 
     try:
         context = zmq.Context()
@@ -2136,7 +2173,33 @@ def run_server(
         socket.setsockopt(zmq.SNDHWM, high_water_mark)
 
         # Bind the socket
-        socket.bind(f"tcp://{bind_address}:{port}")
+        # print(f"Binding socket to tcp://{bind_address}:{port}...")
+        try:
+            socket.bind(f"tcp://{bind_address}:{port}")
+            # print("Socket bound successfully")
+        except zmq.error.ZMQError as e:
+            if "Address already in use" in str(e):
+                logger.error(f"Port {port} is already in use")
+                print(f"\nERROR: Port {port} is already in use!")
+                print("This likely means another instance of the FAISSx server is already running.")
+                print("\nPossible solutions:")
+                print(f" 1. Stop the existing server instance using port {port}")
+                print(" 2. Specify a different port using --port option")
+                print(" 3. Check if any other application is using this port")
+                print("\nYou can use the following command to see processes using this port:")
+                print(f"    lsof -i :{port}")
+                print("\nExiting...")
+                print("\n---------------------------------------------\n")
+                return  # Exit gracefully instead of raising the exception
+            else:
+                print(f"\nZMQ ERROR during socket binding: {e}")
+                print(f"Error details: {str(e)}, type: {type(e).__name__}, code: {e.errno if hasattr(e, 'errno') else 'N/A'}")
+                print("\n---------------------------------------------\n")
+                logger.error(f"Failed to bind socket: {e}")
+                raise  # Re-raise other types of exceptions
+
+        print(f"\nStarted. Listening on {bind_address}:{port}...")
+        print("\n---------------------------------------------\n")
 
         # Initialize the index server
         faiss_index = FaissIndex(data_dir=data_dir)
@@ -2144,12 +2207,22 @@ def run_server(
         # Create a worker thread pool for handling requests
         task_worker = TaskWorker()
 
-        logger.info(f"FAISSx server running on port {port}")
+        logger.info("FAISSx server started")
 
         while True:
             try:
                 # Wait for a message
-                message = socket.recv()
+                logger.info("Waiting for a message...")
+                try:
+                    message = socket.recv()
+                    print(f"Received message of length {len(message)}")
+                except zmq.error.Again:
+                    print("Socket timeout while waiting for a message (normal for long polling)")
+                    continue
+                except zmq.error.ZMQError as e:
+                    print(f"ZMQ ERROR during message receive: {e}")
+                    logger.error(f"Error receiving message: {e}")
+                    continue
 
                 # Unpack the message
                 request = msgpack.unpackb(message, raw=False)

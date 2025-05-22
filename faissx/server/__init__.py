@@ -26,7 +26,7 @@ communication. It handles server configuration, authentication, and initializati
 vector database service.
 """
 
-import os
+# import os
 import json
 from typing import Dict, Any, Optional
 
@@ -129,35 +129,29 @@ def get_config() -> Dict[str, Any]:
 
 def run():
     """
-    Initialize and start the FAISSx Server.
+    Run the FAISSx server with the current configuration.
 
-    This function:
-    1. Creates necessary data directories
-    2. Sets up environment variables
-    3. Initializes and starts the ZeroMQ server
-    4. Begins accepting client connections
-
-    The server will run until terminated, handling vector database operations
-    according to the current configuration.
+    This function starts the server with the settings previously configured via
+    the configure() function. If configure() was not called before this, default
+    settings will be used.
     """
-    # Import server module for actual server implementation
+    # Get configuration from global settings
+    port = _config["port"]
+    bind_address = _config["bind_address"]
+    data_dir = _config["data_dir"]
+    auth_keys = _config["auth_keys"]
+    enable_auth = _config["enable_auth"]
+    log_level = _config["log_level"]
+
+    # Import here to avoid circular imports
     from faissx.server.server import run_server
 
-    # Create data directory if specified
-    if _config["data_dir"]:
-        os.makedirs(_config["data_dir"], exist_ok=True)
-
-    # Configure environment variables for server process
-    if _config["data_dir"]:
-        os.environ["FAISSX_DATA_DIR"] = _config["data_dir"]
-    os.environ["FAISSX_PORT"] = str(_config["port"])
-
-    # Initialize and start the server with current configuration
+    # Run the server with configured settings
     run_server(
-        port=_config["port"],
-        bind_address=_config["bind_address"],
-        auth_keys=_config["auth_keys"],
-        enable_auth=_config["enable_auth"],
-        data_dir=_config["data_dir"],
-        log_level=_config["log_level"],
+        port=port,
+        bind_address=bind_address,
+        auth_keys=auth_keys,
+        enable_auth=enable_auth,
+        data_dir=data_dir,
+        log_level=log_level
     )
