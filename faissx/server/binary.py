@@ -47,6 +47,10 @@ def is_binary_index_type(index_type: str) -> bool:
     Returns:
         bool: True if binary index type, False otherwise
     """
+    # First check if the input is a string
+    if not isinstance(index_type, str):
+        return False
+
     # Check if the index type starts with "BINARY"
     if index_type.startswith("BINARY"):
         return True
@@ -202,26 +206,192 @@ def binary_to_float(binary_vectors: np.ndarray, dimension: int) -> List[List[flo
         for j in range(dimension):
             byte_idx = j // 8
             bit_idx = j % 8
-
-            # Check if the bit is set
-            if byte_idx < binary_vectors.shape[1]:
-                bit_value = (binary_vectors[i, byte_idx] >> bit_idx) & 1
-                float_vectors[i, j] = float(bit_value)
+            if byte_idx < binary_vectors.shape[1]:  # Ensure we don't exceed binary_vectors dimensions
+                if binary_vectors[i, byte_idx] & (1 << bit_idx):
+                    float_vectors[i, j] = 1.0
 
     return float_vectors.tolist()
 
 def compute_hamming_distance(vector1: List[float], vector2: List[float]) -> int:
     """
-    Compute Hamming distance between two binary vectors.
+    Compute Hamming distance between two vectors.
 
     Args:
-        vector1: First binary vector (as list of 0.0 and 1.0)
-        vector2: Second binary vector (as list of 0.0 and 1.0)
+        vector1: First vector (list of floats, treated as binary)
+        vector2: Second vector (list of floats, treated as binary)
 
     Returns:
-        int: Hamming distance
+        int: Hamming distance (number of differing bits)
     """
-    v1 = np.array(vector1, dtype=np.bool_)
-    v2 = np.array(vector2, dtype=np.bool_)
+    if len(vector1) != len(vector2):
+        raise ValueError("Vectors must have the same length")
 
-    return np.sum(v1 != v2)
+    distance = 0
+    for i in range(len(vector1)):
+        if (vector1[i] > 0.5) != (vector2[i] > 0.5):
+            distance += 1
+
+    return distance
+
+def create_binary_idmap_index(dimension: int, index_type: str = "BINARY_FLAT") -> Tuple[Any, Dict[str, Any]]:
+    """
+    Create a binary IDMap index based on the specified type and dimension.
+
+    This enables ID mapping for binary indices, allowing retrieval by custom IDs.
+
+    Args:
+        dimension: Dimension of vectors (in bits)
+        index_type: Type of base binary index
+
+    Returns:
+        tuple: (index, index_info)
+
+    Raises:
+        ValueError: If index type is not supported or parameters are invalid
+    """
+    # Create the base binary index
+    base_index, base_info = create_binary_index(index_type, dimension)
+
+    # Create IDMap wrapper
+    index = faiss.IndexBinaryIDMap(base_index)
+
+    # Prepare index info
+    index_info = {
+        "type": f"IDMap:{base_info['type']}",
+        "dimension": dimension,
+        "dimension_bytes": base_info.get('dimension_bytes', (dimension + 7) // 8),
+        "is_binary": True,
+        "is_idmap": True,
+        "base_type": base_info['type']
+    }
+
+    return index, index_info
+
+def create_binary_idmap2_index(dimension: int, index_type: str = "BINARY_FLAT") -> Tuple[Any, Dict[str, Any]]:
+    """
+    Create a binary IDMap2 index based on the specified type and dimension.
+
+    IDMap2 indices support faster random access and removal operations compared to IDMap.
+
+    Args:
+        dimension: Dimension of vectors (in bits)
+        index_type: Type of base binary index
+
+    Returns:
+        tuple: (index, index_info)
+
+    Raises:
+        ValueError: If index type is not supported or parameters are invalid
+    """
+    # Create the base binary index
+    base_index, base_info = create_binary_index(index_type, dimension)
+
+    # Create IDMap2 wrapper
+    index = faiss.IndexBinaryIDMap2(base_index)
+
+    # Prepare index info
+    index_info = {
+        "type": f"IDMap2:{base_info['type']}",
+        "dimension": dimension,
+        "dimension_bytes": base_info.get('dimension_bytes', (dimension + 7) // 8),
+        "is_binary": True,
+        "is_idmap": True,
+        "is_idmap2": True,
+        "base_type": base_info['type']
+    }
+
+    return index, index_info
+
+def compute_binary_distance_matrix(binary_vectors: np.ndarray) -> np.ndarray:
+    """
+    Compute a distance matrix between all pairs of binary vectors.
+
+    This is useful for clustering or visualization of binary vectors.
+
+    Args:
+        binary_vectors: Binary vectors as uint8 array
+
+    Returns:
+        numpy.ndarray: Distance matrix (shape: n_vectors x n_vectors)
+    """
+    n_vectors = binary_vectors.shape[0]
+    distance_matrix = np.zeros((n_vectors, n_vectors), dtype=np.int32)
+
+    for i in range(n_vectors):
+        for j in range(i + 1, n_vectors):
+            # Compute Hamming distance using bitwise operations
+            xor_result = np.bitwise_xor(binary_vectors[i], binary_vectors[j])
+
+            # Count number of set bits
+            distance = 0
+            for byte in xor_result:
+                # Count bits using popcount
+                distance += bin(byte).count('1')
+
+            # Store the results (matrix is symmetric)
+            distance_matrix[i, j] = distance
+            distance_matrix[j, i] = distance
+
+    return distance_matrix
+
+def get_binary_index_supported_parameters(index_type: str) -> List[str]:
+    """
+    Get a list of supported parameters for a given binary index type.
+
+    Args:
+        index_type: Type of binary index
+
+    Returns:
+        list: List of parameter names supported by this index type
+    """
+    supported_params = ["dimension"]
+
+    if index_type == "BINARY_FLAT":
+        pass  # No additional parameters for BINARY_FLAT
+
+    elif index_type.startswith("BINARY_IVF"):
+        supported_params.extend(["nlist", "nprobe"])
+
+    elif index_type.startswith("BINARY_HASH"):
+        supported_params.append("bits_per_dim")
+
+    # Parameters for IDMap wrappers
+    if "IDMap" in index_type:
+        supported_params.extend(["add_with_ids", "remove_ids"])
+
+    return supported_params
+
+def optimize_binary_index(index: Any, optimization_level: int = 1) -> bool:
+    """
+    Optimize a binary index for better performance.
+
+    This function applies various optimizations based on the level.
+
+    Args:
+        index: Binary index to optimize
+        optimization_level: Level of optimization (1-3, higher is more aggressive)
+
+    Returns:
+        bool: True if optimization was applied successfully
+    """
+    try:
+        if isinstance(index, faiss.IndexBinaryIVF):
+            # Optimize IVF binary index
+            if optimization_level >= 1:
+                # Basic optimization - set nprobe to a reasonable value based on nlist
+                nlist = index.nlist
+                index.nprobe = max(1, min(nlist // 10, 32))  # 10% of nlist but at most 32
+
+            if optimization_level >= 2:
+                # Precompute some data structures for faster search (if available in the future)
+                pass
+
+        elif isinstance(index, faiss.IndexBinaryHash):
+            # Currently no specific optimizations for binary hash
+            pass
+
+        return True
+
+    except Exception as e:
+        print(f"Error optimizing binary index: {e}")
+        return False

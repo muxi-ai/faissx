@@ -772,6 +772,10 @@ def is_binary_index_type(index_type):
     Returns:
         bool: True if it's a binary index type
     """
+    # First check if the input is a string
+    if not isinstance(index_type, str):
+        return False
+
     binary_prefixes = ["BINARY_", "BIN_"]
     return any(index_type.startswith(prefix) for prefix in binary_prefixes)
 

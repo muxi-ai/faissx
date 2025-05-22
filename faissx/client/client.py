@@ -1230,45 +1230,81 @@ class FaissXClient:
             raise
 
     def reconstruct_n(self, index_id: IndexID, start_idx: int, n: int) -> SearchResult:
-        """Reconstruct multiple vectors by index position.
+        """Reconstruct multiple vectors at specified positions.
 
-        This method retrieves original vectors by their position in the index.
-        Only works with indices that support reconstruction (not all indices do).
+        This method reconstructs a contiguous set of vectors from the specified index,
+        starting at a given position.
 
         Args:
             index_id: Identifier of the target index
-            start_idx: Starting index position
+            start_idx: Starting index position (0-based)
             n: Number of vectors to reconstruct
 
         Returns:
-            Dictionary containing the reconstructed vectors:
+            Dictionary containing operation results:
             {
-                "success": bool,
-                "vectors": [[float, ...], ...],  # List of reconstructed vectors
+                "success": bool,      # Whether the operation succeeded
+                "vectors": list,      # List of reconstructed vectors
             }
 
         Raises:
-            RuntimeError: If reconstruction fails or is not supported
+            RuntimeError: If reconstruction fails on the server
+            ValueError: If indices are out of range
         """
         try:
-            # Log the operation
-            logger.debug(f"Reconstructing {n} vectors starting at {start_idx} from index {index_id}")
+            logger.debug(f"Reconstructing {n} vectors from index {index_id} starting at {start_idx}")
 
-            # Send reconstruction request
+            # Send request
             result = self._send_request(
                 {
                     "action": "reconstruct_n",
                     "index_id": index_id,
                     "start_idx": start_idx,
-                    "num": n,
+                    "num_vectors": n
                 }
             )
 
-            logger.debug(f"Successfully reconstructed {len(result.get('vectors', []))} vectors")
+            logger.debug(f"Reconstructed {len(result.get('vectors', []))} vectors")
             return result
 
         except Exception as e:
             logger.error(f"Failed to reconstruct vectors: {e}")
+            raise
+
+    def delete_index(self, index_id: IndexID) -> SearchResult:
+        """Delete an index from the server.
+
+        This method permanently removes the specified index from the server.
+
+        Args:
+            index_id: Identifier of the index to delete
+
+        Returns:
+            Dictionary containing operation results:
+            {
+                "success": bool,      # Whether the operation succeeded
+                "message": str,       # Success or error message
+            }
+
+        Raises:
+            RuntimeError: If deletion fails on the server
+        """
+        try:
+            logger.debug(f"Deleting index {index_id}")
+
+            # Send request
+            result = self._send_request(
+                {
+                    "action": "delete_index",
+                    "index_id": index_id
+                }
+            )
+
+            logger.debug(f"Deleted index {index_id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to delete index {index_id}: {e}")
             raise
 
     def search_and_reconstruct(

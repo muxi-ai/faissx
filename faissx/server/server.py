@@ -37,40 +37,43 @@ communication and supports both in-memory and persistent storage of vector indic
 
 import os
 import time
-import zmq
-import numpy as np
-import faiss
-import msgpack
-import argparse
-import logging
 import json
+import zmq
+import faiss
+import logging
+import numpy as np
+import msgpack
 import threading
+import argparse
 from queue import Queue
 from typing import Dict, List, Any, Tuple, Optional, Union
-from faissx import __version__ as faissx_version
-from faissx.server.response import (
-    success_response, error_response, format_search_results,
-    format_vector_results, format_index_status
-)
-from faissx.server.training import (
-    requires_training, get_training_requirements,
-    is_trained_for_use, estimate_training_vectors_needed
-)
-from faissx.server.binary import (
-    is_binary_index_type, create_binary_index, convert_to_binary,
-    binary_to_float
-)
 
-# Import our modules
+from .. import __version__ as faissx_version
+from .core import (
+    IndexID, VectorData, SearchResult, QueryParams,
+    DEFAULT_PORT, DEFAULT_HOST, DEFAULT_K, DEFAULT_TIMEOUT,
+    create_index_from_type
+)
+from .response import (
+    error_response, success_response,
+    format_search_results, format_vector_results,
+    format_index_status
+)
+from .training import (
+    is_trained_for_use, requires_training,
+    get_training_requirements, estimate_training_vectors_needed
+)
+from .binary import (
+    convert_to_binary, binary_to_float,
+    is_binary_index_type, create_binary_index
+)
+from .logging import configure_logging
 from . import persistence
 from . import hnsw
 from . import hybrid
+from .transformations import parse_transform_type
+from . import specialized_operations
 from . import transformations
-from .transformations import (
-    parse_transform_type, create_transformation, create_pretransform_index,
-    is_transform_trained, get_transform_training_requirements, train_transform,
-    create_index_from_type
-)
 
 # Constants for server configuration
 DEFAULT_PORT = 45678  # Default port for ZeroMQ server
@@ -617,6 +620,16 @@ class FaissIndex:
         """
         logger.info(f"Creating index: id={index_id}, type={index_type}, dimension={dimension}")
 
+        # Ensure dimension is an integer
+        try:
+            dimension = int(dimension)
+        except (ValueError, TypeError):
+            return error_response(f"Invalid dimension: {dimension}. Must be an integer.")
+
+        # Ensure index_type is a string
+        if not isinstance(index_type, str):
+            return error_response(f"Invalid index_type: {index_type}. Must be a string.")
+
         if index_id in self.indexes:
             return error_response(f"Index {index_id} already exists")
 
@@ -1151,26 +1164,26 @@ class FaissIndex:
 
         # Add metrics information
         info["metrics"].update({
-            "vectors_count": status["ntotal"],
-            "dimension": status["dimension"],
+            "vectors_count": status.get("ntotal", 0),
+            "dimension": status.get("dimension", 0),
             # Assuming float32 (4 bytes)
-            "byte_size_per_vector": status["dimension"] * 4,
+            "byte_size_per_vector": status.get("dimension", 0) * 4,
         })
 
         # Add estimated memory usage (approximate)
-        vector_memory = status["ntotal"] * status["dimension"] * 4  # float32 vectors
+        vector_memory = status.get("ntotal", 0) * status.get("dimension", 0) * 4  # float32 vectors
         index_overhead = 0
 
         # Estimate index overhead based on type
         if isinstance(index, faiss.IndexFlat):
             # Flat indices store vectors directly with minimal overhead
-            index_overhead = status["ntotal"] * 4  # Minimal overhead
+            index_overhead = status.get("ntotal", 0) * 4  # Minimal overhead
         elif isinstance(index, faiss.IndexIVF):
             # IVF has inverted lists overhead
-            index_overhead = status["nlist"] * 100 + status["ntotal"] * 8
+            index_overhead = status.get("nlist", 100) * 100 + status.get("ntotal", 0) * 8
         elif isinstance(index, faiss.IndexHNSW):
             # HNSW has graph structure overhead
-            index_overhead = status["ntotal"] * status["hnsw_m"] * 8
+            index_overhead = status.get("ntotal", 0) * status.get("hnsw_m", 32) * 8
 
         info["storage"].update({
             "estimated_memory_bytes": vector_memory + index_overhead,
@@ -1183,21 +1196,21 @@ class FaissIndex:
             info["configuration"]["metric"] = "L2" if isinstance(index, faiss.IndexFlatL2) else "IP"
         elif isinstance(index, faiss.IndexIVF):
             info["configuration"].update({
-                "nlist": status["nlist"],
-                "nprobe": status["nprobe"],
+                "nlist": status.get("nlist", 100),
+                "nprobe": status.get("nprobe", 1),
                 "metric": "L2" if index.metric_type == faiss.METRIC_L2 else "IP",
             })
         elif isinstance(index, faiss.IndexHNSW):
             info["configuration"].update({
-                "M": status["hnsw_m"],
-                "efSearch": status["ef_search"],
-                "efConstruction": status["ef_construction"],
+                "M": status.get("hnsw_m", 32),
+                "efSearch": status.get("ef_search", 16),
+                "efConstruction": status.get("ef_construction", 40),
                 "metric": "L2" if index.metric_type == faiss.METRIC_L2 else "IP",
             })
         elif isinstance(index, faiss.IndexPQ):
             info["configuration"].update({
-                "M": status["pq_m"],
-                "nbits": status["pq_nbits"],
+                "M": status.get("pq_m", 8),
+                "nbits": status.get("pq_nbits", 8),
                 "metric": "L2" if index.metric_type == faiss.METRIC_L2 else "IP",
             })
 
@@ -1217,8 +1230,12 @@ class FaissIndex:
         This method allows changing search parameters without recreating the index.
         Supported parameters vary by index type:
 
-        - For IVF indices: nprobe
-        - For HNSW indices: efSearch
+        - For IVF indices: nprobe, quantizer_type
+        - For HNSW indices: efSearch, efConstruction, M
+        - For PQ indices: M, nbits, use_precomputed_table
+        - For SQ indices: qtype
+        - For Binary indices: nprobe (for BINARY_IVF)
+        - For IDMap indices: add_id_range, remove_ids
         - For multiple indices: metric_type
 
         Args:
@@ -1235,57 +1252,95 @@ class FaissIndex:
         index = self.indexes[index_id]
 
         try:
-            # Parameter handlers for different index types
-            if param_name == "nprobe" and isinstance(index, faiss.IndexIVF):
-                # Validate nprobe value
-                if not isinstance(param_value, int) or param_value <= 0:
+            # IVF index parameters
+            if isinstance(index, faiss.IndexIVF):
+                if param_name == "nprobe":
+                    # Validate nprobe value
+                    if not isinstance(param_value, int) or param_value <= 0:
+                        return {"success": False, "error": "nprobe must be a positive integer"}
+
+                    # Set nprobe parameter
+                    index.nprobe = param_value
                     return {
-                        "success": False,
-                        "error": "nprobe must be a positive integer"
+                        "success": True,
+                        "message": f"Set nprobe={param_value} for index {index_id}"
                     }
 
-                # Set nprobe parameter
-                index.nprobe = param_value
-                return {
-                    "success": True,
-                    "message": f"Set nprobe={param_value} for index {index_id}"
-                }
+                # Additional IVF parameters
+                elif param_name == "quantizer_type" and hasattr(index, "quantizer"):
+                    return {"success": False, "error": "Changing quantizer_type is not supported after index creation"}
 
-            elif param_name == "efSearch" and isinstance(index, faiss.IndexHNSW):
-                # Validate efSearch value
-                if not isinstance(param_value, int) or param_value <= 0:
+            # HNSW index parameters
+            elif isinstance(index, faiss.IndexHNSW):
+                if param_name == "efSearch":
+                    # Validate efSearch value
+                    if not isinstance(param_value, int) or param_value <= 0:
+                        return {"success": False, "error": "efSearch must be a positive integer"}
+
+                    # Set efSearch parameter
+                    index.hnsw.efSearch = param_value
                     return {
-                        "success": False,
-                        "error": "efSearch must be a positive integer"
+                        "success": True,
+                        "message": f"Set efSearch={param_value} for index {index_id}"
                     }
 
-                # Set efSearch parameter
-                index.hnsw.efSearch = param_value
-                return {
-                    "success": True,
-                    "message": f"Set efSearch={param_value} for index {index_id}"
-                }
+                elif param_name == "efConstruction":
+                    # Validate efConstruction value
+                    if not isinstance(param_value, int) or param_value <= 0:
+                        return {"success": False, "error": "efConstruction must be a positive integer"}
 
-            elif param_name == "efConstruction" and isinstance(index, faiss.IndexHNSW):
-                # Validate efConstruction value
-                if not isinstance(param_value, int) or param_value <= 0:
+                    # Set efConstruction parameter
+                    index.hnsw.efConstruction = param_value
                     return {
-                        "success": False,
-                        "error": "efConstruction must be a positive integer"
+                        "success": True,
+                        "message": f"Set efConstruction={param_value} for index {index_id}"
                     }
 
-                # Set efConstruction parameter
-                index.hnsw.efConstruction = param_value
-                return {
-                    "success": True,
-                    "message": f"Set efConstruction={param_value} for index {index_id}"
-                }
+                elif param_name == "M":
+                    return {"success": False, "error": "Changing HNSW M parameter after index creation is not supported"}
 
-            else:
-                return {
-                    "success": False,
-                    "error": f"Parameter {param_name} not supported for this index type"
-                }
+            # Product Quantization (PQ) index parameters
+            elif isinstance(index, faiss.IndexPQ):
+                if param_name == "use_precomputed_table":
+                    index.use_precomputed_table = bool(param_value)
+                    return {
+                        "success": True,
+                        "message": f"Set use_precomputed_table={param_value} for index {index_id}"
+                    }
+
+                elif param_name in ["M", "nbits"]:
+                    return {"success": False, "error": f"Changing PQ {param_name} after index creation is not supported"}
+
+            # Scalar Quantization (SQ) index parameters
+            elif isinstance(index, faiss.IndexScalarQuantizer):
+                if param_name == "qtype":
+                    return {"success": False, "error": "Changing SQ qtype after index creation is not supported"}
+
+            # Binary index parameters
+            elif isinstance(index, faiss.IndexBinaryIVF):
+                if param_name == "nprobe":
+                    if not isinstance(param_value, int) or param_value <= 0:
+                        return {"success": False, "error": "nprobe must be a positive integer"}
+
+                    index.nprobe = param_value
+                    return {
+                        "success": True,
+                        "message": f"Set nprobe={param_value} for binary index {index_id}"
+                    }
+
+            # IDMap index parameters
+            elif isinstance(index, (faiss.IndexIDMap, faiss.IndexIDMap2)):
+                if param_name == "add_id_range":
+                    return {"success": False, "error": "add_id_range should be used with add_with_ids method"}
+
+                elif param_name == "remove_ids":
+                    return {"success": False, "error": "remove_ids should be used with the remove_ids method"}
+
+            # If we get here, the parameter is not supported
+            return {
+                "success": False,
+                "error": f"Parameter {param_name} not supported for this index type ({type(index).__name__})"
+            }
 
         except Exception as e:
             return {"success": False, "error": f"Error setting parameter: {str(e)}"}
@@ -1836,8 +1891,6 @@ class FaissIndex:
         """
         Merge multiple source indices into a target index.
 
-        All indices must be of compatible types and dimensions.
-
         Args:
             target_index_id (str): ID of the target index to merge into
             source_index_ids (list): List of source index IDs to merge from
@@ -1845,87 +1898,8 @@ class FaissIndex:
         Returns:
             dict: Response indicating success or failure
         """
-        if not source_index_ids:
-            return {
-                "success": False,
-                "error": "No source indices provided for merging"
-            }
-
-        # Check if the target index exists
-        if target_index_id not in self.indexes:
-            return {
-                "success": False,
-                "error": f"Target index {target_index_id} not found"
-            }
-
-        # Check if all source indices exist
-        for src_id in source_index_ids:
-            if src_id not in self.indexes:
-                return {
-                    "success": False,
-                    "error": f"Source index {src_id} not found"
-                }
-
-        target_index = self.indexes[target_index_id]
-        target_dim = self.dimensions[target_index_id]
-
-        try:
-            # Process each source index
-            for src_id in source_index_ids:
-                src_index = self.indexes[src_id]
-                src_dim = self.dimensions[src_id]
-
-                # Check dimension compatibility
-                if src_dim != target_dim:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Dimension mismatch: target dimension is {target_dim}, "
-                            f"but source index {src_id} has dimension {src_dim}"
-                        )
-                    }
-
-                # Check index type compatibility
-                if type(src_index) != type(target_index):
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Index type mismatch: target is {type(target_index).__name__}, "
-                            f"but source index {src_id} is {type(src_index).__name__}"
-                        )
-                    }
-
-                # Additional compatibility checks for specific index types
-                if isinstance(target_index, faiss.IndexIVF):
-                    # IVF indices must have compatible quantizers
-                    if target_index.nlist != src_index.nlist:
-                        return {
-                            "success": False,
-                            "error": (
-                                f"IVF nlist mismatch: target nlist is {target_index.nlist}, "
-                                f"but source index {src_id} has nlist {src_index.nlist}"
-                            )
-                        }
-
-                # Extract vectors from source index
-                if src_index.ntotal > 0:
-                    vectors = np.zeros((src_index.ntotal, src_dim), dtype=np.float32)
-                    for i in range(src_index.ntotal):
-                        vectors[i] = src_index.reconstruct(i)
-
-                    # Add vectors to target index
-                    target_index.add(vectors)
-
-            return {
-                "success": True,
-                "message": (
-                    f"Successfully merged {len(source_index_ids)} indices into {target_index_id}, "
-                    f"new total: {target_index.ntotal} vectors"
-                )
-            }
-
-        except Exception as e:
-            return {"success": False, "error": f"Error merging indices: {str(e)}"}
+        # Use the specialized implementation which handles more index types
+        return specialized_operations.merge_indices(self, target_index_id, source_index_ids)
 
     def delete_index(self, index_id):
         """
@@ -2032,6 +2006,97 @@ class FaissIndex:
             logger.exception(f"Error in range_search: {e}")
             return error_response(f"Error in range_search: {str(e)}")
 
+    def optimize_index(self, index_id, optimization_level=1):
+        """
+        Optimize an index for better performance.
+
+        This applies various optimizations based on the index type and optimization level.
+
+        Args:
+            index_id (str): ID of the index to optimize
+            optimization_level (int): Level of optimization (1-3, higher is more aggressive)
+
+        Returns:
+            dict: Response indicating success or failure
+        """
+        return specialized_operations.optimize_index(self, index_id, optimization_level)
+
+    def compute_clustering(self, vectors, n_clusters, metric_type="L2", niter=25):
+        """
+        Compute k-means clustering on a set of vectors.
+
+        Args:
+            vectors (list): Input vectors
+            n_clusters (int): Number of clusters to compute
+            metric_type (str): Distance metric to use ("L2" or "IP")
+            niter (int): Number of iterations for k-means
+
+        Returns:
+            dict: Response containing centroids and cluster assignments
+        """
+        # Convert metric type string to FAISS constant
+        if metric_type.upper() == "IP":
+            metric_type_const = faiss.METRIC_INNER_PRODUCT
+        else:
+            metric_type_const = faiss.METRIC_L2
+
+        return specialized_operations.compute_clustering(
+            vectors, n_clusters, metric_type_const, niter
+        )
+
+    def recluster_index(self, index_id, n_clusters=None, sample_ratio=0.5):
+        """
+        Re-cluster an index to optimize its structure.
+
+        Args:
+            index_id (str): ID of the index to recluster
+            n_clusters (int): Number of clusters (None to use existing)
+            sample_ratio (float): Ratio of vectors to sample for clustering
+
+        Returns:
+            dict: Response indicating success or failure
+        """
+        return specialized_operations.recluster_index(
+            self, index_id, n_clusters, sample_ratio
+        )
+
+    def batch_add_with_ids(self, index_id, vectors, ids, batch_size=1000):
+        """
+        Add vectors with IDs to an index in batches.
+
+        Args:
+            index_id (str): ID of the index
+            vectors (list): Vectors to add
+            ids (list): IDs to associate with vectors
+            batch_size (int): Batch size for adding
+
+        Returns:
+            dict: Response indicating success or failure
+        """
+        return specialized_operations.batch_add_with_ids(
+            self, index_id, vectors, ids, batch_size
+        )
+
+    def hybrid_search(self, index_id, query_vectors, vector_weight=0.5,
+                      metadata_filter=None, k=10, params=None):
+        """
+        Perform hybrid search combining vector similarity with metadata filtering.
+
+        Args:
+            index_id (str): ID of the index to search in
+            query_vectors (list): Query vectors for similarity search
+            vector_weight (float): Weight given to vector similarity vs metadata (0.0-1.0)
+            metadata_filter (dict): Filter expression for metadata
+            k (int): Number of results to return
+            params (dict): Additional search parameters
+
+        Returns:
+            dict: Response containing search results
+        """
+        return specialized_operations.hybrid_search(
+            self, index_id, query_vectors, vector_weight, metadata_filter, k, params
+        )
+
 
 def serialize_message(data):
     """
@@ -2095,6 +2160,33 @@ def authenticate_request(request, auth_keys):
     return True, None
 
 
+def register_specialized_handlers(server_instance):
+    """Register specialized operation handlers from the specialized_operations module.
+
+    Args:
+        server_instance: The FaissIndex server instance
+    """
+    from . import specialized_operations
+
+    # Register specialized operation handlers
+    action_handlers = {
+        "merge_indices": specialized_operations.merge_indices,
+        "compute_clustering": specialized_operations.compute_clustering,
+        "recluster_index": specialized_operations.recluster_index,
+        "hybrid_search": specialized_operations.hybrid_search,
+        "batch_add_with_ids": specialized_operations.batch_add_with_ids,
+        "optimize_index": specialized_operations.optimize_index,
+    }
+
+    # Add to the server's action_handlers dictionary
+    if hasattr(server_instance, "action_handlers"):
+        server_instance.action_handlers.update(action_handlers)
+    else:
+        server_instance.action_handlers = action_handlers
+
+    logger.info(f"Registered {len(action_handlers)} specialized operation handlers")
+
+
 def run_server(
     port=DEFAULT_PORT,
     bind_address=DEFAULT_BIND_ADDRESS,
@@ -2106,64 +2198,42 @@ def run_server(
     linger=DEFAULT_LINGER,
     log_level="WARNING",
 ):
-    """
-    Run the ZeroMQ server for handling vector operations.
+    """Run the server on the specified port.
 
     Args:
-        port (int): Port number for the server
+        port (int): Port to run the server on
         bind_address (str): Address to bind the server to
-        auth_keys (dict): Dictionary of API keys for authentication
+        auth_keys (list, optional): List of authentication keys
         enable_auth (bool): Whether to enable authentication
-        data_dir (str): Directory for persistent storage
+        data_dir (str, optional): Directory to store data
         socket_timeout (int): Socket timeout in milliseconds
-        high_water_mark (int): High water mark for socket buffer
-        linger (int): Linger time in milliseconds
-        log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        high_water_mark (int): ZeroMQ high water mark
+        linger (int): ZeroMQ linger period
+        log_level (str): Logging level
+
+    Raises:
+        Exception: If there's an error starting the server
     """
-    # print("=== Starting run_server function in faissx/server/server.py ===")
-    # print(f"Port: {port}, Bind address: {bind_address}, Enable auth: {enable_auth}")
-    # print(f"Log level: {log_level}, Data dir: {data_dir}")
+    # Configure logging
+    configure_logging(log_level)
 
-    print("\n---------------------------------------------\n")
-    print("███████╗█████╗ ██╗███████╗███████╗")
-    print("██╔════██╔══██╗██║██╔════╝██╔════╝")
-    print("█████╗ ███████║██║███████╗███████╗ ██╗ ██╗")
-    print("██╔══╝ ██╔══██║██║╚════██║╚════██║ ╚═██╔╝")
-    print("██║    ██║  ██║██║███████║███████║ ██╔╝██╗")
-    print("╚═╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝ ╚═╝ ╚═╝")
-    print("\n---------------------------------------------")
-    print(f"* FAISSx {faissx_version} (c) Ran Aroussi")
-    print(f"* FAISS {faiss.__version__} (c) Meta Platforms, Inc.")
-    print("---------------------------------------------")
+    logger.info("Starting FAISSx ZeroMQ server")
+    logger.info(f"Server version: {faissx_version}")
+    logger.info(f"Binding to {bind_address}:{port}")
+    logger.info(f"Data directory: {data_dir or 'None (in-memory only)'}")
+    logger.info(f"Authentication: {'Enabled' if enable_auth else 'Disabled'}")
 
-    # Set the log level (case-insensitive)
-    log_level = log_level.upper()
-    numeric_level = getattr(logging, log_level, logging.WARNING)
-    logger.setLevel(numeric_level)
+    if enable_auth and not auth_keys:
+        logger.warning("Authentication enabled but no keys provided")
 
-    # Add a console handler to ensure logger messages are displayed
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(numeric_level)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
+    # Create server instance
+    server = FaissIndex(data_dir=data_dir)
 
-    # Check if logger already has handlers to avoid duplicates
-    if not logger.handlers:
-        logger.addHandler(console_handler)
-
-    # logger.info(f"Log level set to {log_level}")
-    # logger.info("FAISSx server initializing...")
-
-    # Print concise startup message
-    storage_mode = f"persistent ({data_dir})" if data_dir else "in-memory"
-    auth_status = "enabled" if enable_auth else "disabled"
-
-    print("\nStarting using:")
-    print(f" - Storage: {storage_mode}")
-    print(f" - Authentication: {auth_status}")
-    print(f" - Log level: {log_level}")
+    # Register specialized operation handlers
+    register_specialized_handlers(server)
 
     try:
+        # Initialize ZeroMQ
         context = zmq.Context()
         socket = context.socket(zmq.REP)
 
@@ -2175,10 +2245,8 @@ def run_server(
         socket.setsockopt(zmq.SNDHWM, high_water_mark)
 
         # Bind the socket
-        # print(f"Binding socket to tcp://{bind_address}:{port}...")
         try:
             socket.bind(f"tcp://{bind_address}:{port}")
-            # print("Socket bound successfully")
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e):
                 logger.error(f"Port {port} is already in use")
@@ -2202,9 +2270,6 @@ def run_server(
 
         print(f"\nStarted. Listening on {bind_address}:{port}...")
         print("\n---------------------------------------------\n")
-
-        # Initialize the index server
-        faiss_index = FaissIndex(data_dir=data_dir)
 
         # Create a worker thread pool for handling requests
         task_worker = TaskWorker()
@@ -2241,7 +2306,7 @@ def run_server(
 
                 # Process request based on action
                 if action == "create_index":
-                    response = faiss_index.create_index(
+                    response = server.create_index(
                         request.get("index_id", ""),
                         request.get("dimension", 0),
                         request.get("index_type", "L2"),
@@ -2249,7 +2314,7 @@ def run_server(
                     )
 
                 elif action == "add_vectors":
-                    response = faiss_index.add_vectors(
+                    response = server.add_vectors(
                         request.get("index_id", ""),
                         request.get("vectors", []),
                         request.get("ids", None)
@@ -2258,7 +2323,7 @@ def run_server(
                 elif action == "search":
                     # Use task worker for search operations to prevent timeouts
                     task_id = task_worker.submit_task(
-                        faiss_index.search,
+                        server.search,
                         request.get("index_id", ""),
                         request.get("query_vectors", []),
                         request.get("k", 10),
@@ -2274,60 +2339,60 @@ def run_server(
                         response = error_response("Search operation timed out", code="TIMEOUT")
 
                 elif action == "train_index":
-                    response = faiss_index.train_index(
+                    response = server.train_index(
                         request.get("index_id", ""),
                         request.get("training_vectors", [])
                     )
 
                 elif action == "get_index_status":
-                    response = faiss_index.get_index_status(
+                    response = server.get_index_status(
                         request.get("index_id", "")
                     )
 
                 elif action == "get_index_info":
-                    response = faiss_index.get_index_info(
+                    response = server.get_index_info(
                         request.get("index_id", "")
                     )
 
                 elif action == "list_indices":
-                    response = faiss_index.list_indices()
+                    response = server.list_indices()
 
                 elif action == "delete_index":
-                    response = faiss_index.delete_index(
+                    response = server.delete_index(
                         request.get("index_id", "")
                     )
 
                 elif action == "reset":
-                    response = faiss_index.reset(
+                    response = server.reset(
                         request.get("index_id", "")
                     )
 
                 elif action == "clear":
-                    response = faiss_index.clear(
+                    response = server.clear(
                         request.get("index_id", "")
                     )
 
                 elif action == "set_parameter":
-                    response = faiss_index.set_parameter(
+                    response = server.set_parameter(
                         request.get("index_id", ""),
                         request.get("parameter", ""),
                         request.get("value", None)
                     )
 
                 elif action == "get_parameter":
-                    response = faiss_index.get_parameter(
+                    response = server.get_parameter(
                         request.get("index_id", ""),
                         request.get("parameter", "")
                     )
 
                 elif action == "reconstruct":
-                    response = faiss_index.reconstruct(
+                    response = server.reconstruct(
                         request.get("index_id", ""),
                         request.get("idx", 0)
                     )
 
                 elif action == "reconstruct_n":
-                    response = faiss_index.reconstruct_n(
+                    response = server.reconstruct_n(
                         request.get("index_id", ""),
                         request.get("start_idx", 0),
                         request.get("num_vectors", 10)
@@ -2336,7 +2401,7 @@ def run_server(
                 elif action == "range_search":
                     # Use task worker for range search operations to prevent timeouts
                     task_id = task_worker.submit_task(
-                        faiss_index.range_search,
+                        server.range_search,
                         request.get("index_id", ""),
                         request.get("query_vectors", []),
                         request.get("radius", 0.0)
@@ -2351,7 +2416,7 @@ def run_server(
                         response = error_response("Range search operation timed out", code="TIMEOUT")
 
                 elif action == "merge_indices":
-                    response = faiss_index.merge_indices(
+                    response = server.merge_indices(
                         request.get("target_index_id", ""),
                         request.get("source_index_ids", [])
                     )
@@ -2362,7 +2427,7 @@ def run_server(
                 elif action == "get_vectors":
                     # Use task worker for get_vectors operations to prevent timeouts
                     task_id = task_worker.submit_task(
-                        faiss_index.get_vectors,
+                        server.get_vectors,
                         request.get("index_id", ""),
                         request.get("start_idx", 0),
                         request.get("limit", None)
@@ -2379,7 +2444,7 @@ def run_server(
                 elif action == "search_and_reconstruct":
                     # Use task worker for search_and_reconstruct operations to prevent timeouts
                     task_id = task_worker.submit_task(
-                        faiss_index.search_and_reconstruct,
+                        server.search_and_reconstruct,
                         request.get("index_id", ""),
                         request.get("query_vectors", []),
                         request.get("k", 10),
@@ -2400,7 +2465,7 @@ def run_server(
                 elif action == "apply_transform":
                     # Use task worker for transformation operations to prevent timeouts
                     task_id = task_worker.submit_task(
-                        faiss_index.apply_transform,
+                        server.apply_transform,
                         request.get("index_id", ""),
                         request.get("vectors", [])
                     )
@@ -2417,18 +2482,29 @@ def run_server(
                         )
 
                 elif action == "get_transform_info":
-                    response = faiss_index.get_transform_info(
+                    response = server.get_transform_info(
                         request.get("index_id", "")
                     )
 
                 elif action == "add_with_ids":
                     # Process add_with_ids request
                     logger.info(f"Processing add_with_ids request for index {request.get('index_id', '')}")
-                    response = faiss_index.add_with_ids(
+                    response = server.add_with_ids(
                         request.get("index_id", ""),
                         request.get("vectors", []),
                         request.get("ids", [])
                     )
+
+                # Check for specialized operations in action_handlers dictionary
+                elif hasattr(server, "action_handlers") and action in server.action_handlers:
+                    try:
+                        # Call the specialized operation handler
+                        handler_func = server.action_handlers[action]
+                        # Pass the server instance as first argument
+                        response = handler_func(server, **{k: v for k, v in request.items() if k != "action"})
+                    except Exception as e:
+                        logger.exception(f"Error in specialized operation handler: {e}")
+                        response = error_response(f"Server error: {str(e)}")
 
                 # Add version information to all responses
                 if "version" not in response:
@@ -2478,6 +2554,44 @@ def run_server(
             socket.close()
         if 'context' in locals():
             context.term()
+
+
+def is_transform_trained(transform):
+    """
+    Check if a transformation component is properly trained.
+
+    Args:
+        transform: FAISS transform object
+
+    Returns:
+        bool: True if the transform is trained or doesn't require training
+    """
+    # If it doesn't have is_trained attribute, assume it's always trained
+    if not hasattr(transform, "is_trained"):
+        return True
+
+    return transform.is_trained
+
+
+def train_transform(transform, training_vectors):
+    """
+    Train a transformation component.
+
+    Args:
+        transform: FAISS transform object
+        training_vectors: Vectors to use for training
+
+    Returns:
+        bool: True if training was successful, False otherwise
+    """
+    try:
+        if hasattr(transform, "train"):
+            transform.train(training_vectors)
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error training transform: {e}")
+        return False
 
 
 if __name__ == "__main__":
