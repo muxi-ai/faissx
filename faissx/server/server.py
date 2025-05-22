@@ -59,6 +59,10 @@ from faissx.server.binary import (
     is_binary_index_type, create_binary_index, convert_to_binary,
     binary_to_float
 )
+from faissx.server.transformations import (
+    parse_transform_type, create_transformation, create_pretransform_index,
+    is_transform_trained, get_transform_training_requirements, train_transform
+)
 
 # Constants for server configuration
 DEFAULT_PORT = 45678  # Default port for ZeroMQ server
@@ -298,6 +302,9 @@ class FaissIndex:
                     for param_name, param_value in params.items():
                         if hasattr(index, "set_" + param_name):
                             getattr(index, "set_" + param_name)(param_value)
+
+                # Special handling for IndexPreTransform is not needed here,
+                # as the transformation is applied automatically during search
 
                 # Perform the search
                 distances, indices = index.search(query_np, k)
@@ -588,6 +595,9 @@ class FaissIndex:
                 - "BINARY_FLAT" - Binary flat index (Hamming distance)
                 - "BINARY_IVF{nlist}" - Binary IVF index with {nlist} clusters
                 - "BINARY_HASH{bits}" - Binary hash index with {bits} bits per dimension
+                - "PCA{dim},{base_type}" - PCA transformation followed by base index
+                - "NORM,{base_type}" - L2 Normalization followed by base index
+                - "OPQ{M}_{dim},{base_type}" - OPQ transformation followed by base index
             metadata (dict, optional): Additional metadata for the index
 
         Returns:
@@ -614,6 +624,63 @@ class FaissIndex:
                     return success_response(index_info, message=f"Binary index {index_id} created successfully")
                 except Exception as e:
                     return error_response(f"Error creating binary index: {str(e)}")
+
+            # Check for pre-transform index types
+            transform_type, base_index_type, transform_params = parse_transform_type(index_type)
+            if transform_type is not None:
+                try:
+                    # First create the transformation
+                    output_dim = transform_params.get("output_dim", dimension)
+                    transform, transform_info = create_transformation(
+                        transform_type,
+                        dimension,
+                        output_dim,
+                        **transform_params
+                    )
+
+                    # Create the base index using the output dimension from the transform
+                    base_index_id = f"{index_id}_base"
+                    base_response = self.create_index(
+                        base_index_id,
+                        output_dim,
+                        base_index_type,
+                        metadata={"is_base_index": True, "parent_index": index_id}
+                    )
+
+                    if not base_response["success"]:
+                        return base_response
+
+                    # Get the base index
+                    base_index = self.indexes[base_index_id]
+                    self.base_indexes[index_id] = base_index_id
+
+                    # Create the pretransform index
+                    pretransform_index, index_info = create_pretransform_index(
+                        base_index, transform, transform_info
+                    )
+
+                    # Store the index
+                    self.indexes[index_id] = pretransform_index
+                    self.dimensions[index_id] = dimension
+
+                    # Add metadata if provided
+                    if metadata:
+                        index_info["metadata"] = metadata
+
+                    return success_response(
+                        index_info,
+                        message=f"Transformed index {index_id} created successfully"
+                    )
+
+                except Exception as e:
+                    # Clean up base index if created
+                    if f"{index_id}_base" in self.indexes:
+                        del self.indexes[f"{index_id}_base"]
+                        del self.dimensions[f"{index_id}_base"]
+                        if index_id in self.base_indexes:
+                            del self.base_indexes[index_id]
+
+                    return error_response(f"Error creating transformed index: {str(e)}")
 
             # Handle standard FAISS index types
             elif index_type == "L2":
@@ -777,7 +844,7 @@ class FaissIndex:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-        def reconstruct(self, index_id, id_val):
+    def reconstruct(self, index_id, id_val):
         """
         Reconstruct a vector at the given index.
 
@@ -1302,8 +1369,11 @@ class FaissIndex:
         try:
             index = self.indexes[index_id]
 
+            # Check if this is an IndexPreTransform
+            is_pretransform = isinstance(index, faiss.IndexPreTransform)
+
             # Check if index requires training using our utility function
-            if not requires_training(index):
+            if not requires_training(index) and not is_pretransform:
                 # Get detailed info about why training is not needed
                 training_info = get_training_requirements(index)
 
@@ -1321,6 +1391,58 @@ class FaissIndex:
                     f"Training vector dimension mismatch. Expected {self.dimensions[index_id]}, "
                     f"got {vectors_np.shape[1]}"
                 )
+
+            # Special handling for IndexPreTransform
+            if is_pretransform:
+                # Extract the transform and base index
+                transform = index.chain.at(0)
+                base_index = index.index
+
+                # Get transform training requirements
+                transform_requires_training = (
+                    hasattr(transform, "is_trained") and not transform.is_trained
+                )
+
+                # Train the transform if needed
+                if transform_requires_training:
+                    if not train_transform(transform, vectors_np):
+                        return error_response(
+                            "Failed to train transformation component",
+                            code="TRANSFORM_TRAINING_ERROR"
+                        )
+
+                # Check if the base index needs training
+                base_index_requires_training = (
+                    hasattr(base_index, "is_trained") and not base_index.is_trained
+                )
+
+                if base_index_requires_training:
+                    # For indices that need training after transformation,
+                    # we need to apply the transform to the training vectors
+                    if hasattr(transform, "apply_py"):
+                        transformed_vectors = transform.apply_py(vectors_np)
+                    else:
+                        # Fallback method using transform.apply()
+                        output_dim = transform.d_out if hasattr(transform, "d_out") else vectors_np.shape[1]
+                        transformed_vectors = np.zeros((len(vectors_np), output_dim), dtype=np.float32)
+                        for i, vec in enumerate(vectors_np):
+                            transform.apply(1, faiss.swig_ptr(vec), faiss.swig_ptr(transformed_vectors[i]))
+
+                    # Now train the base index with transformed vectors
+                    base_index.train(transformed_vectors)
+
+                # Get training status after training
+                transform_trained = not transform_requires_training or transform.is_trained
+                base_index_trained = not base_index_requires_training or base_index.is_trained
+
+                return success_response({
+                    "index_id": index_id,
+                    "trained_with": len(training_vectors),
+                    "is_trained": transform_trained and base_index_trained,
+                    "transform_trained": transform_trained,
+                    "base_index_trained": base_index_trained,
+                    "index_type": "IndexPreTransform"
+                }, message="Transformed index successfully trained")
 
             # Check if we have enough training vectors
             recommended_vectors = estimate_training_vectors_needed(index)
@@ -1353,6 +1475,149 @@ class FaissIndex:
                 code="TRAINING_ERROR",
                 details={"index_id": index_id, "vector_count": len(training_vectors) if 'training_vectors' in locals() else 0}
             )
+
+    def get_transform_info(self, index_id):
+        """
+        Get information about the transformation component of an IndexPreTransform.
+
+        Args:
+            index_id (str): ID of the index
+
+        Returns:
+            dict: Response containing transformation information or error message
+        """
+        if index_id not in self.indexes:
+            return error_response(f"Index {index_id} not found")
+
+        index = self.indexes[index_id]
+
+        # Check if this is an IndexPreTransform
+        if not isinstance(index, faiss.IndexPreTransform):
+            return error_response(
+                f"Index {index_id} is not an IndexPreTransform",
+                code="NOT_TRANSFORM_INDEX"
+            )
+
+        try:
+            # Extract information about the transformation chain
+            info = {
+                "index_id": index_id,
+                "type": "IndexPreTransform",
+                "input_dimension": self.dimensions[index_id],
+                "output_dimension": index.index.d,
+                "chain_size": index.chain.size(),
+                "is_trained": True
+            }
+
+            # Get info for each transformation in the chain
+            transforms_info = []
+            for i in range(index.chain.size()):
+                transform = index.chain.at(i)
+                transform_type = type(transform).__name__
+
+                transform_info = {
+                    "type": transform_type,
+                    "is_trained": is_transform_trained(transform)
+                }
+
+                # Add transform-specific information
+                if isinstance(transform, faiss.PCAMatrix):
+                    transform_info.update({
+                        "input_dim": transform.d_in,
+                        "output_dim": transform.d_out,
+                        "do_whitening": transform.do_whitening
+                    })
+
+                elif isinstance(transform, faiss.NormalizationTransform):
+                    transform_info.update({
+                        "dimension": transform.d
+                    })
+
+                elif isinstance(transform, faiss.OPQMatrix):
+                    transform_info.update({
+                        "input_dim": transform.d_in,
+                        "output_dim": transform.d_out,
+                        "M": transform.M
+                    })
+
+                transforms_info.append(transform_info)
+
+                # Update overall training status
+                if hasattr(transform, "is_trained") and not transform.is_trained:
+                    info["is_trained"] = False
+
+            info["transforms"] = transforms_info
+
+            # Get base index information
+            base_index = index.index
+            info["base_index"] = {
+                "type": type(base_index).__name__,
+                "dimension": base_index.d,
+                "is_trained": getattr(base_index, "is_trained", True)
+            }
+
+            if not info["base_index"]["is_trained"]:
+                info["is_trained"] = False
+
+            return success_response(info)
+
+        except Exception as e:
+            return error_response(f"Error getting transform info: {str(e)}")
+
+    def apply_transform(self, index_id, vectors):
+        """
+        Apply the transformation of an IndexPreTransform to the provided vectors.
+
+        Args:
+            index_id (str): ID of the index
+            vectors (list): List of vectors to transform
+
+        Returns:
+            dict: Response containing transformed vectors or error message
+        """
+        if index_id not in self.indexes:
+            return error_response(f"Index {index_id} not found")
+
+        index = self.indexes[index_id]
+
+        # Check if this is an IndexPreTransform
+        if not isinstance(index, faiss.IndexPreTransform):
+            return error_response(
+                f"Index {index_id} is not an IndexPreTransform",
+                code="NOT_TRANSFORM_INDEX"
+            )
+
+        try:
+            # Convert vectors to numpy array
+            vectors_np = np.array(vectors, dtype=np.float32)
+
+            # Verify input dimensions
+            if vectors_np.shape[1] != self.dimensions[index_id]:
+                return error_response(
+                    f"Vector dimension mismatch: expected {self.dimensions[index_id]}, "
+                    f"got {vectors_np.shape[1]}"
+                )
+
+            # Apply the transformation
+            output_dim = index.index.d
+            transformed_vectors = np.zeros((len(vectors), output_dim), dtype=np.float32)
+
+            # Apply the transformation
+            for i, vec in enumerate(vectors_np):
+                transformed_vector = np.zeros(output_dim, dtype=np.float32)
+                index.apply_chain(1, faiss.swig_ptr(vec), faiss.swig_ptr(transformed_vector))
+                transformed_vectors[i] = transformed_vector
+
+            return success_response({
+                "index_id": index_id,
+                "input_vectors": len(vectors),
+                "input_dimension": self.dimensions[index_id],
+                "output_dimension": output_dim,
+                "transformed_vectors": transformed_vectors.tolist()
+            })
+
+        except Exception as e:
+            return error_response(f"Error applying transformation: {str(e)}")
 
     def reset(self, index_id):
         """
@@ -2002,6 +2267,30 @@ def run_server(
                             "Search and reconstruct operation timed out",
                             code="TIMEOUT"
                         )
+
+                elif action == "apply_transform":
+                    # Use task worker for transformation operations to prevent timeouts
+                    task_id = task_worker.submit_task(
+                        faiss_index.apply_transform,
+                        request.get("index_id", ""),
+                        request.get("vectors", [])
+                    )
+                    try:
+                        result = task_worker.wait_for_result(task_id)
+                        if result["success"]:
+                            response = result["result"]
+                        else:
+                            response = error_response(result["error"])
+                    except RequestTimeoutError:
+                        response = error_response(
+                            "Apply transform operation timed out",
+                            code="TIMEOUT"
+                        )
+
+                elif action == "get_transform_info":
+                    response = faiss_index.get_transform_info(
+                        request.get("index_id", "")
+                    )
 
                 # Add version information to all responses
                 if "version" not in response:
