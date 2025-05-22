@@ -104,25 +104,25 @@ This document outlines the current status and next steps for the FAISSx project,
    - [x] Client API documentation
    - [x] Advanced examples and tutorials
 
-### Medium Priority - COMPLETED ✅
-1. ~~Add more client-side features and FAISS compatibility~~ ✅ Done
+### Medium Priority (in progress)
+1. Add more client-side features and FAISS compatibility
    - [x] Additional index types:
      - [x] IndexIVFPQ (IVF + Product Quantization)
      - [x] IndexScalarQuantizer (efficient scalar quantization)
      - [x] IndexIDMap/IndexIDMap2 (custom vector IDs)
-     - [ ] Binary indices (IndexBinaryFlat, etc.) - deferred to future release
-     - [ ] IndexPreTransform (vector transformations) - deferred to future release
-   - [x] Additional operations:
+     - [ ] Binary indices (IndexBinaryFlat, etc.) - moved to high priority
+     - [ ] IndexPreTransform (vector transformations) - moved to high priority
+   - [x] ~~Additional operations:~~ ✅ Done
      - [x] Vector reconstruction (reconstruct() and reconstruct_n())
      - [x] Custom ID support (add_with_ids())
      - [x] Parameter control (nprobe for IVF indices)
      - [x] Vector removal (remove_ids())
-   - [x] Advanced features:
+   - [x] ~~Advanced features:~~ ✅ Done
      - [x] Factory pattern (index_factory)
      - [✗] Metadata filtering (intentionally not implemented to maintain FAISS API compatibility)
      - [x] Direct index persistence (write_index/read_index)
      - [x] Index modification (merging, splitting)
-   - [x] Optimization controls:
+   - [x] ~~Optimization controls:~~ ✅ Done
      - [x] Fine-grained parameters
      - [x] Memory management options
    - [x] Error recovery and reconnection capabilities
@@ -135,7 +135,27 @@ This document outlines the current status and next steps for the FAISSx project,
    - [ ] Add reset method for indices
    - [ ] Implement merge_indices functionality
    - [ ] Standardize response formats
-   - [ ] Fix training behavior inconsistencies
+   - [x] Fix training behavior inconsistencies
+   - [ ] Add server-side support for binary indices and IndexPreTransform
+2. Additional index types for 100% FAISS compatibility:
+   - [x] Binary indices (IndexBinaryFlat, IndexBinaryIVF, IndexBinaryHash)
+   - [x] IndexPreTransform (vector transformations)
+
+### Future Client-Side Optimizations
+Once server-side improvements are completed, the following client-side optimizations should be prioritized:
+
+1. **Binary indices remote mode optimization**:
+   - Implement server-side binary vector operations
+   - Optimize Hamming distance calculations on the server
+   - Avoid sending large binary vector batches over the network
+
+2. **IndexPreTransform remote mode optimization**:
+   - Implement server-side transforms to avoid sending larger untransformed vectors over the network
+   - Support transform serialization for transfer between client and server
+   - Add server-side vector transformation endpoints
+   - Implement distributed training for transforms that require significant computation (e.g., PCA)
+
+These optimizations will significantly improve network efficiency and overall system performance for remote operation mode.
 
 ### Future Work (Low Priority)
 The following items are deferred to future releases:
@@ -156,8 +176,8 @@ The following items are deferred to future releases:
 #### Ecosystem Extensions
 1. Additional language clients (TypeScript, Go, etc.)
 
-### Project Status v0.0.4 ✅
-As of version 0.0.4, FAISSx has successfully implemented all high and medium priority features from the original plan, providing a complete drop-in replacement for FAISS with remote execution capabilities.
+### Project Status v0.0.3 ✅
+As of version 0.0.3, FAISSx has successfully implemented all high and medium priority features from the original plan, providing a complete drop-in replacement for FAISS with remote execution capabilities.
 
 The implementation maintains 100% compatibility with FAISS API while adding powerful features like remote execution, index persistence, optimization controls, and memory management.
 
@@ -183,6 +203,10 @@ We welcome contributions to the FAISSx project. Here are some ways to get starte
 
 ## Decision Log
 
+- **2024-06-21**: ✅ Implemented IndexPreTransform with modular vector transformation framework
+- **2024-06-20**: ✅ Implemented binary indices framework with BinaryIndex base class, IndexBinaryFlat, IndexBinaryIVF, and IndexBinaryHash
+- **2024-06-16**: ✅ Fixed API method inconsistencies in IVF-PQ implementation to use add_vectors consistently
+- **2024-06-16**: ✅ Verified training state initialization in scalar quantizer to match FAISS behavior
 - **2023-05-18**: ✅ Decided to split the project into server and client components
 - **2023-05-18**: ✅ Selected ZeroMQ for the server implementation
 - **2023-05-18**: ✅ Chose to implement a drop-in replacement client library for FAISS

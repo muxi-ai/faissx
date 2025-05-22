@@ -56,6 +56,8 @@ Several FAISS features aren't currently supported:
    - Limited or no support for some index types
    - Inconsistent support for index parameters
    - Missing support for some distance metrics
+   - No server-side support for binary indices (IndexBinaryFlat, IndexBinaryIVF, etc.) despite client-side implementation
+   - Missing support for IndexPreTransform (vector transformations)
 
 2. **Persistence**
    - No native support for saving/loading indices

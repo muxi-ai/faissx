@@ -4,7 +4,20 @@
 
 ### Added
 
-#### Core Index Implementation
+#### Core Index Implementation (Planned)
+- IndexPreTransform for vector transformations like PCA
+
+#### Core Index Implementation (Complete)
+- Implemented IndexPreTransform with a modular vector transformation framework:
+  - Base VectorTransform class with standardized API
+  - L2NormTransform for unit-length normalization
+  - PCATransform for dimensionality reduction
+  - RemapDimensionsTransform for feature selection
+- Added binary vector support with comprehensive implementations:
+  - BinaryIndex base class with efficient Hamming distance calculations
+  - IndexBinaryFlat for exact binary vector search
+  - IndexBinaryIVF for fast approximate search with inverted file structure
+  - IndexBinaryHash for hash-based binary vector lookup
 - Created optimized implementations of core index types:
   - IndexPQ with robust vector extraction and fallbacks
   - IndexIVFScalarQuantizer with improved training strategies
@@ -66,6 +79,8 @@
 - Improved recovery from common error conditions
 - Enhanced compatibility for different server implementations
 - Enhanced error handling and validation
+- Fixed training behavior inconsistencies in scalar quantizer implementation to match FAISS behavior
+- Corrected API method inconsistencies in IVF-PQ implementation (using add_vectors instead of add)
 
 ---
 

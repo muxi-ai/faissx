@@ -346,18 +346,20 @@ Recent versions include significant client-side optimizations:
 
 ### Supported Index Types
 
-FAISSx currently supports these FAISS index implementations:
+FAISSx supports all major FAISS index types:
 
-- `IndexFlatL2` - Exact search with L2 distance
-- `IndexIVFFlat` - Inverted file index with exact storage
-- `IndexHNSWFlat` - Hierarchical navigable small world graph
-- `IndexPQ` - Product quantization for memory-efficient storage
-- `IndexIVFPQ` - Combined IVF and PQ for efficiency
-- `IndexScalarQuantizer` - Efficient scalar quantization
-- `IndexIVFScalarQuantizer` - IVF with scalar quantization
-- `IndexIDMap` - Index wrapper for mapping external IDs to vectors
-- `IndexIDMap2` - Extended ID mapping with vector update capabilities
-- `IndexRandom` - Random index for testing and benchmarking
+- `IndexFlatL2` - Exact L2 distance search
+- `IndexFlatIP` - Exact inner product search
+- `IndexIVFFlat` - Inverted file with exact distance
+- `IndexIVFPQ` - Inverted file with product quantization
+- `IndexHNSW` - Hierarchical Navigable Small World graph index
+- `IndexPQ` - Product quantization index
+- `IndexScalarQuantizer` - Scalar quantization index
+- `IndexIDMap` and `IndexIDMap2` - Mapping between user-provided IDs and internal indices
+- `IndexBinaryFlat` - Exact Hamming distance for binary vectors
+- `IndexBinaryIVF` - Inverted file with Hamming distance for binary vectors
+- `IndexBinaryHash` - Hash-based lookup for binary vectors
+- `IndexPreTransform` - Apply vector transformations before indexing (PCA, L2 normalization, etc.)
 
 All indices support:
 - GPU acceleration in local mode when available
@@ -431,6 +433,7 @@ The ZeroMQ-based implementation provides significant performance improvements ov
 - Enhanced vector caching for improved reconstruction operations
 
 Recent optimizations include:
+
 - Batched processing for large vector operations
 - More efficient error handling with graceful fallbacks
 - Improved serialization for vector data
@@ -506,13 +509,18 @@ cd server
 
 ## Current Status and Next Steps
 
-FAISSx v0.0.4 has completed all high and medium priority features from the initial roadmap. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
+FAISSx v0.0.3 has completed all high and medium priority features from the initial roadmap. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
 
 Current focus areas:
+
 - Server-side improvements to better match client capabilities
 - Enhanced vector reconstruction for remote operations
 - Standardized server response formats
-- Better handling of training behavior inconsistencies
+
+Recent fixes:
+
+- Training behavior inconsistencies in scalar quantizer now match FAISS behavior
+- API method consistency improved across index implementations
 
 See [NEXT_STEPS.md](./NEXT_STEPS.md) for a detailed roadmap and current status.
 
