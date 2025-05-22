@@ -28,7 +28,7 @@ handling different index types with consistent parameter support.
 import re
 import faiss
 import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 
 
@@ -158,40 +158,58 @@ def create_pretransform_index(
     return index
 
 
-def parse_transform_type(index_type: str) -> Tuple[List[Dict[str, Any]], str]:
+def parse_transform_type(index_type: str) -> Tuple[Optional[str], str, Dict[str, Any]]:
     """
-    Parse a compound index type string into transformation descriptions and base index type.
+    Parse a compound index type string into transformation type, base index type, and parameters.
 
     Example:
-        "PCA32,L2NORM,Flat" -> ([{"type": "PCA", "dim": 32}, {"type": "L2NORM"}], "Flat")
+        "PCA32,Flat" -> ("PCA", "Flat", {"dim": 32})
+        "PQ4x8" -> (None, "PQ4x8", {})
 
     Args:
         index_type: Compound index type string
 
     Returns:
-        tuple: (list of transformation descriptions, base index type)
+        tuple: (transformation type or None, base index type, transform parameters)
     """
+    # Handle special case for PQ indices like "PQ4x8"
+    pq_match = re.match(r"PQ(\d+)x(\d+)", index_type)
+    if pq_match:
+        m, nbits = pq_match.groups()
+        return None, index_type, {}
+
+    # Handle special case for IVF_SQ indices like "IVF4_SQ0"
+    ivf_sq_match = re.match(r"IVF(\d+)_SQ(\d+)", index_type)
+    if ivf_sq_match:
+        nlist, qtype = ivf_sq_match.groups()
+        return None, index_type, {}
+
     parts = index_type.split(",")
+
+    # If there's only one part, it's just the base index type, no transformation
+    if len(parts) == 1:
+        return None, index_type, {}
 
     # The last part is the base index type
     base_index_type = parts[-1]
 
-    # Parse transformation descriptions
-    transforms = []
-    for part in parts[:-1]:
-        # Match transformation type and optional dimension
-        match = re.match(r"([A-Za-z0-9]+)(\d*)", part)
-        if match:
-            t_type, t_dim = match.groups()
-            transform = {"type": t_type}
+    # The first part is the transformation type
+    transform_part = parts[0]
 
-            # Add dimension if specified
-            if t_dim:
-                transform["dim"] = int(t_dim)
+    # Match transformation type and optional dimension
+    match = re.match(r"([A-Za-z]+)(\d*)", transform_part)
+    if match:
+        t_type, t_dim = match.groups()
+        transform_params = {}
 
-            transforms.append(transform)
+        # Add dimension if specified
+        if t_dim:
+            transform_params["dim"] = int(t_dim)
 
-    return transforms, base_index_type
+        return t_type, base_index_type, transform_params
+
+    # If no match, return the first part as the transform type with no params
+    return parts[0], base_index_type, {}
 
 
 def train_transform(
@@ -514,7 +532,9 @@ def create_index_from_type(index_type, dimension, metric_type="L2", metadata=Non
     # Set up logging
     logger = logging.getLogger("faissx.server")
 
-    logger.debug(f"Creating index of type '{index_type}', dimension {dimension}, metric {metric_type}")
+    logger.debug(
+        f"Creating index of type '{index_type}', dimension {dimension}, metric {metric_type}"
+    )
 
     # Handle binary index types
     if is_binary_index_type(index_type):
@@ -692,6 +712,43 @@ def create_index_from_type(index_type, dimension, metric_type="L2", metadata=Non
             "M": 8,
             "nbits": 8,
             "metric_type": "IP",
+            "is_trained": False,
+            "requires_training": True
+        }
+    # Add support for PQ with specific M and nbits (e.g., PQ4x8)
+    elif pq_match := re.match(r"PQ(\d+)x(\d+)", index_type):
+        m, nbits = map(int, pq_match.groups())
+        metric = faiss.METRIC_L2
+        if metric_type.upper() == "IP":
+            metric = faiss.METRIC_INNER_PRODUCT
+
+        index = faiss.IndexPQ(dimension, m, nbits, metric)
+        index_info = {
+            "type": "IndexPQ",
+            "dimension": dimension,
+            "M": m,
+            "nbits": nbits,
+            "metric_type": "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2",
+            "is_trained": False,
+            "requires_training": True
+        }
+    # Add support for IVF with SQ (e.g., IVF4_SQ0)
+    elif ivf_sq_match := re.match(r"IVF(\d+)_SQ(\d+)", index_type):
+        nlist, qtype = map(int, ivf_sq_match.groups())
+        quantizer = faiss.IndexFlatL2(dimension)
+        metric = faiss.METRIC_L2
+        if metric_type.upper() == "IP":
+            metric = faiss.METRIC_INNER_PRODUCT
+
+        index = faiss.IndexIVFScalarQuantizer(
+            quantizer, dimension, nlist, qtype, metric
+        )
+        index_info = {
+            "type": "IndexIVFScalarQuantizer",
+            "dimension": dimension,
+            "nlist": nlist,
+            "qtype": qtype,
+            "metric_type": "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2",
             "is_trained": False,
             "requires_training": True
         }
