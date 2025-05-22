@@ -2311,7 +2311,7 @@ def run_server(
 
             except zmq.error.Again:
                 # Socket timeout - just continue and wait for the next message
-                logger.warning("Socket timeout waiting for request")
+                logger.debug("Socket timeout waiting for request")
                 continue
 
             except zmq.error.ZMQError as e:
