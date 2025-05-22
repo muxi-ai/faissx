@@ -570,7 +570,9 @@ class FaissIndex:
 
             return success_response(
                 {
-                    "ntotal": index.ntotal
+                    "ntotal": index.ntotal,
+                    "total": index.ntotal,
+                    "count": len(vectors)
                 },
                 message=f"Added {len(vectors)} vectors to index {index_id}"
             )

@@ -657,6 +657,12 @@ class FaissXClient:
                 }
             )
 
+            # Ensure ntotal is properly updated and returned in the response
+            if "ntotal" in result and "total" not in result:
+                result["total"] = result["ntotal"]
+            if "count" not in result and "vectors" in locals():
+                result["count"] = len(vectors)
+
             # Log success and return result
             logger.debug(f"Added {result.get('count', 0)} vectors to index {index_id}")
             return result
@@ -1182,6 +1188,204 @@ class FaissXClient:
         """
         logger.debug("Closing client connection")
         self.disconnect()
+
+    def reconstruct(self, index_id: IndexID, vector_id: int) -> SearchResult:
+        """Reconstruct the original vector for a given ID.
+
+        This method retrieves the original vector associated with a specific ID.
+        Only works with indices that support reconstruction (not all indices do).
+
+        Args:
+            index_id: Identifier of the target index
+            vector_id: ID of the vector to reconstruct
+
+        Returns:
+            Dictionary containing the reconstructed vector:
+            {
+                "success": bool,
+                "vector": [float, ...],  # Reconstructed vector
+            }
+
+        Raises:
+            RuntimeError: If reconstruction fails or is not supported
+        """
+        try:
+            # Log the operation
+            logger.debug(f"Reconstructing vector {vector_id} from index {index_id}")
+
+            # Send reconstruction request
+            result = self._send_request(
+                {
+                    "action": "reconstruct",
+                    "index_id": index_id,
+                    "id": vector_id,
+                }
+            )
+
+            logger.debug(f"Successfully reconstructed vector {vector_id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to reconstruct vector {vector_id}: {e}")
+            raise
+
+    def reconstruct_n(self, index_id: IndexID, start_idx: int, n: int) -> SearchResult:
+        """Reconstruct multiple vectors by index position.
+
+        This method retrieves original vectors by their position in the index.
+        Only works with indices that support reconstruction (not all indices do).
+
+        Args:
+            index_id: Identifier of the target index
+            start_idx: Starting index position
+            n: Number of vectors to reconstruct
+
+        Returns:
+            Dictionary containing the reconstructed vectors:
+            {
+                "success": bool,
+                "vectors": [[float, ...], ...],  # List of reconstructed vectors
+            }
+
+        Raises:
+            RuntimeError: If reconstruction fails or is not supported
+        """
+        try:
+            # Log the operation
+            logger.debug(f"Reconstructing {n} vectors starting at {start_idx} from index {index_id}")
+
+            # Send reconstruction request
+            result = self._send_request(
+                {
+                    "action": "reconstruct_n",
+                    "index_id": index_id,
+                    "start_idx": start_idx,
+                    "num": n,
+                }
+            )
+
+            logger.debug(f"Successfully reconstructed {len(result.get('vectors', []))} vectors")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to reconstruct vectors: {e}")
+            raise
+
+    def search_and_reconstruct(
+        self,
+        index_id: IndexID,
+        query_vectors: VectorData,
+        k: int = DEFAULT_K,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> SearchResult:
+        """Search for nearest neighbors and reconstruct the original vectors.
+
+        This method performs a search and returns both indices/distances and
+        the actual vector data for each match. Only works with indices that
+        support reconstruction.
+
+        Args:
+            index_id: Identifier of the target index
+            query_vectors: Query vectors to search for
+            k: Number of nearest neighbors to return
+            params: Additional search parameters
+
+        Returns:
+            Dictionary containing search results and reconstructed vectors:
+            {
+                "success": bool,
+                "results": [
+                    {
+                        "distances": [float, ...],  # Distance values
+                        "indices": [int, ...],      # Vector indices
+                        "vectors": [[float, ...], ...]  # Reconstructed vectors
+                    },
+                    ...  # One entry per query vector
+                ]
+            }
+
+        Raises:
+            ValueError: If query vector format is invalid
+            RuntimeError: If search or reconstruction fails
+        """
+        try:
+            # Log the operation
+            logger.debug(f"Searching and reconstructing from index {index_id} with k={k}")
+
+            # Prepare query vectors
+            prepared_vectors = self._prepare_vectors(query_vectors)
+
+            # Construct request
+            request = {
+                "action": "search_and_reconstruct",
+                "index_id": index_id,
+                "query_vectors": prepared_vectors,
+                "k": k,
+            }
+
+            # Add optional parameters
+            if params:
+                request["params"] = params
+
+            # Send request
+            result = self._send_request(request)
+
+            # Validate response
+            if "results" not in result:
+                logger.warning(
+                    f"Search and reconstruct response missing 'results' field: {result}"
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Search and reconstruct failed on index {index_id}: {e}")
+            raise
+
+    def merge_indices(
+        self,
+        target_index_id: IndexID,
+        source_index_ids: List[IndexID],
+    ) -> SearchResult:
+        """Merge multiple indices into a target index.
+
+        This method combines the vectors from multiple source indices into a
+        target index. The indices must be compatible (same type and dimension).
+
+        Args:
+            target_index_id: ID of the target index to merge into
+            source_index_ids: List of source index IDs to merge from
+
+        Returns:
+            Dictionary containing merge results:
+            {
+                "success": bool,
+                "message": str,
+                "ntotal": int  # Total vectors in the merged index
+            }
+
+        Raises:
+            RuntimeError: If merging fails on the server
+        """
+        try:
+            # Log the operation
+            logger.debug(f"Merging indices {source_index_ids} into {target_index_id}")
+
+            # Send merge request
+            result = self._send_request(
+                {
+                    "action": "merge_indices",
+                    "target_index_id": target_index_id,
+                    "source_index_ids": source_index_ids,
+                }
+            )
+
+            logger.debug(f"Successfully merged indices into {target_index_id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to merge indices: {e}")
+            raise
 
 
 # Global singleton instance of FaissXClient
