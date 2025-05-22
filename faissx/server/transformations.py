@@ -29,6 +29,7 @@ import re
 import faiss
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple, Union
+import logging
 
 
 # Supported transformation types
@@ -497,80 +498,225 @@ def create_base_index(
     raise ValueError(f"Unsupported base index type: {base_type}")
 
 
-def create_index_from_type(
-    index_type: str,
-    dimension: int,
-    metric_type: str = "L2",
-    index_params: Optional[Dict[str, Any]] = None
-) -> Tuple[Any, Dict[str, Any]]:
+def create_index_from_type(index_type, dimension, metric_type="L2", metadata=None):
     """
-    Create an index from a type specification, which may include transformations.
-
-    Examples:
-        "Flat" -> IndexFlat
-        "PCA32,L2NORM,Flat" -> IndexPreTransform with PCA, L2 normalization, and Flat index
-        "IVF100,PQ16" -> IndexIVFPQ with 100 lists and 16 subquantizers
+    Create an index based on the specified type string.
 
     Args:
-        index_type: Type specification
-        dimension: Original dimension of vectors
-        metric_type: Distance metric to use
-        index_params: Additional parameters for the index
+        index_type (str): Type of index to create
+        dimension (int): Vector dimension
+        metric_type (str): Distance metric type
+        metadata (dict, optional): Additional metadata
 
     Returns:
         tuple: (index, index_info)
     """
-    params = index_params or {}
+    # Set up logging
+    logger = logging.getLogger("faissx.server")
 
-    # Check if it's a compound type with transformations
-    if "," in index_type:
-        transform_descs, base_type = parse_transform_type(index_type)
+    logger.debug(f"Creating index of type '{index_type}', dimension {dimension}, metric {metric_type}")
 
-        # Create base index
-        base_index = create_base_index(base_type, dimension, metric_type, params)
-        base_dim = dimension
+    # Handle binary index types
+    if is_binary_index_type(index_type):
+        from .binary import create_binary_index
+        logger.debug(f"Creating binary index: {index_type}")
+        return create_binary_index(index_type, dimension)
 
-        # Create transformations in reverse order (last transformation first)
-        transforms = []
-        for t_desc in transform_descs:
-            t_type = t_desc["type"]
-            t_input_dim = base_dim
+    # Check for pre-transform index types
+    transform_type, base_index_type, transform_params = parse_transform_type(index_type)
+    if transform_type is not None:
+        logger.debug(f"Creating transformed index: {transform_type} with base {base_index_type}")
+        # First create the transformation
+        output_dim = transform_params.get("output_dim", dimension)
+        transform, transform_info = create_transformation(
+            transform_type,
+            dimension,
+            output_dim,
+            **transform_params
+        )
 
-            # Get output dimension if specified
-            t_output_dim = t_desc.get("dim", t_input_dim)
+        # Create the base index using the output dimension from the transform
+        base_index, base_info = create_index_from_type(
+            base_index_type,
+            output_dim,
+            metric_type,
+            metadata={"is_base_index": True}
+        )
 
-            # Create the transformation
-            transform = create_transformation(t_type, t_input_dim, t_output_dim)
-            transforms.append(transform)
+        # Create the pretransform index
+        pretransform_index, index_info = create_pretransform_index(
+            base_index, transform, transform_info
+        )
 
-            # Update base dimension for next transformation
-            base_dim = t_output_dim
+        # Add metadata if provided
+        if metadata:
+            index_info["metadata"] = metadata
 
-        # Create IndexPreTransform
-        index = create_pretransform_index(transforms, base_index)
+        return pretransform_index, index_info
 
-        # Prepare index info
-        index_info = {
-            "type": "IndexPreTransform",
-            "base_type": base_type,
-            "metric_type": metric_type,
-            "input_dimension": dimension,
-            "output_dimension": base_dim,
-            "transformations": [{"type": t["type"]} for t in transform_descs]
-        }
+    # Handle IDMap types
+    if index_type.startswith("IDMap:"):
+        logger.debug(f"Creating IDMap index with base type: {index_type[6:]}")
+        base_type = index_type[6:]
+        base_index, base_info = create_index_from_type(
+            base_type, dimension, metric_type, metadata
+        )
 
-    else:
-        # Simple index type
-        index = create_base_index(index_type, dimension, metric_type, params)
+        # Create IDMap wrapper
+        idmap_index = faiss.IndexIDMap(base_index)
 
-        # Prepare index info
-        index_info = {
-            "type": index_type,
+        # Prepare info
+        idmap_info = {
+            "type": "IDMap",
             "dimension": dimension,
-            "metric_type": metric_type
+            "base_type": base_type,
+            "base_info": base_info,
+            "is_trained": base_info.get("is_trained", True)
         }
+
+        # Add metadata if provided
+        if metadata:
+            idmap_info["metadata"] = metadata
+
+        return idmap_index, idmap_info
+
+    if index_type.startswith("IDMap2:"):
+        logger.debug(f"Creating IDMap2 index with base type: {index_type[7:]}")
+        base_type = index_type[7:]
+        base_index, base_info = create_index_from_type(
+            base_type, dimension, metric_type, metadata
+        )
+
+        # Create IDMap2 wrapper
+        idmap_index = faiss.IndexIDMap2(base_index)
+
+        # Prepare info
+        idmap_info = {
+            "type": "IDMap2",
+            "dimension": dimension,
+            "base_type": base_type,
+            "base_info": base_info,
+            "is_trained": base_info.get("is_trained", True)
+        }
+
+        # Add metadata if provided
+        if metadata:
+            idmap_info["metadata"] = metadata
+
+        return idmap_index, idmap_info
+
+    # Handle standard FAISS index types
+    faiss_metric = faiss.METRIC_L2
+    if metric_type.upper() == "IP":
+        faiss_metric = faiss.METRIC_INNER_PRODUCT
+
+    logger.debug(f"Metric type '{metric_type}' translated to faiss_metric={faiss_metric}")
+
+    if index_type == "L2" or index_type == "Flat":
+        logger.debug(f"Creating IndexFlatL2 with dimension {dimension}")
+        index = faiss.IndexFlatL2(dimension)
+        index_info = {
+            "type": "IndexFlatL2",
+            "dimension": dimension,
+            "is_trained": True
+        }
+    elif index_type == "IP":
+        logger.debug(f"Creating IndexFlatIP with dimension {dimension}")
+        index = faiss.IndexFlatIP(dimension)
+        index_info = {
+            "type": "IndexFlatIP",
+            "dimension": dimension,
+            "is_trained": True
+        }
+    elif index_type.startswith("HNSW") or index_type == "HNSW":
+        # Extract M parameter if provided (e.g., HNSW32 -> M=32)
+        M = 32  # Default value
+        if index_type.startswith("HNSW") and len(index_type) > 4:
+            try:
+                M = int(index_type[4:])
+                logger.debug(f"Extracted M={M} from index_type={index_type}")
+            except ValueError:
+                logger.warning(f"Could not parse M from index_type={index_type}, using default M={M}")
+
+        # Create the HNSW index
+        logger.debug(f"Creating IndexHNSWFlat with dimension={dimension}, M={M}, metric={faiss_metric}")
+        index = faiss.IndexHNSWFlat(dimension, M, faiss_metric)
+
+        # Prepare info
+        index_info = {
+            "type": "IndexHNSWFlat",
+            "dimension": dimension,
+            "M": M,
+            "efConstruction": index.hnsw.efConstruction,
+            "efSearch": index.hnsw.efSearch,
+            "metric_type": "IP" if faiss_metric == faiss.METRIC_INNER_PRODUCT else "L2",
+            "is_trained": True
+        }
+    elif index_type == "IVF":
+        quantizer = faiss.IndexFlatL2(dimension)
+        index = faiss.IndexIVFFlat(quantizer, dimension, 100)  # 100 centroids by default
+        index_info = {
+            "type": "IndexIVFFlat",
+            "dimension": dimension,
+            "nlist": 100,
+            "metric_type": "L2",
+            "is_trained": False,
+            "requires_training": True
+        }
+    elif index_type == "IVF_IP":
+        quantizer = faiss.IndexFlatIP(dimension)
+        index = faiss.IndexIVFFlat(quantizer, dimension, 100, faiss.METRIC_INNER_PRODUCT)
+        index_info = {
+            "type": "IndexIVFFlat",
+            "dimension": dimension,
+            "nlist": 100,
+            "metric_type": "IP",
+            "is_trained": False,
+            "requires_training": True
+        }
+    elif index_type == "PQ":
+        index = faiss.IndexPQ(dimension, 8, 8)  # 8 subquantizers with 8 bits each by default
+        index_info = {
+            "type": "IndexPQ",
+            "dimension": dimension,
+            "M": 8,
+            "nbits": 8,
+            "is_trained": False,
+            "requires_training": True
+        }
+    elif index_type == "PQ_IP":
+        index = faiss.IndexPQ(dimension, 8, 8, faiss.METRIC_INNER_PRODUCT)
+        index_info = {
+            "type": "IndexPQ",
+            "dimension": dimension,
+            "M": 8,
+            "nbits": 8,
+            "metric_type": "IP",
+            "is_trained": False,
+            "requires_training": True
+        }
+    else:
+        raise ValueError(f"Unsupported index type: {index_type}")
+
+    # Add metadata if provided
+    if metadata:
+        index_info["metadata"] = metadata
 
     return index, index_info
+
+
+def is_binary_index_type(index_type):
+    """
+    Check if the index type is a binary index.
+
+    Args:
+        index_type (str): Index type to check
+
+    Returns:
+        bool: True if it's a binary index type
+    """
+    binary_prefixes = ["BINARY_", "BIN_"]
+    return any(index_type.startswith(prefix) for prefix in binary_prefixes)
 
 
 def create_specialized_index(

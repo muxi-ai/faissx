@@ -43,6 +43,7 @@ import faiss
 import msgpack
 import argparse
 import logging
+import json
 import threading
 from queue import Queue
 from typing import Dict, List, Any, Tuple, Optional, Union
@@ -67,7 +68,8 @@ from . import hybrid
 from . import transformations
 from .transformations import (
     parse_transform_type, create_transformation, create_pretransform_index,
-    is_transform_trained, get_transform_training_requirements, train_transform
+    is_transform_trained, get_transform_training_requirements, train_transform,
+    create_index_from_type
 )
 
 # Constants for server configuration
@@ -80,6 +82,8 @@ DEFAULT_OPERATION_TIMEOUT = 30  # Default timeout for operations in seconds
 
 # Configure logging
 logger = logging.getLogger("faissx.server")
+# Don't set a default log level here, it will be set in run_server
+# logger.setLevel(logging.DEBUG)
 
 
 class RequestTimeoutError(Exception):
@@ -609,10 +613,77 @@ class FaissIndex:
         Returns:
             dict: Response containing success status and index details
         """
+        logger.info(f"Creating index: id={index_id}, type={index_type}, dimension={dimension}")
+
         if index_id in self.indexes:
             return error_response(f"Index {index_id} already exists")
 
         try:
+            # Handle IDMap creation
+            if index_type.startswith("IDMap:") or index_type.startswith("IDMap2:"):
+                logger.info(f"Creating IDMap index: {index_type}")
+                is_idmap2 = index_type.startswith("IDMap2:")
+                prefix_len = 7 if is_idmap2 else 6
+
+                # Extract base type
+                base_type = index_type[prefix_len:]
+                logger.info(f"Base type for IDMap: {base_type}")
+
+                # Check if base index exists directly
+                if base_type in self.indexes:
+                    logger.info(f"Found existing base index: {base_type}")
+                    base_index = self.indexes[base_type]
+                    base_index_id = base_type
+                else:
+                    # Check if base index is already created (might be used for multiple IDMap indices)
+                    base_index_id = f"{index_id}_base"
+
+                    if base_index_id not in self.indexes:
+                        # Create base index
+                        logger.info(f"Creating base index: id={base_index_id}, type=L2")
+                        base_response = self.create_index(
+                            base_index_id,
+                            dimension,
+                            "L2",  # Default to L2 index
+                            metadata={"is_base_index": True, "parent_index": index_id}
+                        )
+
+                        if not base_response["success"]:
+                            logger.error(f"Failed to create base index: {base_response['error']}")
+                            return base_response
+
+                    base_index = self.indexes[base_index_id]
+
+                # Store base index relationship
+                self.base_indexes[index_id] = base_index_id
+
+                # Create IDMap wrapper
+                if is_idmap2:
+                    logger.info(f"Creating IDMap2 wrapper for {base_index_id}")
+                    index = faiss.IndexIDMap2(base_index)
+                else:
+                    logger.info(f"Creating IDMap wrapper for {base_index_id}")
+                    index = faiss.IndexIDMap(base_index)
+
+                self.indexes[index_id] = index
+                self.dimensions[index_id] = dimension
+
+                # Prepare response
+                index_details = {
+                    "index_id": index_id,
+                    "dimension": dimension,
+                    "type": index_type,
+                    "base_index_id": base_index_id,
+                    "is_trained": getattr(index, "is_trained", True),
+                    "is_idmap": True,
+                    "is_idmap2": is_idmap2
+                }
+
+                if metadata:
+                    index_details["metadata"] = metadata
+
+                return success_response(index_details, message=f"IDMap index {index_id} created successfully")
+
             # Check for binary index types
             if is_binary_index_type(index_type):
                 try:
@@ -631,65 +702,31 @@ class FaissIndex:
                 except Exception as e:
                     return error_response(f"Error creating binary index: {str(e)}")
 
-            # Check for pre-transform index types
-            transform_type, base_index_type, transform_params = parse_transform_type(index_type)
-            if transform_type is not None:
-                try:
-                    # First create the transformation
-                    output_dim = transform_params.get("output_dim", dimension)
-                    transform, transform_info = create_transformation(
-                        transform_type,
-                        dimension,
-                        output_dim,
-                        **transform_params
-                    )
+            # Use the transformations module to create the index
+            try:
+                logger.info(f"Using transformations module to create index: {index_type}")
+                index, index_info = transformations.create_index_from_type(
+                    index_type, dimension, "L2", metadata
+                )
 
-                    # Create the base index using the output dimension from the transform
-                    base_index_id = f"{index_id}_base"
-                    base_response = self.create_index(
-                        base_index_id,
-                        output_dim,
-                        base_index_type,
-                        metadata={"is_base_index": True, "parent_index": index_id}
-                    )
+                # Store the index and dimension
+                self.indexes[index_id] = index
+                self.dimensions[index_id] = dimension
 
-                    if not base_response["success"]:
-                        return base_response
+                # Add index_id to the info
+                index_info["index_id"] = index_id
 
-                    # Get the base index
-                    base_index = self.indexes[base_index_id]
-                    self.base_indexes[index_id] = base_index_id
+                return success_response(
+                    index_info,
+                    message=f"Index {index_id} created successfully"
+                )
+            except Exception as e:
+                # If the new method fails, fall back to the original method
+                logger.warning(f"Error using new index creation: {str(e)}")
 
-                    # Create the pretransform index
-                    pretransform_index, index_info = create_pretransform_index(
-                        base_index, transform, transform_info
-                    )
-
-                    # Store the index
-                    self.indexes[index_id] = pretransform_index
-                    self.dimensions[index_id] = dimension
-
-                    # Add metadata if provided
-                    if metadata:
-                        index_info["metadata"] = metadata
-
-                    return success_response(
-                        index_info,
-                        message=f"Transformed index {index_id} created successfully"
-                    )
-
-                except Exception as e:
-                    # Clean up base index if created
-                    if f"{index_id}_base" in self.indexes:
-                        del self.indexes[f"{index_id}_base"]
-                        del self.dimensions[f"{index_id}_base"]
-                        if index_id in self.base_indexes:
-                            del self.base_indexes[index_id]
-
-                    return error_response(f"Error creating transformed index: {str(e)}")
-
-            # Handle standard FAISS index types
-            elif index_type == "L2":
+            # Handle standard FAISS index types (fallback method)
+            logger.info(f"Using fallback method to create index: {index_type}")
+            if index_type == "L2":
                 index = faiss.IndexFlatL2(dimension)
             elif index_type == "IP":
                 index = faiss.IndexFlatIP(dimension)
@@ -742,6 +779,7 @@ class FaissIndex:
             return success_response(index_details, message=f"Index {index_id} created successfully")
 
         except Exception as e:
+            logger.error(f"Error creating index: {str(e)}")
             return error_response(f"Error creating index: {str(e)}")
 
     def add_with_ids(self, index_id, vectors, ids):
@@ -2064,6 +2102,7 @@ def run_server(
     socket_timeout=DEFAULT_SOCKET_TIMEOUT,
     high_water_mark=DEFAULT_HIGH_WATER_MARK,
     linger=DEFAULT_LINGER,
+    log_level="WARNING",
 ):
     """
     Run the ZeroMQ server for handling vector operations.
@@ -2077,7 +2116,14 @@ def run_server(
         socket_timeout (int): Socket timeout in milliseconds
         high_water_mark (int): High water mark for socket buffer
         linger (int): Linger time in milliseconds
+        log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     """
+    # Set the log level (case-insensitive)
+    log_level = log_level.upper()
+    numeric_level = getattr(logging, log_level, logging.WARNING)
+    logger.setLevel(numeric_level)
+    logger.info(f"Log level set to {log_level}")
+
     try:
         context = zmq.Context()
         socket = context.socket(zmq.REP)
@@ -2112,6 +2158,8 @@ def run_server(
                 action = request.get("action", "")
 
                 logger.debug(f"Received request: {action}")
+                if action == "create_index":
+                    logger.debug(f"Create index request details: {json.dumps(request)}")
 
                 # Process the request
                 response = {"success": False, "error": "Unknown action"}
@@ -2298,6 +2346,15 @@ def run_server(
                         request.get("index_id", "")
                     )
 
+                elif action == "add_with_ids":
+                    # Process add_with_ids request
+                    logger.info(f"Processing add_with_ids request for index {request.get('index_id', '')}")
+                    response = faiss_index.add_with_ids(
+                        request.get("index_id", ""),
+                        request.get("vectors", []),
+                        request.get("ids", [])
+                    )
+
                 # Add version information to all responses
                 if "version" not in response:
                     response["version"] = faissx_version
@@ -2354,12 +2411,16 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to listen on")
     parser.add_argument("--bind-address", default=DEFAULT_BIND_ADDRESS, help="Address to bind to")
     parser.add_argument("--data-dir", help="Directory for persistent storage")
+    parser.add_argument("--log-level", default="WARNING",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                        help="Logging level (default: WARNING)")
     args = parser.parse_args()
 
     # Use environment variables as fallback, but prioritize command-line arguments
     port = int(os.environ.get("FAISSX_PORT", args.port))
     bind_address = os.environ.get("FAISSX_BIND_ADDRESS", args.bind_address)
     data_dir = args.data_dir or os.environ.get("FAISSX_DATA_DIR")
+    log_level = os.environ.get("FAISSX_LOG_LEVEL", args.log_level)
 
     # Default to no authentication when run directly
-    run_server(port, bind_address, auth_keys={}, enable_auth=False, data_dir=data_dir)
+    run_server(port, bind_address, auth_keys={}, enable_auth=False, data_dir=data_dir, log_level=log_level)

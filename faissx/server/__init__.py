@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "auth_keys": {},  # Dictionary mapping API keys to tenant IDs
     "auth_file": None,  # Path to JSON file containing API key mappings
     "enable_auth": False,  # Authentication disabled by default
+    "log_level": "WARNING",  # Default log level
 }
 
 # Global configuration dictionary initialized with defaults
@@ -54,6 +55,7 @@ def configure(
     auth_keys: Optional[Dict[str, str]] = None,
     auth_file: Optional[str] = None,
     enable_auth: bool = False,
+    log_level: str = "WARNING",
     **kwargs,
 ) -> Dict[str, Any]:
     """
@@ -70,6 +72,7 @@ def configure(
         auth_keys: Dictionary mapping API keys to tenant IDs (default: {})
         auth_file: Path to JSON file containing API keys (default: None)
         enable_auth: Whether to enable authentication (default: False)
+        log_level: Logging level (default: WARNING)
         kwargs: Additional configuration options
 
     Returns:
@@ -92,6 +95,7 @@ def configure(
     _config["auth_keys"] = auth_keys or {}
     _config["auth_file"] = auth_file
     _config["enable_auth"] = enable_auth
+    _config["log_level"] = log_level.upper() if isinstance(log_level, str) else log_level
 
     # Load API keys from file if specified
     if auth_file:
@@ -155,4 +159,5 @@ def run():
         auth_keys=_config["auth_keys"],
         enable_auth=_config["enable_auth"],
         data_dir=_config["data_dir"],
+        log_level=_config["log_level"],
     )
