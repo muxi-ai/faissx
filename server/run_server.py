@@ -107,6 +107,7 @@ def main():
     bind_address = os.environ.get("FAISSX_BIND_ADDRESS", args.bind_address)
     data_dir = args.data_dir or os.environ.get("FAISSX_DATA_DIR")
     enable_auth = args.enable_auth or os.environ.get("FAISSX_ENABLE_AUTH") == "1"
+    log_level = args.log_level or os.environ.get("FAISSX_LOG_LEVEL", "WARNING")
 
     # Parse auth keys
     auth_keys = {}
@@ -136,7 +137,8 @@ def main():
             bind_address=bind_address,
             auth_keys=auth_keys,
             enable_auth=enable_auth,
-            data_dir=data_dir
+            data_dir=data_dir,
+            log_level=log_level
         )
     except KeyboardInterrupt:
         print("\nServer stopped by user")
