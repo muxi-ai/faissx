@@ -45,7 +45,7 @@ import argparse
 import logging
 import threading
 from queue import Queue
-from typing import Dict, Any, List, Tuple, Optional, Union
+from typing import Dict, List, Any, Tuple, Optional, Union
 from faissx import __version__ as faissx_version
 from faissx.server.response import (
     success_response, error_response, format_search_results,
@@ -59,16 +59,16 @@ from faissx.server.binary import (
     is_binary_index_type, create_binary_index, convert_to_binary,
     binary_to_float
 )
-from faissx.server.transformations import (
-    parse_transform_type, create_transformation, create_pretransform_index,
-    is_transform_trained, get_transform_training_requirements, train_transform
-)
 
 # Import our modules
 from . import persistence
 from . import hnsw
 from . import hybrid
 from . import transformations
+from .transformations import (
+    parse_transform_type, create_transformation, create_pretransform_index,
+    is_transform_trained, get_transform_training_requirements, train_transform
+)
 
 # Constants for server configuration
 DEFAULT_PORT = 45678  # Default port for ZeroMQ server

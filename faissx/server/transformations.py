@@ -676,3 +676,53 @@ def list_supported_metrics() -> Dict[str, List[str]]:
         metrics[name] = [alias for alias, target in METRIC_ALIASES.items() if target == name]
 
     return metrics
+
+
+def get_transform_training_requirements(transform: Any) -> Dict[str, Any]:
+    """
+    Get training requirements for a transformation.
+
+    Args:
+        transform: The transformation to check
+
+    Returns:
+        dict: Training requirements information
+    """
+    requirements = {
+        "requires_training": False,
+        "is_trained": True,
+        "min_training_vectors": 0,
+        "recommended_training_vectors": 0
+    }
+
+    # If the transform has no is_trained attribute, it doesn't require training
+    if not hasattr(transform, "is_trained"):
+        return requirements
+
+    # Update requirements based on training status
+    requirements["is_trained"] = transform.is_trained
+    requirements["requires_training"] = not transform.is_trained
+
+    # Set specific requirements based on transform type
+    if isinstance(transform, faiss.PCAMatrix):
+        input_dim = transform.d_in if hasattr(transform, "d_in") else transform.d
+        output_dim = transform.d_out if hasattr(transform, "d_out") else input_dim
+        requirements["min_training_vectors"] = output_dim * 2
+        requirements["recommended_training_vectors"] = output_dim * 10
+        requirements["description"] = "PCA requires representative training data"
+
+    elif isinstance(transform, faiss.OPQMatrix):
+        input_dim = transform.d_in if hasattr(transform, "d_in") else transform.d
+        output_dim = transform.d_out if hasattr(transform, "d_out") else input_dim
+        m = transform.M if hasattr(transform, "M") else 8
+        requirements["min_training_vectors"] = output_dim * m
+        requirements["recommended_training_vectors"] = output_dim * m * 10
+        requirements["description"] = "OPQ requires substantial training data"
+
+    elif isinstance(transform, faiss.ITQTransform):
+        input_dim = transform.d_in if hasattr(transform, "d_in") else transform.d
+        requirements["min_training_vectors"] = input_dim * 5
+        requirements["recommended_training_vectors"] = input_dim * 20
+        requirements["description"] = "ITQ requires representative training data"
+
+    return requirements
