@@ -1,4 +1,4 @@
-#!/usr/bin/env python33
+#!/usr/bin/env python3
 """
 FAISSx Server Runner
 
@@ -7,7 +7,20 @@ making it suitable for Docker deployments.
 """
 
 import os
+import logging
 from faissx import server
+from faissx.server.server import (
+    DEFAULT_SOCKET_TIMEOUT,
+    DEFAULT_HIGH_WATER_MARK,
+    DEFAULT_LINGER
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("faissx.runner")
 
 
 if __name__ == "__main__":
@@ -21,6 +34,11 @@ if __name__ == "__main__":
         "yes",
     ]
 
+    # Socket configuration
+    socket_timeout = int(os.environ.get("FAISSX_SOCKET_TIMEOUT", str(DEFAULT_SOCKET_TIMEOUT)))
+    high_water_mark = int(os.environ.get("FAISSX_HIGH_WATER_MARK", str(DEFAULT_HIGH_WATER_MARK)))
+    linger = int(os.environ.get("FAISSX_LINGER", str(DEFAULT_LINGER)))
+
     # Handle authentication - use either auth_keys or auth_file
     auth_keys = None
     auth_file = os.environ.get("FAISSX_AUTH_FILE")
@@ -33,11 +51,11 @@ if __name__ == "__main__":
                 api_key, tenant_id = key_pair.strip().split(":")
                 auth_keys[api_key] = tenant_id
         except Exception as e:
-            print(f"Error parsing API keys from environment: {e}")
+            logger.error(f"Error parsing API keys from environment: {e}")
 
     # Warning for auth enabled but no keys
     if enable_auth and not auth_keys and not auth_file:
-        print("Warning: Authentication enabled but no keys provided")
+        logger.warning("Authentication enabled but no keys provided")
 
     try:
         # Configure server
@@ -48,13 +66,16 @@ if __name__ == "__main__":
             auth_file=auth_file,
             enable_auth=enable_auth,
             data_dir=data_dir,  # Use None if not specified
+            socket_timeout=socket_timeout,
+            high_water_mark=high_water_mark,
+            linger=linger
         )
 
         # Run server
         server.run()
     except ValueError as e:
-        print(f"Error configuring server: {e}")
+        logger.error(f"Error configuring server: {e}")
     except KeyboardInterrupt:
-        print("\nServer stopped by user")
+        logger.info("Server stopped by user")
     except Exception as e:
-        print(f"Error running server: {e}")
+        logger.exception(f"Error running server: {e}")
