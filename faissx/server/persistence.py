@@ -34,6 +34,10 @@ import faiss
 import numpy as np
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional, Union, BinaryIO
+import logging
+
+logger = logging.getLogger("faissx.server")
+
 
 # Constants for persistence operations
 DEFAULT_METADATA_EXTENSION = ".meta.json"
@@ -145,7 +149,7 @@ def save_index(
             result["vectors_path"] = str(filepath) + DEFAULT_VECTORS_EXTENSION
         except Exception as e:
             # If reconstruction fails, just log it and continue
-            print(f"Warning: Failed to save vectors: {str(e)}")
+            logger.warning(f"Warning: Failed to save vectors: {str(e)}")
 
     # Save the index
     try:
@@ -363,7 +367,7 @@ def serialize_index(
                 # Clean up
                 os.unlink(tmp_vec_path)
             except Exception as e:
-                print(f"Warning: Failed to serialize vectors: {str(e)}")
+                logger.warning(f"Warning: Failed to serialize vectors: {str(e)}")
 
         # Extract parameters
         params = extract_parameters(index)

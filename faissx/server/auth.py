@@ -31,6 +31,9 @@ only access indices and vectors belonging to their assigned tenant.
 
 import os
 from typing import Dict, Optional
+import logging
+
+logger = logging.getLogger("faissx.server")
 
 # In-memory storage for API key to tenant ID mappings
 # TODO: Replace with database or config file in production
@@ -68,7 +71,7 @@ def load_api_keys_from_env():
                 key, tenant = pair.split(":")
                 API_KEYS[key.strip()] = tenant.strip()
         except Exception as e:
-            print(f"Error loading API keys from environment: {e}")
+            logger.critical(f"Error loading API keys from environment: {e}")
 
 
 def get_tenant_id(api_key: str) -> Optional[str]:

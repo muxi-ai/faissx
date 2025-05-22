@@ -28,6 +28,9 @@ operations in the FAISSx server.
 import faiss
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple, Union
+import logging
+
+logger = logging.getLogger("faissx.server")
 
 # Binary index types supported by FAISS
 BINARY_INDEX_TYPES = {
@@ -393,5 +396,5 @@ def optimize_binary_index(index: Any, optimization_level: int = 1) -> bool:
         return True
 
     except Exception as e:
-        print(f"Error optimizing binary index: {e}")
+        logger.warning(f"Error optimizing binary index: {e}")
         return False

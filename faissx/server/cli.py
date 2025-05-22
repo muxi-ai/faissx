@@ -30,6 +30,9 @@ import sys
 import argparse
 from faissx import server
 from faissx import __version__
+import logging
+
+logger = logging.getLogger("faissx.server")
 
 
 def run_command(args):
@@ -58,12 +61,12 @@ def run_command(args):
                 api_key, tenant_id = key_pair.strip().split(":")
                 auth_keys[api_key] = tenant_id
         except Exception as e:
-            print(f"Error parsing API keys: {e}")
+            logger.error(f"Error parsing API keys: {e}")
             return 1
 
     # Validate that only one authentication method is specified
     if args.auth_keys and args.auth_file:
-        print("Error: Cannot provide both --auth-keys and --auth-file")
+        logger.error("Error: Cannot provide both --auth-keys and --auth-file")
         return 1
 
     # Configure server with provided settings
@@ -78,7 +81,7 @@ def run_command(args):
             log_level=args.log_level,
         )
     except ValueError as e:
-        print(f"Error configuring server: {e}")
+        logger.error(f"Error configuring server: {e}")
         return 1
 
     # Start server and handle shutdown
@@ -86,10 +89,10 @@ def run_command(args):
         server.run()
         return 0
     except KeyboardInterrupt:
-        print("\nServer stopped by user")
+        logger.error("\nServer stopped by user")
         return 0
     except Exception as e:
-        print(f"Error running server: {e}")
+        logger.error(f"Error running server: {e}")
         return 1
 
 

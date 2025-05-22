@@ -29,6 +29,9 @@ import json
 import faiss
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
+import logging
+
+logger = logging.getLogger("faissx.server")
 
 
 class MetadataStore:
@@ -536,7 +539,7 @@ def _rerank_custom_score(
         test_vars.update({f"md_{field}": 1.0 for field in config.get("fields", [])})
         eval(formula, {"__builtins__": None}, test_vars)
     except Exception as e:
-        print(f"Error validating custom score formula: {str(e)}")
+        logger.error(f"Error validating custom score formula: {str(e)}")
         return indices, distances
 
     reranked_indices = []
@@ -559,7 +562,7 @@ def _rerank_custom_score(
                 score = eval(formula, {"__builtins__": None}, vars_dict)
                 custom_scores.append((idx, score))
             except Exception as e:
-                print(f"Error evaluating custom score: {str(e)}")
+                logger.error(f"Error evaluating custom score: {str(e)}")
                 custom_scores.append((idx, -999999))  # Rank at the end in case of error
 
         # Sort by custom score (descending)

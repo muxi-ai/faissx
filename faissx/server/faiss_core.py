@@ -43,6 +43,9 @@ import faiss
 from typing import Dict, List, Any, Optional, Tuple
 import threading
 from pathlib import Path
+import logging
+
+logger = logging.getLogger("faissx.server")
 
 # Type aliases for better code readability and type safety
 IndexID = str  # Unique identifier for a FAISS index
@@ -154,7 +157,7 @@ class FaissManager:
                         vectors_meta,
                     )
                 except Exception as e:
-                    print(f"Error loading index {index_id}: {e}")
+                    logger.error(f"Error loading index {index_id}: {e}")
 
     def _save_index(self, tenant_id: TenantID, index_id: IndexID):
         """
@@ -185,7 +188,7 @@ class FaissManager:
             with open(index_dir / "vectors.json", "w") as f:
                 json.dump(vectors_meta, f)
         except Exception as e:
-            print(f"Error saving index {index_id}: {e}")
+            logger.error(f"Error saving index {index_id}: {e}")
 
     def create_index(
         self,

@@ -276,7 +276,7 @@ class FaissIndex:
                     query_binary = convert_to_binary(query_vectors)
 
                     # Print debug info
-                    print(f"Binary query shape: {query_binary.shape}, dtype: {query_binary.dtype}")
+                    logger.debug(f"Binary query shape: {query_binary.shape}, dtype: {query_binary.dtype}")
 
                     # Perform the search
                     distances, indices = index.search(query_binary, k)
@@ -298,7 +298,7 @@ class FaissIndex:
                         }
                     )
                 except Exception as e:
-                    print(f"Error in binary search: {str(e)}")
+                    logger.error(f"Error in binary search: {str(e)}")
                     return error_response(f"Error in binary search: {str(e)}")
             else:
                 # Standard float vector search
@@ -533,7 +533,7 @@ class FaissIndex:
                     binary_vectors = convert_to_binary(vectors)
 
                     # Print debug info
-                    print(f"Binary vectors shape: {binary_vectors.shape}, dtype: {binary_vectors.dtype}")
+                    logger.debug(f"Binary vectors shape: {binary_vectors.shape}, dtype: {binary_vectors.dtype}")
 
                     # Add vectors to the index (with or without IDs)
                     if ids is not None:
@@ -547,7 +547,7 @@ class FaissIndex:
                     else:
                         index.add(binary_vectors)
                 except Exception as e:
-                    print(f"Error in binary vector conversion: {str(e)}")
+                    logger.error(f"Error in binary vector conversion: {str(e)}")
                     return error_response(f"Error in binary vector conversion: {str(e)}")
             else:
                 # Convert vectors to numpy array
@@ -857,7 +857,7 @@ class FaissIndex:
             index.add_with_ids(vectors_np, ids_np)
             total = index.ntotal
 
-            print(f"Added {len(vectors)} vectors with IDs to index {index_id}, total: {total}")
+            logger.debug(f"Added {len(vectors)} vectors with IDs to index {index_id}, total: {total}")
             return {"success": True, "count": len(vectors), "total": total}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -898,7 +898,7 @@ class FaissIndex:
             after_count = index.ntotal
             removed_count = before_count - after_count
 
-            print(f"Removed {removed_count} vectors from index {index_id}, remaining: {after_count}")
+            logger.debug(f"Removed {removed_count} vectors from index {index_id}, remaining: {after_count}")
             return {"success": True, "count": removed_count, "total": after_count}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -948,7 +948,7 @@ class FaissIndex:
                     index.reconstruct(int(id_val), binary_vector)
 
                     # Print debug info
-                    print(f"Reconstructed binary vector: shape={binary_vector.shape}, dtype={binary_vector.dtype}")
+                    logger.debug(f"Reconstructed binary vector: shape={binary_vector.shape}, dtype={binary_vector.dtype}")
 
                     # Convert to numpy array with correct shape for binary_to_float
                     binary_vector = binary_vector.reshape(1, -1)
@@ -958,7 +958,7 @@ class FaissIndex:
 
                     return success_response({"vector": vector})
                 except Exception as e:
-                    print(f"Error in binary reconstruction: {str(e)}")
+                    logger.debug(f"Error in binary reconstruction: {str(e)}")
                     return error_response(f"Error in binary reconstruction: {str(e)}")
             else:
                 # For standard float indices
@@ -1560,7 +1560,7 @@ class FaissIndex:
             # Get updated training requirements after training
             training_info = get_training_requirements(index)
 
-            print(f"Trained index {index_id} with {len(training_vectors)} vectors")
+            logger.debug(f"Trained index {index_id} with {len(training_vectors)} vectors")
             return success_response({
                 "index_id": index_id,
                 "trained_with": len(training_vectors),
@@ -2184,7 +2184,7 @@ def register_specialized_handlers(server_instance):
     else:
         server_instance.action_handlers = action_handlers
 
-    logger.info(f"Registered {len(action_handlers)} specialized operation handlers")
+    # logger.info(f"Registered {len(action_handlers)} specialized operation handlers")
 
 
 def run_server(
@@ -2217,11 +2217,36 @@ def run_server(
     # Configure logging
     configure_logging(log_level)
 
-    logger.info("Starting FAISSx ZeroMQ server")
-    logger.info(f"Server version: {faissx_version}")
-    logger.info(f"Binding to {bind_address}:{port}")
-    logger.info(f"Data directory: {data_dir or 'None (in-memory only)'}")
-    logger.info(f"Authentication: {'Enabled' if enable_auth else 'Disabled'}")
+    # Print concise startup message
+    storage_mode = f"Persistent ({data_dir})" if data_dir else "In-memory"
+    auth_status = "Enabled" if enable_auth else "Disabled"
+
+    print("\n---------------------------------------------\n")
+    print("███████╗█████╗ ██╗███████╗███████╗")
+    print("██╔════██╔══██╗██║██╔════╝██╔════╝")
+    print("█████╗ ███████║██║███████╗███████╗ ██╗ ██╗")
+    print("██╔══╝ ██╔══██║██║╚════██║╚════██║ ╚═██╔╝")
+    print("██║    ██║  ██║██║███████║███████║ ██╔╝██╗")
+    print("╚═╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝ ╚═╝ ╚═╝")
+    print("\n---------------------------------------------")
+    print(f"* FAISSx {faissx_version} (c) Ran Aroussi")
+    print(f"* FAISS {faiss.__version__} (c) Meta Platforms, Inc.")
+    print("---------------------------------------------")
+    print("\nConfiguration:\n")
+    print(f" - Storage: {storage_mode}")
+    print(f" - Authentication: {auth_status}")
+    print(f" - Bind address: {bind_address}:{port}")
+    print(f" - Log level: {log_level}")
+    # print(f" - Socket timeout: {socket_timeout}ms")
+    # print(f" - High water mark: {high_water_mark}")
+    # print(f" - Linger: {linger}ms")
+    print("\n---------------------------------------------")
+
+    # logger.info("Starting FAISSx ZeroMQ server")
+    # logger.info(f"Server version: {faissx_version}")
+    # logger.info(f"Binding to {bind_address}:{port}")
+    # logger.info(f"Data directory: {data_dir or 'None (in-memory only)'}")
+    # logger.info(f"Authentication: {'Enabled' if enable_auth else 'Disabled'}")
 
     if enable_auth and not auth_keys:
         logger.warning("Authentication enabled but no keys provided")
@@ -2268,13 +2293,11 @@ def run_server(
                 logger.error(f"Failed to bind socket: {e}")
                 raise  # Re-raise other types of exceptions
 
-        print(f"\nStarted. Listening on {bind_address}:{port}...")
-        print("\n---------------------------------------------\n")
-
         # Create a worker thread pool for handling requests
         task_worker = TaskWorker()
 
-        logger.info("FAISSx server started")
+        print(f"Started. Listening on {bind_address}:{port}...")
+        print("---------------------------------------------\n")
 
         while True:
             try:
@@ -2282,12 +2305,11 @@ def run_server(
                 logger.info("Waiting for a message...")
                 try:
                     message = socket.recv()
-                    print(f"Received message of length {len(message)}")
+                    logger.info(f"Received message of length {len(message)}")
                 except zmq.error.Again:
-                    print("Socket timeout while waiting for a message (normal for long polling)")
+                    logger.error("Socket timeout while waiting for a message (normal for long polling)")
                     continue
                 except zmq.error.ZMQError as e:
-                    print(f"ZMQ ERROR during message receive: {e}")
                     logger.error(f"Error receiving message: {e}")
                     continue
 
@@ -2300,6 +2322,15 @@ def run_server(
                 logger.debug(f"Received request: {action}")
                 if action == "create_index":
                     logger.debug(f"Create index request details: {json.dumps(request)}")
+
+                # Authentication check (skip for ping to allow health checks)
+                if enable_auth and action != "ping":
+                    is_authenticated, auth_error = authenticate_request(request, auth_keys)
+                    if not is_authenticated:
+                        logger.warning(f"Authentication failed for action '{action}': {auth_error}")
+                        response = error_response(auth_error, code="AUTH_ERROR")
+                        socket.send(msgpack.packb(response, use_bin_type=True))
+                        continue
 
                 # Process the request
                 response = {"success": False, "error": "Unknown action"}

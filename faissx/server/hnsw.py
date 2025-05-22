@@ -29,6 +29,9 @@ import time
 import faiss
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
+import logging
+
+logger = logging.getLogger("faissx.server")
 
 
 # Default parameters for HNSW construction
@@ -296,11 +299,11 @@ def update_hnsw_params(index: Any, params: Dict[str, Any]) -> Dict[str, Any]:
         # Log warning for parameters that can't be updated
         for param_name in ["efConstruction", "seed"]:
             if param_name in params:
-                print(f"Warning: Cannot update {param_name} on a non-empty index")
+                logger.warning(f"Warning: Cannot update {param_name} on a non-empty index")
 
     # M cannot be updated after initialization
     if "M" in params:
-        print("Warning: Cannot update M parameter after index creation")
+        logger.warning("Warning: Cannot update M parameter after index creation")
 
     return updated
 
