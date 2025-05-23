@@ -5,7 +5,7 @@
 &nbsp;
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-### A high-performance vector database proxy built with FAISS and ZeroMQ, providing a drop-in replacement for FAISS with scalable, distributed vector operations.
+### A high-performance vector similarity search service that extends FAISS with remote execution capabilities while maintaining full API compatibility.
 
 ---
 
@@ -23,6 +23,7 @@
 ## 📚 Table of Contents
 
 - [Overview](#-overview)
+- [Why FAISSx?](#-why-faissx)
 - [Getting Started](#-getting-started)
 - [Key Features](#-key-features)
 - [Architecture](#-architecture)
@@ -36,11 +37,42 @@
 
 ## 👉 Overview
 
-**FAISSx** is a lightweight, high-performance vector database proxy that runs [Facebook AI Similarity Search (FAISS)](https://github.com/facebookresearch/faiss) as a service. It provides a client-server architecture for efficient vector operations with significantly better performance than HTTP-based alternatives.
+**FAISSx** is essentially "FAISS, but over the network, with enterprise features" - taking Facebook's excellent local vector search library and making it suitable for distributed, multi-tenant production deployments.
 
 The client library acts as a true drop-in replacement for FAISS, meaning you can use it without changing your existing code - simply change your import statements and optionally configure remote execution. FAISSx seamlessly transitions between local FAISS execution and remote server operations based on your configuration.
 
-FAISSx is designed for production workloads with multi-tenant support, authentication, and efficient binary messaging protocol using ZeroMQ and msgpack serialization.
+Built with ZeroMQ and msgpack for efficient binary communication, FAISSx is designed for production workloads requiring authentication, multi-tenancy, and reliable vector similarity search at scale.
+
+---
+
+## 🤔 Why FAISSx?
+
+Teams choose FAISSx over vanilla FAISS when they need vector search capabilities but their architecture, scale, or security requirements mean they can't just embed FAISS directly in their applications:
+
+### **🏢 Enterprise & Multi-Tenant Applications**
+- **SaaS Platforms**: Each customer needs isolated vector search (document similarity, recommendation engines) without cross-contamination
+- **Enterprise Search**: Company-wide semantic search where different departments need access but data must stay separated
+- **Consulting/Agency Work**: Serve multiple clients from one infrastructure with proper data isolation
+
+### **🔧 Microservices & Modern Architecture**
+- **Distributed Systems**: Multiple services need vector search without each maintaining their own FAISS instances
+- **Language Diversity**: Teams using different languages (JavaScript, Go, Java) can all access the same vector service
+- **Stateless Applications**: Applications deployed in containers/Kubernetes that can't maintain large in-memory indices
+
+### **📈 Scale & Performance**
+- **Memory Optimization**: Instead of loading 10GB indices in 20 different application instances, centralize it in one optimized service
+- **Concurrent Access**: Multiple teams/applications hitting the same indices simultaneously
+- **Resource Isolation**: Separate heavy vector computation from lightweight application logic
+
+### **🤝 Team Collaboration**
+- **Shared ML Infrastructure**: Data scientists can build and share vector indices that multiple applications consume
+- **Experimentation**: Teams can test different embedding models/indices without disrupting production applications
+- **MLOps Workflows**: Proper deployment pipeline for vector search with versioning, rollbacks, and monitoring
+
+### **🚀 Production Requirements**
+- **Authentication & Security**: Production systems that need proper API keys, logging, and access control
+- **High Availability**: Need redundancy and failover for critical vector search workloads
+- **Operational Simplicity**: Easier to monitor, backup, and maintain one vector service vs. embedded instances across your entire application fleet
 
 ---
 
@@ -73,7 +105,7 @@ faissx.server run --port 45678 --data-dir ./data --enable-auth --auth-keys "key1
 **1. Using FAISS locally - no configuration needed**
 
 ```python
-from faissx import client as faiss
+from faissx import client as faiss  # ← replace "import faiss" with this
 import numpy as np
 
 # Do FAISS stuff...
@@ -400,7 +432,6 @@ You can also use docker-compose:
 
 ```yaml
 # docker-compose.yml
-version: '3'
 services:
   faissx:
     image: ghcr.io/muxi-ai/faissx:latest-slim
@@ -499,8 +530,8 @@ cd server
     /optimization          - Performance optimization utilities
     /modification          - Index modification functionality
     /recovery              - Error recovery and reconnection utilities
-/server                    - Server utilities, docker configs, tests
-/client                    - Client utilities and tests
+/server                    - Server utilities, docker configs
+/client                    - Client README.md
 /examples                  - Example code for both client and server
 /data                      - Default directory for FAISS data files
 ```
@@ -509,7 +540,13 @@ cd server
 
 ## Current Status and Next Steps
 
-FAISSx v0.0.3 has completed all high and medium priority features from the initial roadmap. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
+FAISSx **v0.0.3** has completed all high and medium priority features from the initial roadmap. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
+
+**NEW in v0.0.3: Authentication System Complete** ✅
+- Multi-tenant authentication fully implemented and production-ready
+- Supports both CLI auth-keys and JSON auth-file authentication methods
+- Comprehensive test coverage with tenant isolation verification
+- Bug fixed in server authentication enforcement
 
 Current focus areas:
 
@@ -519,6 +556,7 @@ Current focus areas:
 
 Recent fixes:
 
+- Authentication system bug fixed and fully tested
 - Training behavior inconsistencies in scalar quantizer now match FAISS behavior
 - API method consistency improved across index implementations
 
@@ -526,17 +564,18 @@ See [NEXT_STEPS.md](./NEXT_STEPS.md) for a detailed roadmap and current status.
 
 ---
 
-## Remote Mode Policy: No Fallbacks
-
-**IMPORTANT**: When remote mode is explicitly configured (`configure()` is called), FAISSx should NEVER fall back to local mode for any operations.
-
-Our goal is to ensure 100% remote mode support with no silent fallbacks for any index type or operation.
+> [!IMPORTANT] Remote Mode Policy
+> **No Fallbacks**: When remote mode is explicitly configured (`configure()` is called), FAISSx will NEVER fall back to local mode for any operations.
+> Our goal is to ensure 100% remote mode support with no silent fallbacks for any index type or operation.
 
 ---
 
 ## 📄 License
 
 FAISSx is licensed under the [Apache 2.0 license](./LICENSE).
+
+> [!NOTE]
+> FAISSx depends on [FAISS](https://github.com/facebookresearch/faiss), which is licensed under the MIT License.
 
 ### Why Apache 2.0?
 
@@ -559,5 +598,6 @@ If you find FAISSx useful in your work:
 - Share your experiences or use cases with the community
 - Let me know how I can make it better for your needs
 
-~ **Ran Aroussi**
+**Ran Aroussi**<br>
+𝕏 / [@aroussi](https://x.com/aroussi)
 

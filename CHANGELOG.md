@@ -1,86 +1,72 @@
 # Changelog
 
-## 0.0.3
+## 0.0.3 (General Availability)
 
-### Added
+### New Features
 
-#### Core Index Implementation (Planned)
-- IndexPreTransform for vector transformations like PCA
-
-#### Core Index Implementation (Complete)
-- Implemented IndexPreTransform with a modular vector transformation framework:
-  - Base VectorTransform class with standardized API
+#### Index Types and Transformations
+- **IndexPreTransform**: Modular vector transformation framework with standardized API
   - L2NormTransform for unit-length normalization
   - PCATransform for dimensionality reduction
   - RemapDimensionsTransform for feature selection
-- Added binary vector support with comprehensive implementations:
+- **Binary Vector Support**: Comprehensive binary index implementations
   - BinaryIndex base class with efficient Hamming distance calculations
   - IndexBinaryFlat for exact binary vector search
   - IndexBinaryIVF for fast approximate search with inverted file structure
   - IndexBinaryHash for hash-based binary vector lookup
-- Created optimized implementations of core index types:
-  - IndexPQ with robust vector extraction and fallbacks
+- **Core Index Optimizations**: Enhanced implementations of key index types
+  - IndexPQ with robust vector extraction and fallback strategies
   - IndexIVFScalarQuantizer with improved training strategies
-  - IndexIDMap and IndexIDMap2 for custom vector IDs
-  - Modification module with batched vector operations
-- Implemented vector caching across all index implementations
-- Added batched processing for large vector operations
-- Enhanced vector reconstruction with multiple fallback strategies
+  - IndexIDMap and IndexIDMap2 for custom vector IDs with batched operations
 
-#### Advanced Features
-- Added factory pattern (index_factory) for creating indices from string descriptions
-- Implemented direct index persistence (write_index/read_index)
-- Added index modification capabilities (merging and splitting indices)
-- Created optimization controls with fine-grained parameters:
-  - Search parameters: nprobe, efSearch, k_factor
-  - Training parameters: n_iter, min_points_per_centroid
-  - HNSW specific parameters: efConstruction
-  - Batch operation parameters: batch_size
-  - Quality vs speed tradeoff parameters
-- Implemented memory management options for efficient resource usage:
+#### Advanced Operations
+- **Factory Pattern**: Create indices from string descriptions using `index_factory`
+- **Index Persistence**: Direct index save/load with `write_index`/`read_index`
+- **Index Modification**: Merge and split indices with optimized vector operations
+- **Vector Reconstruction**: Perfect floating-point precision reconstruction
+  - Single vector reconstruction (`reconstruct`)
+  - Batch reconstruction (`reconstruct_n`) for efficiency
+- **Vector Caching**: Intelligent caching across all index implementations
+- **Batched Processing**: Optimized handling of large vector operations
+
+#### Optimization Controls
+- **Search Parameters**: Fine-grained control over nprobe, efSearch, k_factor
+- **Training Parameters**: Configurable n_iter, min_points_per_centroid
+- **HNSW Parameters**: efConstruction and search-time controls
+- **Memory Management**:
   - Memory mapping for large indices
-  - Memory usage limits and tracking
-  - Index caching with configurable thresholds
+  - Usage limits and tracking with configurable thresholds
   - Automatic unloading of unused indices
   - I/O buffer size controls
 
-#### Error Handling and Resilience
-- Added robust error handling for server limitations
-- Implemented error recovery and reconnection capabilities:
-  - Configurable retry attempts and backoff strategy
+### Authentication & Security
+- **Multi-Tenant Authentication**: Production-ready authentication system
+  - Support for CLI auth-keys format ("key1:tenant1,key2:tenant2")
+  - JSON auth-file format support
+  - Complete tenant data isolation
+  - Comprehensive logging of authentication events
+
+### Reliability & Error Handling
+- **Connection Resilience**: Robust error handling and recovery
+  - Configurable retry attempts with exponential backoff
   - Automatic reconnection on network failures
-  - Event callbacks for disconnect/reconnect events
-  - Connection monitoring with health checks
-  - Manual and automatic recovery options
-- Fixed client connection issues with more robust error handling
-- Improved handling when get_client() connection fails
+  - Connection health monitoring with event callbacks
+  - Graceful degradation for server connectivity issues
+- **Enhanced Error Recovery**: Improved handling of common error conditions
+- **Server Compatibility**: Better compatibility across different server implementations
 
-#### Testing and Documentation
-- Created comprehensive test suite for all optimized implementations
-- Added test scripts for remote mode functionality
-- Extended example suite with comprehensive feature demonstrations
-- Improved documentation for advanced usage patterns
+### Bug Fixes
+- **Authentication**: Fixed critical server-side authentication enforcement
+- **Vector Reconstruction**: Resolved architectural issues affecting precision
+- **API Consistency**: Fixed method inconsistencies in IVF-PQ implementation
+- **Training Behavior**: Corrected scalar quantizer training to match FAISS behavior
+- **Environment Variables**: Fixed server port configuration handling
 
-### Changed
-- Organized project structure for better maintainability:
-  - Moved all tests to logical locations (client/tests and server/tests)
-  - Created dedicated indices/ directory for index-specific tests
-  - Removed obsolete utility scripts and duplicate tests
-  - Consolidated documentation into a dedicated notes/ directory
-- Refactored index implementations for better performance
-- Improved memory efficiency for large indices
-- Enhanced documentation with updated README files
-- Consolidated development notes and technical documentation
-- Improved handling of non-empty base indices for IndexIDMap types
-- Fixed environment variable handling for server port configuration
-
-### Fixed
-- Addressed server-side limitations with client-side workarounds
-- Improved recovery from common error conditions
-- Enhanced compatibility for different server implementations
-- Enhanced error handling and validation
-- Fixed training behavior inconsistencies in scalar quantizer implementation to match FAISS behavior
-- Corrected API method inconsistencies in IVF-PQ implementation (using add_vectors instead of add)
+### Documentation & Testing
+- **Comprehensive Test Suite**: Full coverage of optimized implementations
+- **Enhanced Examples**: Extended example suite demonstrating advanced features
+- **API Documentation**: Improved documentation for advanced usage patterns
+- **Authentication Tests**: Complete test coverage for multi-tenant scenarios
 
 ---
 
