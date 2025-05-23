@@ -46,10 +46,11 @@ setup(
     ],
     extras_require={
         "dev": [
-            "pytest>=6.0.0",
-            "black>=21.5b2",
-            "isort>=5.9.1",
-            "mypy>=0.812",
+            "pytest>=7.0.0",
+            "black>=23.0.0",
+            "isort>=5.12.0",
+            "mypy>=1.0.0",
+            "flake8>=6.0.0",
         ],
     },
     entry_points={

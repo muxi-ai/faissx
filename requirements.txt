@@ -1,12 +1,17 @@
-# Core dependencies
-faiss-cpu>=1.7.2
-numpy>=1.19.5
-pyzmq>=22.0.0
-msgpack>=1.0.2
+# FAISSx Requirements
+#
+# For production use, install with:
+#   pip install .
+#
+# For development, install with:
+#   pip install -e ".[dev]"
+#
+# This file is kept for compatibility with tools that expect requirements.txt
+# All dependencies are defined in setup.py
 
-# Development dependencies
-pytest>=6.0.0
-black>=21.5b2
-isort>=5.9.1
-mypy>=0.812
-flake8>=3.9.2
+# Install this package with all its dependencies
+-e .
+
+# Development dependencies (already defined in setup.py under [dev])
+# Uncomment the line below for development mode:
+# -e ".[dev]"
