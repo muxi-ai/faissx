@@ -147,7 +147,9 @@ class ResponseFormattingError(Exception):
         if self.context:
             error_details += f" | Context: {self.context}"
         if self.original_error:
-            error_details += f" | Caused by: {type(self.original_error).__name__}: {self.original_error}"
+            error_details += (
+                f" | Caused by: {type(self.original_error).__name__}: {self.original_error}"
+            )
         return error_details
 
 

@@ -447,7 +447,11 @@ class FaissIndex:
             # Check if this is a binary index by examining the class name
             # Binary indices require special handling for vector conversion
             is_binary = False
-            for binary_class in [faiss.IndexBinaryFlat, faiss.IndexBinaryIVF, faiss.IndexBinaryHash]:
+            for binary_class in [
+                faiss.IndexBinaryFlat,
+                faiss.IndexBinaryIVF,
+                faiss.IndexBinaryHash,
+            ]:
                 if isinstance(index, binary_class):
                     is_binary = True
                     break
@@ -730,7 +734,11 @@ class FaissIndex:
 
             # Check if this is a binary index
             is_binary = False
-            for binary_class in [faiss.IndexBinaryFlat, faiss.IndexBinaryIVF, faiss.IndexBinaryHash]:
+            for binary_class in [
+                faiss.IndexBinaryFlat,
+                faiss.IndexBinaryIVF,
+                faiss.IndexBinaryHash,
+            ]:
                 if isinstance(index, binary_class):
                     is_binary = True
                     break
@@ -861,7 +869,7 @@ class FaissIndex:
                     base_index = self.indexes[base_type]
                     base_index_id = base_type
                 else:
-                    # Check if base index is already created (might be used for multiple IDMap indices)
+                    # Check if base index is already created (might be used for multiple IDMaps)
                     base_index_id = f"{index_id}_base"
 
                     if base_index_id not in self.indexes:
@@ -908,7 +916,10 @@ class FaissIndex:
                 if metadata:
                     index_details["metadata"] = metadata
 
-                return success_response(index_details, message=f"IDMap index {index_id} created successfully")
+                return success_response(
+                    index_details,
+                    message=f"IDMap index {index_id} created successfully",
+                )
 
             # Check for binary index types
             if is_binary_index_type(index_type):
@@ -924,7 +935,10 @@ class FaissIndex:
                     if metadata:
                         index_info["metadata"] = metadata
 
-                    return success_response(index_info, message=f"Binary index {index_id} created successfully")
+                    return success_response(
+                        index_info,
+                        message=f"Binary index {index_id} created successfully",
+                    )
                 except Exception as e:
                     return error_response(f"Error creating binary index: {str(e)}")
 
@@ -967,7 +981,7 @@ class FaissIndex:
             elif index_type == "HNSW_IP":
                 index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
             elif index_type == "PQ":
-                index = faiss.IndexPQ(dimension, 8, 8)  # 8 subquantizers with 8 bits each by default
+                index = faiss.IndexPQ(dimension, 8, 8)  # 8 subquantizers x 8 bits each by default
             elif index_type == "PQ_IP":
                 index = faiss.IndexPQ(dimension, 8, 8, faiss.METRIC_INNER_PRODUCT)
             elif index_type.startswith("IDMap:"):
@@ -1048,9 +1062,13 @@ class FaissIndex:
 
             # Validate matching lengths
             if len(vectors_np) != len(ids_np):
+                error_msg = (
+                    f"Number of vectors ({len(vectors_np)}) doesn't match "
+                    f"number of IDs ({len(ids_np)})"
+                )
                 return {
                     "success": False,
-                    "error": f"Number of vectors ({len(vectors_np)}) doesn't match number of IDs ({len(ids_np)})"
+                    "error": error_msg
                 }
 
             # Initialize vector cache if needed
@@ -1068,7 +1086,8 @@ class FaissIndex:
             index.add_with_ids(vectors_np, ids_np)
             total = index.ntotal
 
-            logger.debug(f"Added {len(vectors)} vectors with IDs to index {index_id}, total: {total}")
+            debug_msg = f"Added {len(vectors)} vectors w/ IDs to index {index_id}, total: {total}"
+            logger.debug(debug_msg)
             return {"success": True, "count": len(vectors), "total": total}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1109,7 +1128,11 @@ class FaissIndex:
             after_count = index.ntotal
             removed_count = before_count - after_count
 
-            logger.debug(f"Removed {removed_count} vectors from index {index_id}, remaining: {after_count}")
+            debug_msg = (
+                f"Removed {removed_count} vectors from index {index_id}, "
+                f"remaining: {after_count}"
+            )
+            logger.debug(debug_msg)
             return {"success": True, "count": removed_count, "total": after_count}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1142,7 +1165,11 @@ class FaissIndex:
 
             # Check if this is a binary index
             is_binary = False
-            for binary_class in [faiss.IndexBinaryFlat, faiss.IndexBinaryIVF, faiss.IndexBinaryHash]:
+            for binary_class in [
+                faiss.IndexBinaryFlat,
+                faiss.IndexBinaryIVF,
+                faiss.IndexBinaryHash,
+            ]:
                 if isinstance(index, binary_class):
                     is_binary = True
                     break
@@ -1159,7 +1186,11 @@ class FaissIndex:
                     index.reconstruct(int(id_val), binary_vector)
 
                     # Print debug info
-                    logger.debug(f"Reconstructed binary vector: shape={binary_vector.shape}, dtype={binary_vector.dtype}")
+                    debug_msg = (
+                        f"Reconstructed binary vector: shape={binary_vector.shape}, "
+                        f"dtype={binary_vector.dtype}"
+                    )
+                    logger.debug(debug_msg)
 
                     # Convert to numpy array with correct shape for binary_to_float
                     binary_vector = binary_vector.reshape(1, -1)
@@ -1210,7 +1241,10 @@ class FaissIndex:
             if start_idx + num_vectors > index.ntotal:
                 return {
                     "success": False,
-                    "error": f"Range {start_idx}:{start_idx+num_vectors} exceeds index size {index.ntotal}"
+                    "error": (
+                        f"Range {start_idx}:{start_idx+num_vectors} exceeds "
+                        f"index size {index.ntotal}"
+                    ),
                 }
 
             # Reconstruct vectors
@@ -1479,7 +1513,10 @@ class FaissIndex:
 
                 # Additional IVF parameters
                 elif param_name == "quantizer_type" and hasattr(index, "quantizer"):
-                    return {"success": False, "error": "Changing quantizer_type is not supported after index creation"}
+                    return {
+                        "success": False,
+                        "error": "Changing quantizer_type is not supported after index creation",
+                    }
 
             # HNSW index parameters
             elif isinstance(index, faiss.IndexHNSW):
@@ -1498,7 +1535,10 @@ class FaissIndex:
                 elif param_name == "efConstruction":
                     # Validate efConstruction value
                     if not isinstance(param_value, int) or param_value <= 0:
-                        return {"success": False, "error": "efConstruction must be a positive integer"}
+                        return {
+                            "success": False,
+                            "error": "efConstruction must be a positive integer",
+                        }
 
                     # Set efConstruction parameter
                     index.hnsw.efConstruction = param_value
@@ -1508,7 +1548,10 @@ class FaissIndex:
                     }
 
                 elif param_name == "M":
-                    return {"success": False, "error": "Changing HNSW M parameter after index creation is not supported"}
+                    return {
+                        "success": False,
+                        "error": "Changing HNSW M parameter after index creation is not supported",
+                    }
 
             # Product Quantization (PQ) index parameters
             elif isinstance(index, faiss.IndexPQ):
@@ -1520,12 +1563,18 @@ class FaissIndex:
                     }
 
                 elif param_name in ["M", "nbits"]:
-                    return {"success": False, "error": f"Changing PQ {param_name} after index creation is not supported"}
+                    return {
+                        "success": False,
+                        "error": f"Changing PQ {param_name} after index creation is not supported",
+                    }
 
             # Scalar Quantization (SQ) index parameters
             elif isinstance(index, faiss.IndexScalarQuantizer):
                 if param_name == "qtype":
-                    return {"success": False, "error": "Changing SQ qtype after index creation is not supported"}
+                    return {
+                        "success": False,
+                        "error": "Changing SQ qtype after index creation is not supported",
+                    }
 
             # Binary index parameters
             elif isinstance(index, faiss.IndexBinaryIVF):
@@ -1542,15 +1591,24 @@ class FaissIndex:
             # IDMap index parameters
             elif isinstance(index, (faiss.IndexIDMap, faiss.IndexIDMap2)):
                 if param_name == "add_id_range":
-                    return {"success": False, "error": "add_id_range should be used with add_with_ids method"}
+                    return {
+                        "success": False,
+                        "error": "add_id_range should be used with add_with_ids method",
+                    }
 
                 elif param_name == "remove_ids":
-                    return {"success": False, "error": "remove_ids should be used with the remove_ids method"}
+                    return {
+                        "success": False,
+                        "error": "remove_ids should be used with the remove_ids method",
+                    }
 
             # If we get here, the parameter is not supported
             return {
                 "success": False,
-                "error": f"Parameter {param_name} not supported for this index type ({type(index).__name__})"
+                "error": (
+                    f"Parameter {param_name} not supported for this index type "
+                    f"({type(index).__name__})"
+                ),
             }
 
         except Exception as e:
@@ -1735,10 +1793,20 @@ class FaissIndex:
                         transformed_vectors = transform.apply_py(vectors_np)
                     else:
                         # Fallback method using transform.apply()
-                        output_dim = transform.d_out if hasattr(transform, "d_out") else vectors_np.shape[1]
-                        transformed_vectors = np.zeros((len(vectors_np), output_dim), dtype=np.float32)
+                        output_dim = (
+                            transform.d_out
+                            if hasattr(transform, "d_out")
+                            else vectors_np.shape[1]
+                        )
+                        transformed_vectors = np.zeros(
+                            (len(vectors_np), output_dim), dtype=np.float32
+                        )
                         for i, vec in enumerate(vectors_np):
-                            transform.apply(1, faiss.swig_ptr(vec), faiss.swig_ptr(transformed_vectors[i]))
+                            transform.apply(
+                                1,
+                                faiss.swig_ptr(vec),
+                                faiss.swig_ptr(transformed_vectors[i]),
+                            )
 
                     # Now train the base index with transformed vectors
                     base_index.train(transformed_vectors)
@@ -1763,7 +1831,10 @@ class FaissIndex:
 
             if recommended_vectors is not None and len(training_vectors) < recommended_vectors:
                 has_enough_vectors = False
-                recommendation = f"For optimal results, consider using at least {recommended_vectors} training vectors"
+                recommendation = (
+                    f"For optimal results, consider using at least "
+                    f"{recommended_vectors} training vectors"
+                )
 
             # Train the index
             index.train(vectors_np)
@@ -1785,7 +1856,14 @@ class FaissIndex:
             return error_response(
                 f"Training error: {str(e)}",
                 code="TRAINING_ERROR",
-                details={"index_id": index_id, "vector_count": len(training_vectors) if 'training_vectors' in locals() else 0}
+                details={
+                    "index_id": index_id,
+                    "vector_count": (
+                        len(training_vectors)
+                        if "training_vectors" in locals()
+                        else 0
+                    ),
+                },
             )
 
     def get_transform_info(self, index_id):
@@ -1979,11 +2057,20 @@ class FaissIndex:
                         pq = index.pq
                         m = pq.M
                         nbits = pq.nbits
-                        new_index = faiss.IndexIVFPQ(quantizer, dimension, nlist, m, nbits, metric_type)
+                        new_index = faiss.IndexIVFPQ(
+                            quantizer,
+                            dimension,
+                            nlist,
+                            m,
+                            nbits,
+                            metric_type,
+                        )
                     elif isinstance(index, faiss.IndexIVFScalarQuantizer):
                         # Get scalar quantizer parameters
                         sq_type = index.sq_type
-                        new_index = faiss.IndexIVFScalarQuantizer(quantizer, dimension, nlist, sq_type, metric_type)
+                        new_index = faiss.IndexIVFScalarQuantizer(
+                            quantizer, dimension, nlist, sq_type, metric_type,
+                        )
                     else:
                         return {
                             "success": False,
@@ -2196,8 +2283,16 @@ class FaissIndex:
                     result = {
                         "query_index": i,
                         "num_results": len(indices),
-                        "indices": indices.tolist() if isinstance(indices, np.ndarray) else indices,
-                        "distances": distances.tolist() if isinstance(distances, np.ndarray) else distances
+                        "indices": (
+                            indices.tolist()
+                            if isinstance(indices, np.ndarray)
+                            else indices
+                        ),
+                        "distances": (
+                            distances.tolist()
+                            if isinstance(distances, np.ndarray)
+                            else distances
+                        ),
                     }
                     all_results.append(result)
 
@@ -2813,7 +2908,10 @@ def run_server(
                         else:
                             response = error_response(result["error"])
                     except RequestTimeoutError:
-                        response = error_response("Range search operation timed out", code="TIMEOUT")
+                        response = error_response(
+                            "Range search operation timed out",
+                            code="TIMEOUT",
+                        )
 
                 elif action == "merge_indices":
                     response = server.merge_indices(
@@ -2888,7 +2986,8 @@ def run_server(
 
                 elif action == "add_with_ids":
                     # Process add_with_ids request
-                    logger.info(f"Processing add_with_ids request for index {request.get('index_id', '')}")
+                    logger.info(
+                        f"Processing add_with_ids request for index {request.get('index_id', '')}")
                     response = server.add_with_ids(
                         request.get("index_id", ""),
                         request.get("vectors", []),
@@ -2901,7 +3000,10 @@ def run_server(
                         # Call the specialized operation handler
                         handler_func = server.action_handlers[action]
                         # Pass the server instance as first argument
-                        response = handler_func(server, **{k: v for k, v in request.items() if k != "action"})
+                        response = handler_func(
+                            server,
+                            **{k: v for k, v in request.items() if k != "action"},
+                        )
                     except Exception as e:
                         logger.exception(f"Error in specialized operation handler: {e}")
                         response = error_response(f"Server error: {str(e)}")
@@ -3057,4 +3159,11 @@ if __name__ == "__main__":
     log_level = os.environ.get("FAISSX_LOG_LEVEL", args.log_level)
 
     # Default to no authentication when run directly
-    run_server(port, bind_address, auth_keys={}, enable_auth=False, data_dir=data_dir, log_level=log_level)
+    run_server(
+        port,
+        bind_address,
+        auth_keys={},
+        enable_auth=False,
+        data_dir=data_dir,
+        log_level=log_level,
+    )

@@ -275,7 +275,10 @@ def get_parameter(
         # If we get here, the parameter is not supported
         return {
             "success": False,
-            "error": f"Parameter {param_name} not supported for this index type ({type(index).__name__})",
+            "error": (
+                f"Parameter {param_name} not supported for this index type "
+                f"({type(index).__name__})"
+            ),
         }
 
     except Exception as e:
