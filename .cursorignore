@@ -1,13 +1,3 @@
-# Dependencies
-node_modules/
-jspm_packages/
-bower_components/
-package-lock.json
-yarn.lock
-yarn-error.log
-.pnp/
-.pnp.js
-
 # Python
 __pycache__/
 *.py[cod]
@@ -21,6 +11,10 @@ htmlcov/
 .egg-info/
 .eggs/
 *.egg
+dist/
+build/
+
+# Virtual environments
 venv/
 env/
 ENV/
@@ -28,35 +22,17 @@ ENV/
 .env/
 .python-version
 
-# Jekyll / Documentation
-docs/_site/
-docs/.sass-cache/
-docs/.jekyll-cache/
-docs/.jekyll-metadata
-docs/Gemfile.lock
-.jekyll-cache/
-
-# Cache files
-.npm
-.eslintcache
-.stylelintcache
-.node_repl_history
-.yarn-integrity
-.cache/
-.parcel-cache/
-.next/
-.nuxt/
-.vuepress/dist
-.serverless/
-.fusebox/
-.dynamodb/
-.docusaurus
-.umi
-.umi-production
-.umi-test
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
+# IDEs and editors
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.settings/
+*.launch
+*.tmproj
+.history/
 
 # OS generated files
 .DS_Store
@@ -68,13 +44,9 @@ ehthumbs.db
 Thumbs.db
 *.swp
 *.swo
-.idea/
-.vscode/
-*.sublime-workspace
-*.sublime-project
-.project
-.classpath
-.settings/
-*.launch
-*.tmproj
-.history/
+
+# Project specific
+data/
+*.log
+*.tmp
+.memory
