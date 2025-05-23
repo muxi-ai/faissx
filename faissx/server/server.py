@@ -2784,7 +2784,7 @@ def run_server(
                     logger.info(f"Received message of length {len(message)}")
                 except zmq.error.Again:
                     # Socket timeout - this is normal for long polling scenarios
-                    logger.info(
+                    logger.debug(
                         "Socket timeout while waiting for a message "
                         "(normal for long polling)"
                     )
