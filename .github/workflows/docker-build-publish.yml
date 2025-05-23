@@ -45,7 +45,7 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
-      - name: Build and push Docker image
+      - name: Build and push standard Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -54,3 +54,55 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Wait for image to be available
+        run: |
+          echo "Waiting for image to be available in registry..."
+          sleep 60
+
+          # Verify the latest image is available before proceeding
+          docker manifest inspect ghcr.io/${{ github.repository }}:latest
+          echo "✅ Standard image confirmed available"
+
+      - name: Create and push slim version
+        run: |
+          echo "Creating slim version of the image..."
+
+          # Create a temporary Dockerfile for the slim build
+          cat > Dockerfile.slim << 'EOF'
+          # Use the just-built standard image as source
+          FROM ghcr.io/${{ github.repository }}:latest as source
+
+          # Create a minimal image with just the essentials
+          FROM python:3.11-slim
+
+          # Copy only necessary files from the source image
+          WORKDIR /app
+          COPY --from=source /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+          COPY --from=source /usr/local/bin/faissx.server /usr/local/bin/
+
+          # Create data directory
+          RUN mkdir -p /data
+
+          # Set environment variables
+          ENV PYTHONUNBUFFERED=1
+          ENV FAISSX_DATA_DIR=/data
+          ENV FAISSX_PORT=45678
+          ENV FAISSX_BIND_ADDRESS=0.0.0.0
+          ENV FAISSX_ENABLE_AUTH=false
+
+          # Expose the ZeroMQ port
+          EXPOSE 45678
+
+          # Run the server using the CLI
+          CMD ["faissx.server", "run"]
+          EOF
+
+          # Build and push the slim version
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --push \
+            -f Dockerfile.slim \
+            -t ghcr.io/${{ github.repository }}:latest-slim \
+            .
+
+          echo "✅ Slim image built and pushed successfully"
