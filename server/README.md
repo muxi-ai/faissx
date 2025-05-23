@@ -3,7 +3,43 @@
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A high-performance vector database service built on FAISS and ZeroMQ.
+A high-performance vector similarity search service that makes FAISS available as a distributed, multi-tenant service with enterprise features.
+
+## Quick Start
+
+```bash
+# Install and run with default settings (in-memory, no auth)
+pip install faissx
+faissx.server run
+
+# Run with persistent storage and authentication
+faissx.server run --data-dir ./data --enable-auth --auth-keys "key1:tenant1,key2:tenant2"
+
+# Or use Docker
+docker run -p 45678:45678 ghcr.io/muxi-ai/faissx:latest-slim
+```
+
+Server will be available at `tcp://localhost:45678` for client connections.
+
+## Why Run a FAISSx Server?
+
+Deploy a FAISSx server when you need centralized vector search capabilities:
+
+### **🏢 Enterprise Deployments**
+- **Multi-tenant SaaS**: Serve multiple customers with isolated vector search
+- **Microservices architecture**: Centralize vector operations instead of duplicating indices across services
+- **Resource optimization**: Share expensive vector indices across multiple applications
+
+### **🔧 Operational Benefits**
+- **Language agnostic**: Any language can connect via ZeroMQ (Python, JavaScript, Go, Java, etc.)
+- **Stateless applications**: Applications don't need to manage large in-memory indices
+- **Simplified deployment**: One service to monitor, backup, and scale instead of embedded instances
+
+### **🚀 Production Features**
+- **Authentication & authorization**: API key-based multi-tenancy with proper isolation
+- **Persistent storage**: Durable indices that survive server restarts
+- **High performance**: Binary protocol with ZeroMQ for minimal latency
+- **Monitoring & logging**: Centralized observability for vector search operations
 
 ## Table of Contents
 
@@ -26,7 +62,7 @@ The FAISSx server provides a high-performance vector database service with the f
 
 - **ZeroMQ Communication**: Efficient binary protocol using ZeroMQ and msgpack
 - **Multi-tenant Support**: Isolated data storage per tenant
-- **Authentication**: API key-based authentication
+- **Authentication**: Production-ready API key-based authentication (CLI and JSON file support)
 - **Persistence**: Optional persistent storage for indices
 - **FAISS Integration**: Full FAISS functionality exposed through a network API
 
@@ -84,9 +120,9 @@ The server can be configured programmatically or via command-line arguments.
 from faissx import server
 
 server.configure(
-    port=45678,                      # Port to listen on
+    port=45678,                     # Port to listen on
     bind_address="0.0.0.0",         # Address to bind to
-    data_dir="/path/to/data",       # Directory for persistent storage
+    data_dir="/path/to/data",       # Optional: Directory for persistent storage
     auth_keys={"key1": "tenant1"},  # API keys and their tenant IDs
     enable_auth=True,               # Enable authentication
 )
@@ -112,11 +148,12 @@ faissx.server run --enable-auth --auth-file /path/to/auth.json
 | Option | Default | Description |
 |--------|---------|-------------|
 | `port` | 45678 | Port to listen on |
-| `bind_address` | "0.0.0.0" | Network interface to bind to |
+| `bind_address` | 0.0.0.0 | Network interface to bind to |
 | `data_dir` | None | Directory for persistent storage (None = in-memory only) |
 | `auth_keys` | {} | Dictionary mapping API keys to tenant IDs |
 | `auth_file` | None | Path to JSON file containing API keys |
 | `enable_auth` | False | Whether to enable authentication |
+| `log_level` | WARNING | Stdout logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 
 ### Environment Variables
 
@@ -222,6 +259,8 @@ faissx.server run --enable-auth --auth-file /path/to/auth.json
 
 Each tenant has isolated storage, preventing cross-tenant data access. All vector operations are scoped to the tenant's namespace.
 
+**Note**: The authentication system is fully tested and production-ready as of v0.0.3. A comprehensive test suite with 7 tests verifies authentication enforcement and tenant isolation.
+
 ## Docker Deployment
 
 ### Available Images
@@ -302,46 +341,35 @@ The FAISSx server is designed for high performance:
 - Run the server on machines with sufficient memory for your indices
 - Consider GPU acceleration for large-scale deployments
 
-## Current Limitations
+## Current Status
 
-Recent client-side optimizations have identified several limitations in the current server implementation that will be addressed in future versions:
+### Completed Features ✅
 
-### Missing API Methods
+- **Authentication System**: Production-ready API key authentication with multi-tenant isolation
+- **Core FAISS Operations**: Full support for index creation, vector addition, and search
+- **Persistence**: Durable storage for indices with configurable data directories
+- **Docker Deployment**: Optimized container images with multi-architecture support
+- **Binary Protocol**: Efficient ZeroMQ-based communication with msgpack serialization
 
-1. **Vector Reconstruction**
-   - No implementation for `reconstruct` and `reconstruct_n`
-   - Missing `get_vectors` functionality for retrieving vectors
+### Known Limitations
 
-2. **Index Management**
-   - No `reset` method to clear vectors while preserving training
-   - Missing `merge_indices` functionality for combining multiple indices
-   - Inconsistent handling of index training states
+While FAISSx server provides comprehensive FAISS functionality, some advanced features may have varying support:
 
-3. **Parameter Controls**
-   - Limited support for setting index parameters like nprobe
-   - Inconsistent handling of training parameters
+1. **Advanced Index Operations**: Some specialized FAISS operations may not be fully exposed through the API
+2. **GPU Support**: Current server implementation focuses on CPU-based operations
+3. **Clustering Operations**: Advanced clustering and index modification operations may require client-side fallbacks
 
-### Inconsistent Response Formats
+### API Compatibility
 
-- Some operations return raw values instead of structured responses
-- Inconsistent error message formatting
-- Index IDs sometimes returned as strings, sometimes as dictionaries
-
-### Training Behavior Issues
-
-- Some indices report "This index type does not require training" incorrectly
-- Inconsistent behavior when adding vectors to untrained indices
-- Unclear status reporting for training state
+The server provides broad compatibility with FAISS operations. When the server doesn't support a specific operation, FAISSx clients are designed to gracefully handle these cases with appropriate fallback strategies.
 
 ### Planned Improvements
 
-The following improvements are planned to address these limitations:
-
-1. Implementation of vector reconstruction API
-2. Standardization of response formats
-3. Addition of index reset and merge functionality
-4. Improved training state management
-5. Enhanced parameter controls
+Future versions will focus on:
+- Enhanced GPU acceleration support
+- Additional advanced FAISS operations
+- Performance optimizations for large-scale deployments
+- Advanced monitoring and metrics collection
 
 ## Testing
 
@@ -412,3 +440,6 @@ faissx.server run --log-file /path/to/server.log
 ## License
 
 FAISSx is licensed under the [Apache 2.0 license](../LICENSE).
+
+> [!NOTE]
+> FAISSx depends on [FAISS](https://github.com/facebookresearch/faiss), which is licensed under the MIT License.
