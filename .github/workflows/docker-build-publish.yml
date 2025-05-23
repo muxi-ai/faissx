@@ -1,15 +1,10 @@
 name: Build and Publish Docker Image
 
 on:
-  # Commenting out automatic triggers - only using manual triggers for now
-  # push:
-  #   branches:
-  #     - main
-  #   tags:
-  #     - 'v*'
-  # release:
-  #   types: [published]
-  workflow_dispatch:  # Allow manual triggering only
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual triggering
 
 jobs:
   build-and-push:
@@ -50,7 +45,7 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
-      - name: Build and push standard Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -59,112 +54,3 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-      # Note: DockerSlim optimization needs to be handled differently for multi-arch
-      # For now, we'll create a simple slim version using a multi-stage Dockerfile approach
-
-      - name: Create and push slim version of Docker image
-        run: |
-          # Display the tags we've generated for debugging
-          echo "Tags to process: ${{ steps.meta.outputs.tags }}"
-
-          # Create a temporary Dockerfile for the slim build
-          cat > Dockerfile.slim << 'EOF'
-          # Start with our standard FAISSx image - use the full tagged image name
-          FROM ghcr.io/${{ github.repository }}:latest as source
-
-          # Create a minimal image with just the essentials
-          FROM python:3.11-slim
-
-          # Copy only necessary files from the source image
-          WORKDIR /app
-          COPY --from=source /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-          COPY --from=source /usr/local/bin/faissx.server /usr/local/bin/
-
-          # Create data directory
-          RUN mkdir -p /data
-
-          # Set environment variables
-          ENV PYTHONUNBUFFERED=1
-          ENV FAISSX_DATA_DIR=/data
-          ENV FAISSX_PORT=45678
-          ENV FAISSX_BIND_ADDRESS=0.0.0.0
-          ENV FAISSX_ENABLE_AUTH=false
-
-          # Expose the ZeroMQ port
-          EXPOSE 45678
-
-          # Run the server using the CLI
-          CMD ["faissx.server", "run"]
-          EOF
-
-          # Build and push the latest-slim version explicitly
-          echo "Building and pushing slim image with tag: ghcr.io/${{ github.repository }}:latest-slim"
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --push \
-            -f Dockerfile.slim \
-            -t ghcr.io/${{ github.repository }}:latest-slim \
-            .
-
-          # Also create a SHA-tagged slim version
-          SHA_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -o 'ghcr.io/.*/sha-[a-z0-9]*' | head -1)
-          if [ -n "$SHA_TAG" ]; then
-            echo "Found SHA tag: $SHA_TAG"
-            echo "Tagging slim version with: ${SHA_TAG}-slim"
-            docker buildx imagetools create -t ${SHA_TAG}-slim ghcr.io/${{ github.repository }}:latest-slim
-          else
-            echo "No SHA tag found in the output"
-          fi
-
-          # If this is a version release, also tag the slim version accordingly
-          VERSION_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -o 'ghcr.io/.*:v[0-9.]*' | head -1)
-          if [ -n "$VERSION_TAG" ]; then
-            echo "Found version tag: $VERSION_TAG"
-            echo "Tagging slim version with: ${VERSION_TAG}-slim"
-            docker buildx imagetools create -t ${VERSION_TAG}-slim ghcr.io/${{ github.repository }}:latest-slim
-          fi
-
-      # Clean up untagged images
-      - name: Clean up untagged images
-        run: |
-          # Wait a bit to make sure all images are properly registered
-          echo "Waiting 30 seconds before cleanup to ensure all operations are complete..."
-          sleep 30
-
-          # Extract the repository name from full path (e.g., "muxi-ai/faissx" from "github.com/muxi-ai/faissx")
-          REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-
-          # Get the name of the package without the owner (e.g., "faissx" from "muxi-ai/faissx")
-          PACKAGE_NAME=$(echo "$REPO_NAME" | cut -d '/' -f 2)
-          OWNER=$(echo "$REPO_NAME" | cut -d '/' -f 1)
-
-          echo "Repository: $REPO_NAME"
-          echo "Owner: $OWNER"
-          echo "Package: $PACKAGE_NAME"
-
-          # Find and delete all untagged images
-          echo "Finding untagged images to delete..."
-          # Get the list of all versions
-          VERSIONS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                     -H "Accept: application/vnd.github.v3+json" \
-                     "https://api.github.com/orgs/$OWNER/packages/container/$PACKAGE_NAME/versions")
-
-          # Find untagged versions
-          # Untagged versions have an empty tags array - look for "tags":[]
-          UNTAGGED_IDS=$(echo "$VERSIONS" | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id')
-
-          # Show how many untagged images were found
-          UNTAGGED_COUNT=$(echo "$UNTAGGED_IDS" | wc -l | xargs)
-          echo "Found $UNTAGGED_COUNT untagged images to delete"
-
-          # Delete each untagged version
-          if [ -n "$UNTAGGED_IDS" ]; then
-            for VERSION_ID in $UNTAGGED_IDS; do
-              echo "Deleting untagged image with ID: $VERSION_ID"
-              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                   -H "Accept: application/vnd.github.v3+json" \
-                   "https://api.github.com/orgs/$OWNER/packages/container/$PACKAGE_NAME/versions/$VERSION_ID"
-            done
-          else
-            echo "No untagged images found to delete"
-          fi
