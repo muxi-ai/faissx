@@ -2,6 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Examples](https://img.shields.io/badge/examples-9%2F9%20working-brightgreen.svg)](./examples/)
 &nbsp;
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
@@ -540,27 +541,16 @@ cd server
 
 ## Current Status and Next Steps
 
-FAISSx **v0.0.3** has completed all high and medium priority features from the initial roadmap. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
+FAISSx **v0.0.3** has completed all high and medium priority features from the initial roadmap and **all examples are fully working**. Recent optimizations have significantly improved the client-side implementation with robust fallback strategies.
 
-**NEW in v0.0.3: Authentication System Complete** ✅
-- Multi-tenant authentication fully implemented and production-ready
-- Supports both CLI auth-keys and JSON auth-file authentication methods
-- Comprehensive test coverage with tenant isolation verification
-- Bug fixed in server authentication enforcement
+Recent comprehensive fixes:
 
-Current focus areas:
-
-- Server-side improvements to better match client capabilities
-- Enhanced vector reconstruction for remote operations
-- Standardized server response formats
-
-Recent fixes:
-
-- Authentication system bug fixed and fully tested
-- Training behavior inconsistencies in scalar quantizer now match FAISS behavior
-- API method consistency improved across index implementations
-
-See [NEXT_STEPS.md](./NEXT_STEPS.md) for a detailed roadmap and current status.
+- ✅ Authentication system bug fixed and fully tested
+- ✅ All segfault issues in examples resolved
+- ✅ Index modification operations working perfectly
+- ✅ IVF index creation safety implemented
+- ✅ Range search and batch operations working
+- ✅ API method consistency improved across all index implementations
 
 ---
 
@@ -600,4 +590,3 @@ If you find FAISSx useful in your work:
 
 **Ran Aroussi**<br>
 𝕏 / [@aroussi](https://x.com/aroussi)
-
