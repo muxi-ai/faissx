@@ -246,31 +246,40 @@ def merge_indices(
             first_type = _get_index_type_description(indices[0])
         output_type = first_type
 
+    # Determine if we need ID mapping
+    id_mappings: List[Dict[int, int]] = []
+    needs_id_mapping = id_map or id_map2 or bool(id_mappings)
+
     # Create the target index
-    merged_index = index_factory(d, output_type)
+    if needs_id_mapping:
+        # Create empty base index first
+        base_index = index_factory(d, output_type)
+        # Create the appropriate wrapper around the empty base index
+        wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
+        merged_index = wrapper_class(base_index)
+    else:
+        merged_index = index_factory(d, output_type)
 
     # Prepare to collect all vectors and IDs if needed
     all_vectors: List[np.ndarray] = []
-    id_mappings: List[Dict[int, int]] = []
     total_vectors = 0
 
     # Process each source index
     for i, idx in enumerate(indices):
         logger.debug(f"Processing index {i+1}/{len(indices)}")
         # Handle IDMap/IDMap2 wrappers
-        base_index = idx
         id_map_data: Optional[Dict[int, int]] = None
 
         if isinstance(idx, (IndexIDMap, IndexIDMap2)):
-            base_index = idx.index
             # Collect ID mappings with adjusted indices for the merged index
             id_map_data = {}
             for internal_idx, external_id in idx._id_map.items():
                 id_map_data[internal_idx + total_vectors] = external_id
 
         # Extract vectors if the index has any
-        if getattr(base_index, "ntotal", 0) > 0:
-            vectors = _get_vectors_from_index(base_index)
+        # IMPORTANT: Use idx directly, not base_index, because vectors are stored in the wrapper
+        if getattr(idx, "ntotal", 0) > 0:
+            vectors = _get_vectors_from_index(idx)
 
             if vectors is not None and len(vectors) > 0:
                 all_vectors.append(vectors)
@@ -294,34 +303,41 @@ def merge_indices(
 
     # Add the vectors to the merged index in batches to avoid memory issues
     total_added = 0
-    for i in range(0, len(combined_vectors), batch_size):
-        batch = combined_vectors[i:i + batch_size]
-        merged_index.add(batch)
-        total_added += len(batch)
-        logger.debug(
-            f"Added batch of {len(batch)} vectors ({total_added}/{len(combined_vectors)})"
-        )
 
-    # Create IDMap wrapper if needed
-    if id_map or id_map2 or id_mappings:
-        # Create the appropriate wrapper
-        wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
-        wrapped_index = wrapper_class(merged_index)
+    if needs_id_mapping and id_mappings:
+        # We have ID mappings, so use add_with_ids
+        combined_mappings: Dict[int, int] = {}
+        for mapping in id_mappings:
+            combined_mappings.update(mapping)
 
-        # Restore ID mappings if available
-        if id_mappings:
-            combined_mappings: Dict[int, int] = {}
-            for mapping in id_mappings:
-                combined_mappings.update(mapping)
+        # Create arrays of vectors and their corresponding IDs
+        all_ids = []
+        for i in range(len(combined_vectors)):
+            if i in combined_mappings:
+                all_ids.append(combined_mappings[i])
+            else:
+                all_ids.append(i)  # Use index as ID for vectors without explicit IDs
 
-            # Set up the ID mappings in the wrapped index
-            wrapped_index._id_map = combined_mappings
-            wrapped_index._rev_id_map = {v: k for k, v in combined_mappings.items()}
-            wrapped_index.ntotal = merged_index.ntotal
-
-        elapsed = time.time() - start_time
-        logger.info(f"Merge with ID mapping completed in {elapsed:.2f}s")
-        return wrapped_index
+        # Add vectors with IDs in batches
+        for i in range(0, len(combined_vectors), batch_size):
+            batch_end = min(i + batch_size, len(combined_vectors))
+            batch_vectors = combined_vectors[i:batch_end]
+            batch_ids = np.array(all_ids[i:batch_end])
+            merged_index.add_with_ids(batch_vectors, batch_ids)
+            total_added += len(batch_vectors)
+            logger.debug(
+                f"Added batch of {len(batch_vectors)} vectors with IDs "
+                f"({total_added}/{len(combined_vectors)})"
+            )
+    else:
+        # No ID mappings, use regular add
+        for i in range(0, len(combined_vectors), batch_size):
+            batch = combined_vectors[i:i + batch_size]
+            merged_index.add(batch)
+            total_added += len(batch)
+            logger.debug(
+                f"Added batch of {len(batch)} vectors ({total_added}/{len(combined_vectors)})"
+            )
 
     elapsed = time.time() - start_time
     logger.info(f"Merge completed in {elapsed:.2f}s")
