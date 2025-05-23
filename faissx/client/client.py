@@ -1255,7 +1255,8 @@ class FaissXClient:
             ValueError: If indices are out of range
         """
         try:
-            logger.debug(f"Reconstructing {n} vectors from index {index_id} starting at {start_idx}")
+            logger.debug(
+                f"Reconstructing {n} vectors from index {index_id} starting at {start_idx}")
 
             # Send request
             result = self._send_request(
