@@ -3,7 +3,26 @@
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A true drop-in replacement for FAISS with optional remote execution capabilities.
+A true drop-in replacement for FAISS that extends Facebook's vector similarity search library with optional remote execution capabilities.
+
+## Quick Start
+
+```python
+# Just change your import - everything else stays the same!
+from faissx import client as faiss  # ← replace "import faiss" with this
+import numpy as np
+
+# Your existing FAISS code works unchanged
+dimension = 128
+index = faiss.IndexFlatL2(dimension)
+vectors = np.random.random((100, dimension)).astype('float32')
+index.add(vectors)
+D, I = index.search(np.random.random((1, dimension)).astype('float32'), k=5)
+
+# Optional: Connect to a remote FAISSx server for distributed search
+faiss.configure(server="tcp://localhost:45678", api_key="your-key", tenant_id="your-tenant")
+# Now all operations use the remote server
+```
 
 ## Overview
 
@@ -18,6 +37,17 @@ The FAISSx client provides:
 5. **Optimized implementations** with robust fallback strategies
 6. **Vector caching** for enhanced retrieval and reconstruction
 7. **Batched processing** for large vector operations
+
+## When to Use FAISSx Client
+
+Choose FAISSx over vanilla FAISS when you need:
+
+- **Microservices architecture**: Multiple services sharing the same vector search without duplicating large indices
+- **Multi-language support**: Access FAISS from JavaScript, Go, Java, or other languages via the network API
+- **Resource optimization**: Centralize memory-intensive vector operations instead of loading indices in every application instance
+- **Team collaboration**: Share trained indices between data science teams and production applications
+- **Container deployments**: Stateless applications that can't maintain large in-memory indices
+- **Enterprise features**: Authentication, multi-tenancy, and centralized monitoring for vector search
 
 ## Installation
 
@@ -152,6 +182,38 @@ The FAISSx client currently supports:
 | Index Persistence | ✅ | Optimized read_index/write_index support |
 | Index Modification | ✅ | Merge and split with batched operations |
 | Parameter Controls | ✅ | Fine-grained tuning for performance |
+
+## Index Selection Guide
+
+Choose the right index type for your use case:
+
+### **Exact Search (Small to Medium datasets)**
+- **`IndexFlatL2`**: Best for exact L2 distance search, up to ~1M vectors
+- **`IndexFlatIP`**: Best for exact inner product search (cosine similarity)
+
+### **Approximate Search (Large datasets)**
+- **`IndexIVFFlat`**: Good balance of speed and accuracy for 1M+ vectors
+- **`IndexHNSWFlat`**: Excellent query performance, higher memory usage
+- **`IndexIVFPQ`**: Best memory efficiency for very large datasets (10M+ vectors)
+
+### **Specialized Use Cases**
+- **`IndexPQ`**: Memory-constrained environments, good compression
+- **`IndexScalarQuantizer`**: Good compression with better accuracy than PQ
+- **`IndexIDMap/IDMap2`**: When you need to maintain your own vector IDs
+- **Binary indices**: For binary embeddings (e.g., hashing-based methods)
+
+### **Performance vs Memory Trade-offs**
+```python
+# High accuracy, high memory
+index = faiss.IndexFlatL2(dimension)
+
+# Good balance for most use cases
+index = faiss.IndexIVFFlat(dimension, nlist=100)
+index.nprobe = 10  # Adjust for speed vs accuracy
+
+# Maximum memory efficiency
+index = faiss.IndexIVFPQ(dimension, nlist=100, m=8, nbits=8)
+```
 
 ## API Reference
 
@@ -310,4 +372,7 @@ When using remote mode, be aware of potential server limitations:
 
 ## License
 
-FAISSx is licensed under the [Apache 2.0 license](./LICENSE).
+FAISSx is licensed under the [Apache 2.0 license](../LICENSE).
+
+> [!NOTE]
+> FAISSx depends on [FAISS](https://github.com/facebookresearch/faiss), which is licensed under the MIT License.
