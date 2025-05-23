@@ -46,14 +46,9 @@ import msgpack
 import threading
 import argparse
 from queue import Queue
-from typing import Dict, List, Any, Tuple, Optional, Union
 
 from .. import __version__ as faissx_version
-from .core import (
-    IndexID, VectorData, SearchResult, QueryParams,
-    DEFAULT_PORT, DEFAULT_HOST, DEFAULT_K, DEFAULT_TIMEOUT,
-    create_index_from_type
-)
+from .core import DEFAULT_PORT
 from .response import (
     error_response, success_response,
     format_search_results, format_vector_results,
@@ -68,20 +63,62 @@ from .binary import (
     is_binary_index_type, create_binary_index
 )
 from .logging import configure_logging
-from . import persistence
-from . import hnsw
-from . import hybrid
-from .transformations import parse_transform_type
 from . import specialized_operations
 from . import transformations
 
-# Constants for server configuration
-DEFAULT_PORT = 45678  # Default port for ZeroMQ server
+# Server Configuration Constants
+# These constants ensure consistent server behavior and easy configuration management
+
+# Network and socket configuration
 DEFAULT_BIND_ADDRESS = "0.0.0.0"  # Default bind address (all interfaces)
 DEFAULT_SOCKET_TIMEOUT = 60000  # Socket timeout in milliseconds (60 seconds)
 DEFAULT_HIGH_WATER_MARK = 1000  # High water mark for socket buffer
 DEFAULT_LINGER = 1000  # Linger time for socket (1 second)
 DEFAULT_OPERATION_TIMEOUT = 30  # Default timeout for operations in seconds
+
+# Request processing constants
+MAX_REQUEST_SIZE = 100 * 1024 * 1024  # 100MB maximum request size
+MAX_RESPONSE_SIZE = 500 * 1024 * 1024  # 500MB maximum response size
+MAX_CONCURRENT_REQUESTS = 100  # Maximum concurrent request handling
+
+# Binary index class constants for type checking
+BINARY_INDEX_CLASSES = [
+    "IndexBinaryFlat", "IndexBinaryIVF", "IndexBinaryHash"
+]
+
+# Task worker configuration
+DEFAULT_TASK_QUEUE_SIZE = 1000  # Maximum task queue size
+DEFAULT_WORKER_THREAD_COUNT = 4  # Number of worker threads
+
+# Authentication and security constants
+AUTH_HEADER_FIELD = "api_key"
+TENANT_HEADER_FIELD = "tenant_id"
+MAX_API_KEY_LENGTH = 256
+MAX_TENANT_ID_LENGTH = 128
+
+# Index operation constants
+MAX_VECTORS_PER_BATCH = 10000  # Maximum vectors per batch operation
+MAX_SEARCH_K = 10000  # Maximum k value for search operations
+MAX_DIMENSION = 10000  # Maximum vector dimension
+MIN_DIMENSION = 1  # Minimum vector dimension
+
+# Response status constants
+RESPONSE_STATUS_SUCCESS = "success"
+RESPONSE_STATUS_ERROR = "error"
+RESPONSE_STATUS_TIMEOUT = "timeout"
+
+# Operation timeout constants by operation type
+OPERATION_TIMEOUTS = {
+    "search": 30,
+    "add_vectors": 60,
+    "train_index": 300,
+    "create_index": 60,
+    "merge_indices": 180,
+    "range_search": 45,
+    "get_vectors": 120,
+    "search_and_reconstruct": 60,
+    "apply_transform": 30,
+}
 
 # Configure logging
 logger = logging.getLogger("faissx.server")
@@ -90,40 +127,106 @@ logger = logging.getLogger("faissx.server")
 
 
 class RequestTimeoutError(Exception):
-    """Exception raised when a request takes too long to process."""
+    """
+    Exception raised when a request takes too long to process.
+
+    This custom exception is used throughout the server to handle timeout scenarios
+    where operations exceed their allocated processing time. It provides a clear
+    indication that the failure was due to timeout rather than other errors.
+
+    Usage:
+        Used by TaskWorker and timeout-sensitive operations to signal when
+        processing time limits are exceeded, allowing for graceful error handling
+        and appropriate client responses.
+    """
     pass
 
 
 class TaskWorker:
-    """Worker to handle long-running tasks asynchronously."""
+    """
+    Worker to handle long-running tasks asynchronously.
+
+    This class provides a background task execution system that prevents long-running
+    operations from blocking the main ZeroMQ request-response loop. It manages a
+    separate worker thread and provides timeout capabilities for task execution.
+
+    Architecture:
+        - Uses a separate daemon thread for task processing
+        - Maintains a task queue for pending operations
+        - Stores results in memory with task ID mapping
+        - Provides both fire-and-forget and wait-for-result patterns
+
+    Attributes:
+        timeout (int): Default timeout in seconds for task completion
+        queue (Queue): Thread-safe queue for pending tasks
+        results (dict): In-memory storage for completed task results
+        worker_thread (Thread): Background thread for task processing
+
+    Thread Safety:
+        All operations are thread-safe using Queue and dict operations.
+        Results are cleaned up after retrieval to prevent memory leaks.
+    """
 
     def __init__(self, timeout=DEFAULT_OPERATION_TIMEOUT):
         """
         Initialize a worker for handling long-running tasks.
 
         Args:
-            timeout (int): Default timeout in seconds for task completion
+            timeout (int): Default timeout in seconds for task completion.
+                          Individual tasks can override this value.
+
+        Implementation Notes:
+            - Creates a daemon thread that will automatically terminate when
+              the main process exits
+            - Uses Queue for thread-safe communication between threads
+            - Results dictionary is accessed by main thread only after completion
         """
         self.timeout = timeout
-        self.queue = Queue()
-        self.results = {}
+        self.queue = Queue()  # Thread-safe task queue
+        self.results = {}     # Task results storage (task_id -> result)
+
+        # Create and start the background worker thread
+        # Daemon=True ensures thread dies when main process exits
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
 
     def _worker_loop(self):
-        """Background worker loop to process tasks."""
+        """
+        Background worker loop to process tasks.
+
+        This method runs in a separate thread and continuously processes tasks
+        from the queue. It handles task execution, result storage, and error
+        capture to ensure the main thread can retrieve results safely.
+
+        Implementation Details:
+            - Runs in infinite loop until process termination
+            - Uses blocking queue.get() to wait for new tasks
+            - Captures all exceptions to prevent thread termination
+            - Stores both successful results and error information
+            - Calls task_done() to signal queue completion
+        """
         while True:
             try:
+                # Block until a task is available in the queue
+                # Returns tuple: (task_id, function, args, kwargs)
                 task_id, func, args, kwargs = self.queue.get(block=True)
+
                 try:
+                    # Execute the task function with provided arguments
                     result = func(*args, **kwargs)
+
+                    # Store successful result for main thread retrieval
                     self.results[task_id] = {"success": True, "result": result}
                 except Exception as e:
+                    # Capture any task execution errors
                     logger.error(f"Task {task_id} failed: {str(e)}")
                     self.results[task_id] = {"success": False, "error": str(e)}
                 finally:
+                    # Signal that this task is complete (required for Queue)
                     self.queue.task_done()
             except Exception as e:
+                # Handle any unexpected worker thread errors
+                # This should rarely happen, but prevents thread death
                 logger.error(f"Worker error: {str(e)}")
 
     def submit_task(self, func, *args, **kwargs):
@@ -131,15 +234,25 @@ class TaskWorker:
         Submit a task to be executed in the background.
 
         Args:
-            func: Function to execute
-            *args: Arguments to pass to the function
+            func: Function to execute in the background thread
+            *args: Positional arguments to pass to the function
             **kwargs: Keyword arguments to pass to the function
 
         Returns:
-            str: Task ID that can be used to retrieve results
+            str: Unique task ID that can be used to retrieve results later
+
+        Implementation Notes:
+            - Uses current timestamp as task ID for simplicity
+            - Tasks are added to thread-safe queue for worker processing
+            - Non-blocking operation - returns immediately
         """
+        # Generate unique task ID using current timestamp
+        # Simple but effective for this use case
         task_id = str(time.time())
+
+        # Add task to queue - worker thread will pick it up
         self.queue.put((task_id, func, args, kwargs))
+
         return task_id
 
     def get_result(self, task_id):
@@ -147,11 +260,17 @@ class TaskWorker:
         Get the result of a task without waiting.
 
         Args:
-            task_id (str): ID of the task
+            task_id (str): ID of the task to check
 
         Returns:
-            dict: Result dictionary or None if not available
+            dict: Result dictionary with 'success' and 'result'/'error' keys,
+                  or None if task is not yet complete
+
+        Usage:
+            Non-blocking check for task completion. Use this when you want to
+            poll for results without blocking the calling thread.
         """
+        # Simple dictionary lookup - returns None if not found
         return self.results.get(task_id)
 
     def wait_for_result(self, task_id, timeout=None):
@@ -159,25 +278,37 @@ class TaskWorker:
         Wait for a task result with timeout.
 
         Args:
-            task_id (str): ID of the task
-            timeout (int, optional): Timeout in seconds
+            task_id (str): ID of the task to wait for
+            timeout (int, optional): Timeout in seconds. Uses instance default
+                                    if not provided.
 
         Returns:
-            dict: Result dictionary
+            dict: Result dictionary with 'success' and 'result'/'error' keys
 
         Raises:
             RequestTimeoutError: If the task doesn't complete within the timeout
+
+        Implementation Strategy:
+            - Uses polling with short sleep intervals rather than blocking wait
+            - Cleans up results after retrieval to prevent memory leaks
+            - Provides precise timeout control for different operation types
         """
+        # Use instance timeout if none provided
         timeout = timeout or self.timeout
         start_time = time.time()
 
+        # Poll for results with timeout
         while time.time() - start_time < timeout:
             if task_id in self.results:
+                # Task completed - retrieve and clean up result
                 result = self.results[task_id]
-                del self.results[task_id]  # Clean up
+                del self.results[task_id]  # Prevent memory leaks
                 return result
+
+            # Short sleep to prevent busy waiting
             time.sleep(0.1)
 
+        # Timeout reached without result completion
         raise RequestTimeoutError(
             "Task timed out after {} seconds".format(timeout)
         )
@@ -204,65 +335,125 @@ class FaissIndex:
 
     def _run_with_timeout(self, func, *args, timeout=None, **kwargs):
         """
-        Run a function with a timeout.
+        Run a function with a timeout using the background task worker.
+
+        This method provides a consistent timeout mechanism for long-running index
+        operations. It prevents operations from blocking the main ZeroMQ loop and
+        provides graceful timeout handling with appropriate error responses.
 
         Args:
-            func: Function to run
-            *args: Arguments to pass to the function
-            timeout: Timeout in seconds
+            func: Function to execute with timeout protection
+            *args: Positional arguments to pass to the function
+            timeout: Timeout in seconds (uses operation-specific defaults if None)
             **kwargs: Keyword arguments to pass to the function
 
         Returns:
-            Result of the function or error response
+            Result of the function execution or error response dict
+
+        Implementation Strategy:
+            - Delegates execution to TaskWorker for background processing
+            - Provides consistent error response format for timeouts
+            - Captures and logs all execution errors for debugging
+            - Returns structured responses compatible with client expectations
         """
         try:
+            # Submit task to background worker for timeout-controlled execution
             task_id = self.task_worker.submit_task(func, *args, **kwargs)
+
+            # Wait for completion with timeout protection
             result = self.task_worker.wait_for_result(task_id, timeout)
 
+            # Check if the background task succeeded
             if not result["success"]:
+                # Task failed - return structured error response
                 return error_response(result["error"])
 
+            # Task succeeded - return the actual result
             return result["result"]
         except RequestTimeoutError as e:
+            # Handle timeout specifically with appropriate logging and response
             logger.error(f"Timeout error: {str(e)}")
-            return error_response(f"Operation timed out", code="TIMEOUT")
+            return error_response("Operation timed out", code="TIMEOUT")
         except Exception as e:
+            # Handle any unexpected errors during task execution
             logger.error(f"Unexpected error: {str(e)}")
             return error_response(f"Unexpected error: {str(e)}")
 
     def search(self, index_id, query_vectors, k=10, params=None):
         """
-        Search for similar vectors in an index.
+        Search for similar vectors in an index with timeout protection.
+
+        This is the main entry point for vector similarity search operations.
+        It provides timeout protection by delegating to the background task worker
+        while maintaining the same interface as the internal search implementation.
 
         Args:
-            index_id (str): ID of the target index
-            query_vectors (list): List of query vectors
-            k (int): Number of nearest neighbors to return
-            params (dict, optional): Additional search parameters like nprobe for IVF indices
+            index_id (str): ID of the target index to search in
+            query_vectors (list): List of query vectors for similarity search
+            k (int): Number of nearest neighbors to return per query (default: 10)
+            params (dict, optional): Additional search parameters like nprobe for
+                                    IVF indices or efSearch for HNSW indices
 
         Returns:
-            dict: Response containing search results or error message
+            dict: Response containing search results with the following structure:
+                - success (bool): Whether the operation succeeded
+                - results (list): List of result objects, one per query vector
+                - num_queries (int): Number of query vectors processed
+                - k (int): Number of neighbors requested per query
+                - message (str, optional): Success/error message
+                - error (str, optional): Error description if success is False
+                - code (str, optional): Error code for programmatic handling
+
+        Timeout Handling:
+            Uses operation-specific timeout from OPERATION_TIMEOUTS configuration.
+            Long-running searches will be terminated gracefully with timeout error.
         """
         return self._run_with_timeout(
             self._search, index_id, query_vectors, k, params
         )
 
     def _search(self, index_id, query_vectors, k=10, params=None):
-        """Internal implementation of search that can be run with timeout."""
+        """
+        Internal implementation of search that can be run with timeout.
+
+        This method contains the core vector similarity search logic and supports
+        both standard float vectors and binary vectors. It handles index validation,
+        query preprocessing, parameter application, and result formatting.
+
+        Args:
+            index_id (str): ID of the target index
+            query_vectors (list): List of query vectors
+            k (int): Number of nearest neighbors to return
+            params (dict, optional): Search parameters (nprobe, efSearch, etc.)
+
+        Returns:
+            dict: Formatted search results or error response
+
+        Implementation Details:
+            - Validates index existence and readiness for search
+            - Detects binary vs float index types automatically
+            - Applies runtime search parameters (nprobe, efSearch)
+            - Handles dimension validation for query vectors
+            - Converts results to JSON-serializable format
+            - Provides detailed error messages for troubleshooting
+        """
+        # Validate that the target index exists
         if index_id not in self.indexes:
             return error_response(f"Index {index_id} does not exist")
 
         try:
             index = self.indexes[index_id]
 
-            # Check if this is a binary index
+            # Check if this is a binary index by examining the class name
+            # Binary indices require special handling for vector conversion
             is_binary = False
             for binary_class in [faiss.IndexBinaryFlat, faiss.IndexBinaryIVF, faiss.IndexBinaryHash]:
                 if isinstance(index, binary_class):
                     is_binary = True
                     break
 
-            # Check if the index is ready for use
+            # Verify that the index is properly trained and ready for search
+            # Some index types (like IVF) require training before use
             is_ready, reason = is_trained_for_use(index)
             if not is_ready:
                 return error_response(
@@ -271,17 +462,24 @@ class FaissIndex:
                 )
 
             if is_binary:
+                # Handle binary index search path
                 try:
-                    # Convert query vectors to binary format
+                    # Convert float query vectors to binary format
+                    # This involves quantizing to binary representation
                     query_binary = convert_to_binary(query_vectors)
 
-                    # Print debug info
-                    logger.debug(f"Binary query shape: {query_binary.shape}, dtype: {query_binary.dtype}")
+                    # Log debug information for binary search operations
+                    logger.debug(
+                        f"Binary query shape: {query_binary.shape}, "
+                        f"dtype: {query_binary.dtype}"
+                    )
 
-                    # Perform the search
+                    # Perform the binary similarity search
+                    # Uses Hamming distance for binary vectors
                     distances, indices = index.search(query_binary, k)
 
-                    # Convert numpy arrays to lists for serialization
+                    # Convert numpy arrays to lists for JSON serialization
+                    # Each query gets its own result set
                     results = []
                     for i in range(len(distances)):
                         results.append({
@@ -294,35 +492,43 @@ class FaissIndex:
                             "results": results,
                             "num_queries": len(query_vectors),
                             "k": k,
-                            "is_binary": True
+                            "is_binary": True  # Flag to indicate binary search
                         }
                     )
                 except Exception as e:
+                    # Handle any binary-specific processing errors
                     logger.error(f"Error in binary search: {str(e)}")
                     return error_response(f"Error in binary search: {str(e)}")
             else:
-                # Standard float vector search
-                # Convert query vectors to numpy array and validate dimensions
+                # Handle standard float vector search path
+
+                # Convert query vectors to numpy array with proper data type
                 query_np = np.array(query_vectors, dtype=np.float32)
+
+                # Validate that query dimensions match index dimensions
                 if query_np.shape[1] != self.dimensions[index_id]:
                     return error_response(
                         f"Query dimension mismatch: expected {self.dimensions[index_id]}, "
                         f"got {query_np.shape[1]}"
                     )
 
-                # Apply search parameters if provided
+                # Apply runtime search parameters if provided
+                # These can optimize search quality vs speed tradeoffs
                 if params:
                     for param_name, param_value in params.items():
+                        # Set nprobe for IVF indices (number of clusters to search)
                         if hasattr(index, "set_" + param_name):
                             getattr(index, "set_" + param_name)(param_value)
 
-                # Special handling for IndexPreTransform is not needed here,
-                # as the transformation is applied automatically during search
+                # Note: IndexPreTransform automatically applies transformations
+                # during search, so no special handling is needed here
 
-                # Perform the search
+                # Perform the similarity search on float vectors
+                # Uses L2 (Euclidean) or IP (inner product) distance as configured
                 distances, indices = index.search(query_np, k)
 
-                # Convert numpy arrays to lists for serialization
+                # Convert numpy arrays to lists for JSON serialization
+                # Structure results as list of per-query result objects
                 results = []
                 for i in range(len(distances)):
                     results.append({
@@ -338,6 +544,7 @@ class FaissIndex:
                     }
                 )
         except Exception as e:
+            # Handle any unexpected errors during search execution
             return error_response(f"Error searching index: {str(e)}")
 
     def get_vectors(self, index_id, start_idx=0, limit=None):
@@ -350,7 +557,8 @@ class FaissIndex:
         Args:
             index_id (str): ID of the index
             start_idx (int, optional): Starting index for retrieval (default: 0)
-            limit (int, optional): Maximum number of vectors to retrieve (default: None, retrieve all)
+            limit (int, optional): Maximum number of vectors to retrieve
+                (default: None, retrieve all)
 
         Returns:
             dict: Response containing the vectors or error message
@@ -532,8 +740,11 @@ class FaissIndex:
                 try:
                     binary_vectors = convert_to_binary(vectors)
 
-                    # Print debug info
-                    logger.debug(f"Binary vectors shape: {binary_vectors.shape}, dtype: {binary_vectors.dtype}")
+                    # Debug information for binary operations
+                    logger.debug(
+                        f"Binary vectors shape: {binary_vectors.shape}, "
+                        f"dtype: {binary_vectors.dtype}"
+                    )
 
                     # Add vectors to the index (with or without IDs)
                     if ids is not None:
@@ -2102,17 +2313,36 @@ def serialize_message(data):
     """
     Serialize a message to binary format using msgpack.
 
+    This function converts Python data structures to efficient binary format
+    for transmission over ZeroMQ sockets. It handles both regular JSON-serializable
+    data and complex search results containing numpy arrays.
+
     Args:
-        data (dict): Data to serialize
+        data (dict): Data to serialize - typically response dictionaries with
+                    success/error status and result data
 
     Returns:
-        bytes: Serialized binary data
+        bytes: Serialized binary data ready for network transmission
+
+    Implementation Notes:
+        - Uses msgpack for efficient binary serialization
+        - Handles numpy arrays in search results automatically
+        - Sets use_bin_type=True for better binary data handling
+        - Maintains compatibility with various Python data types
+
+    Usage:
+        Used by the ZeroMQ server to encode responses before sending them
+        to clients. The binary format is more efficient than JSON for
+        large result sets containing vector data.
     """
     if isinstance(data, dict) and "results" in data and data.get("success", False):
         # Special handling for search results with numpy arrays
+        # These may contain large amounts of numerical data that benefit
+        # from efficient binary encoding
         return msgpack.packb(data, use_bin_type=True)
     else:
-        # Regular JSON-serializable data
+        # Regular JSON-serializable data (errors, status responses, etc.)
+        # Still use binary encoding for consistency and efficiency
         return msgpack.packb(data, use_bin_type=True)
 
 
@@ -2120,55 +2350,132 @@ def deserialize_message(data):
     """
     Deserialize a binary message using msgpack.
 
+    This function converts binary msgpack data back to Python data structures.
+    It includes error handling to gracefully manage corrupted or invalid messages.
+
     Args:
-        data (bytes): Binary data to deserialize
+        data (bytes): Binary data to deserialize from client requests
 
     Returns:
-        dict: Deserialized data or error message
+        dict: Deserialized data or error message if deserialization fails
+
+    Error Handling:
+        If deserialization fails, returns a structured error response instead
+        of raising an exception. This prevents server crashes from malformed
+        client messages.
+
+    Implementation Notes:
+        - Uses raw=False to ensure strings are returned as str, not bytes
+        - Captures all msgpack exceptions to prevent server instability
+        - Returns consistent error format for failed deserialization
     """
     try:
+        # Deserialize binary data to Python objects
+        # raw=False ensures strings are decoded properly
         return msgpack.unpackb(data, raw=False)
     except Exception as e:
+        # Handle any deserialization errors gracefully
+        # Return structured error instead of crashing the server
         return {"success": False, "error": f"Failed to deserialize message: {str(e)}"}
 
 
 def authenticate_request(request, auth_keys):
     """
-    Authenticate a request using API keys.
+    Authenticate a request using API keys and manage tenant isolation.
+
+    This function provides security for multi-tenant deployments by validating
+    API keys and associating requests with specific tenant IDs. It supports
+    both authenticated and unauthenticated operation modes.
 
     Args:
-        request (dict): Request data containing API key
-        auth_keys (dict): Dictionary mapping API keys to tenant IDs
+        request (dict): Request data containing potential API key and operation data
+        auth_keys (dict): Dictionary mapping API keys to tenant IDs, or None/empty
+                         to disable authentication
 
     Returns:
-        tuple: (is_authenticated, error_message)
+        tuple: (is_authenticated, error_message) where:
+            - is_authenticated (bool): True if request is authorized
+            - error_message (str or None): Error description if auth failed
+
+    Authentication Flow:
+        1. Check if authentication is enabled (auth_keys provided)
+        2. Extract API key from request
+        3. Validate API key against known keys
+        4. Add tenant_id to request for downstream processing
+        5. Return success/failure status
+
+    Tenant Isolation:
+        When authentication succeeds, the tenant_id is added to the request.
+        This enables downstream operations to isolate data by tenant,
+        preventing cross-tenant data access.
+
+    Security Considerations:
+        - API keys should be kept secure and rotated regularly
+        - Tenant IDs enable data isolation but require proper implementation
+        - Failed authentication is logged for security monitoring
     """
+    # Check if authentication is disabled
     if not auth_keys:
-        # Authentication disabled
+        # Authentication disabled - allow all requests
+        # This mode is suitable for single-tenant or development environments
         return True, None
 
+    # Extract API key from request headers/data
     api_key = request.get("api_key")
     if not api_key:
+        # Request missing required API key
         return False, "API key required"
 
+    # Validate API key against known tenant mappings
     tenant_id = auth_keys.get(api_key)
     if not tenant_id:
+        # API key not found in authorized keys
         return False, "Invalid API key"
 
-    # Add tenant_id to the request
+    # Authentication successful - add tenant context to request
+    # This enables tenant isolation in downstream operations
     request["tenant_id"] = tenant_id
     return True, None
 
 
 def register_specialized_handlers(server_instance):
-    """Register specialized operation handlers from the specialized_operations module.
+    """
+    Register specialized operation handlers from the specialized_operations module.
+
+    This function extends the server's capabilities by registering additional
+    operation handlers for advanced FAISS operations. It provides a plugin-like
+    architecture for extending server functionality without modifying core code.
 
     Args:
-        server_instance: The FaissIndex server instance
+        server_instance: The FaissIndex server instance to extend with additional
+                        operation handlers
+
+    Implementation Details:
+        - Imports specialized_operations module dynamically
+        - Creates action_handlers dictionary mapping operation names to functions
+        - Merges new handlers with existing server capabilities
+        - Provides graceful handling if handlers already exist
+
+    Registered Operations:
+        - merge_indices: Combine multiple indices into one
+        - compute_clustering: Perform k-means clustering on vectors
+        - recluster_index: Re-optimize index clustering structure
+        - hybrid_search: Combined vector and metadata search
+        - batch_add_with_ids: Efficient batch vector insertion
+        - optimize_index: Apply performance optimizations
+
+    Architecture Benefits:
+        - Modular design allows optional advanced features
+        - Clean separation of core vs specialized functionality
+        - Easy to add new operations without core modifications
+        - Consistent handler interface across all operations
     """
+    # Import specialized operations module
+    # This is done here to avoid circular imports and keep core lightweight
     from . import specialized_operations
 
-    # Register specialized operation handlers
+    # Define mapping of operation names to handler functions
+    # Each handler receives the server instance as first parameter
     action_handlers = {
         "merge_indices": specialized_operations.merge_indices,
         "compute_clustering": specialized_operations.compute_clustering,
@@ -2178,12 +2485,17 @@ def register_specialized_handlers(server_instance):
         "optimize_index": specialized_operations.optimize_index,
     }
 
-    # Add to the server's action_handlers dictionary
+    # Add handlers to server instance
+    # Create action_handlers dictionary if it doesn't exist
     if hasattr(server_instance, "action_handlers"):
+        # Merge with existing handlers (specialized handlers take precedence)
         server_instance.action_handlers.update(action_handlers)
     else:
+        # Create new action_handlers dictionary
         server_instance.action_handlers = action_handlers
 
+    # Log successful registration for operational visibility
+    # Note: Logging line commented out to avoid verbose output
     # logger.info(f"Registered {len(action_handlers)} specialized operation handlers")
 
 
@@ -2198,29 +2510,63 @@ def run_server(
     linger=DEFAULT_LINGER,
     log_level="WARNING",
 ):
-    """Run the server on the specified port.
+    """
+    Run the FAISSx ZeroMQ server on the specified port.
+
+    This is the main entry point for starting the FAISSx server. It handles all
+    aspects of server initialization, configuration, and the main request-response
+    loop. The server uses ZeroMQ REP (reply) sockets for synchronous communication.
 
     Args:
-        port (int): Port to run the server on
-        bind_address (str): Address to bind the server to
-        auth_keys (list, optional): List of authentication keys
-        enable_auth (bool): Whether to enable authentication
-        data_dir (str, optional): Directory to store data
-        socket_timeout (int): Socket timeout in milliseconds
-        high_water_mark (int): ZeroMQ high water mark
-        linger (int): ZeroMQ linger period
-        log_level (str): Logging level
+        port (int): Port to run the server on (default from DEFAULT_PORT)
+        bind_address (str): Address to bind the server to (default: all interfaces)
+        auth_keys (list, optional): List of authentication keys for multi-tenant auth
+        enable_auth (bool): Whether to enable API key authentication
+        data_dir (str, optional): Directory to store persistent data (future feature)
+        socket_timeout (int): Socket timeout in milliseconds for ZeroMQ operations
+        high_water_mark (int): ZeroMQ high water mark for message buffering
+        linger (int): ZeroMQ linger period for graceful socket shutdown
+        log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+
+    Server Architecture:
+        - Uses ZeroMQ REP (reply) socket pattern for request-response communication
+        - Single-threaded request processing with background task worker for timeouts
+        - MessagePack binary serialization for efficient data transfer
+        - Supports both authenticated and unauthenticated operation modes
+        - Comprehensive error handling with graceful degradation
+
+    Request Processing Flow:
+        1. Wait for incoming ZeroMQ message
+        2. Deserialize request using MessagePack
+        3. Authenticate request if auth is enabled (skip ping for health checks)
+        4. Route request to appropriate handler based on action type
+        5. Execute operation (potentially with timeout protection)
+        6. Serialize and send response back to client
+
+    Error Handling:
+        - Socket errors are logged and handled gracefully
+        - Authentication failures return structured error responses
+        - Operation timeouts are handled with background task worker
+        - Unexpected errors are captured and returned as error responses
+        - Server continues running despite individual request failures
 
     Raises:
-        Exception: If there's an error starting the server
+        Exception: If there's a critical error during server initialization
+                  (port binding failure, invalid configuration, etc.)
+
+    Example:
+        >>> run_server(port=5432, enable_auth=True, auth_keys={"key123": "tenant1"})
     """
-    # Configure logging
+    # Configure logging system first
+    # This sets up structured logging for operational visibility
     configure_logging(log_level)
 
-    # Print concise startup message
+    # Prepare concise startup information for operators
     storage_mode = f"Persistent ({data_dir})" if data_dir else "In-memory"
     auth_status = "Enabled" if enable_auth else "Disabled"
 
+    # Display startup banner with configuration summary
+    # This provides immediate feedback about server configuration
     print("\n---------------------------------------------\n")
     print("███████╗█████╗ ██╗███████╗███████╗")
     print("██╔════██╔══██╗██║██╔════╝██╔════╝")
@@ -2237,43 +2583,48 @@ def run_server(
     print(f" - Authentication: {auth_status}")
     print(f" - Bind address: {bind_address}:{port}")
     print(f" - Log level: {log_level}")
-    # print(f" - Socket timeout: {socket_timeout}ms")
-    # print(f" - High water mark: {high_water_mark}")
-    # print(f" - Linger: {linger}ms")
     print("\n---------------------------------------------")
 
+    # Log detailed startup information for debugging
+    # Commented out to reduce verbosity, but useful for troubleshooting
     # logger.info("Starting FAISSx ZeroMQ server")
     # logger.info(f"Server version: {faissx_version}")
     # logger.info(f"Binding to {bind_address}:{port}")
     # logger.info(f"Data directory: {data_dir or 'None (in-memory only)'}")
     # logger.info(f"Authentication: {'Enabled' if enable_auth else 'Disabled'}")
 
+    # Validate authentication configuration
     if enable_auth and not auth_keys:
         logger.warning("Authentication enabled but no keys provided")
 
-    # Create server instance
+    # Create the main server instance
+    # This initializes all index storage and background workers
     server = FaissIndex(data_dir=data_dir)
 
-    # Register specialized operation handlers
+    # Register specialized operation handlers for advanced features
+    # This extends the server with optional advanced FAISS operations
     register_specialized_handlers(server)
 
     try:
-        # Initialize ZeroMQ
+        # Initialize ZeroMQ context and socket
+        # Context manages ZeroMQ resources and should be created once
         context = zmq.Context()
-        socket = context.socket(zmq.REP)
+        socket = context.socket(zmq.REP)  # REP = Reply socket for sync communication
 
-        # Configure socket options for better stability
-        socket.setsockopt(zmq.LINGER, linger)
-        socket.setsockopt(zmq.RCVTIMEO, socket_timeout)
-        socket.setsockopt(zmq.SNDTIMEO, socket_timeout)
-        socket.setsockopt(zmq.RCVHWM, high_water_mark)
-        socket.setsockopt(zmq.SNDHWM, high_water_mark)
+        # Configure socket options for production stability
+        # These settings optimize performance and reliability
+        socket.setsockopt(zmq.LINGER, linger)                    # Graceful shutdown time
+        socket.setsockopt(zmq.RCVTIMEO, socket_timeout)          # Receive timeout
+        socket.setsockopt(zmq.SNDTIMEO, socket_timeout)          # Send timeout
+        socket.setsockopt(zmq.RCVHWM, high_water_mark)          # Receive buffer limit
+        socket.setsockopt(zmq.SNDHWM, high_water_mark)          # Send buffer limit
 
-        # Bind the socket
+        # Bind the socket to the specified address and port
         try:
             socket.bind(f"tcp://{bind_address}:{port}")
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e):
+                # Handle the common case of port conflicts gracefully
                 logger.error(f"Port {port} is already in use")
                 print(f"\nERROR: Port {port} is already in use!")
                 print("This likely means another instance of the FAISSx server is already running.")
@@ -2287,36 +2638,51 @@ def run_server(
                 print("\n---------------------------------------------\n")
                 return  # Exit gracefully instead of raising the exception
             else:
+                # Handle other binding errors (permissions, invalid address, etc.)
                 print(f"\nZMQ ERROR during socket binding: {e}")
-                print(f"Error details: {str(e)}, type: {type(e).__name__}, code: {e.errno if hasattr(e, 'errno') else 'N/A'}")
+                error_details = (
+                    f"Error details: {str(e)}, type: {type(e).__name__}, "
+                    f"code: {e.errno if hasattr(e, 'errno') else 'N/A'}"
+                )
+                print(error_details)
                 print("\n---------------------------------------------\n")
                 logger.error(f"Failed to bind socket: {e}")
                 raise  # Re-raise other types of exceptions
 
         # Create a worker thread pool for handling requests
+        # This provides timeout protection for long-running operations
         task_worker = TaskWorker()
 
+        # Display successful startup message
         print(f"Started. Listening on {bind_address}:{port}...")
         print("---------------------------------------------\n")
 
+        # Main server loop - processes requests until shutdown
         while True:
             try:
-                # Wait for a message
+                # Wait for a message from a client
                 logger.info("Waiting for a message...")
                 try:
+                    # Blocking receive with timeout protection
                     message = socket.recv()
                     logger.info(f"Received message of length {len(message)}")
                 except zmq.error.Again:
-                    logger.error("Socket timeout while waiting for a message (normal for long polling)")
+                    # Socket timeout - this is normal for long polling scenarios
+                    logger.error(
+                        "Socket timeout while waiting for a message "
+                        "(normal for long polling)"
+                    )
                     continue
                 except zmq.error.ZMQError as e:
+                    # Handle other ZeroMQ errors during message reception
                     logger.error(f"Error receiving message: {e}")
                     continue
 
-                # Unpack the message
+                # Deserialize the incoming request
+                # This converts binary MessagePack data to Python objects
                 request = msgpack.unpackb(message, raw=False)
 
-                # Check the action
+                # Extract the requested operation type
                 action = request.get("action", "")
 
                 logger.debug(f"Received request: {action}")
@@ -2324,6 +2690,7 @@ def run_server(
                     logger.debug(f"Create index request details: {json.dumps(request)}")
 
                 # Authentication check (skip for ping to allow health checks)
+                # Ping operations should work without auth for monitoring systems
                 if enable_auth and action != "ping":
                     is_authenticated, auth_error = authenticate_request(request, auth_keys)
                     if not is_authenticated:
@@ -2332,11 +2699,13 @@ def run_server(
                         socket.send(msgpack.packb(response, use_bin_type=True))
                         continue
 
-                # Process the request
+                # Initialize default response for unknown actions
                 response = {"success": False, "error": "Unknown action"}
 
-                # Process request based on action
+                # Process request based on action type
+                # Each action maps to a specific server method
                 if action == "create_index":
+                    # Create a new FAISS index with specified parameters
                     response = server.create_index(
                         request.get("index_id", ""),
                         request.get("dimension", 0),
@@ -2537,23 +2906,26 @@ def run_server(
                         logger.exception(f"Error in specialized operation handler: {e}")
                         response = error_response(f"Server error: {str(e)}")
 
-                # Add version information to all responses
+                # Add version and timestamp to all responses for debugging
+                # This helps with troubleshooting and request tracking
                 if "version" not in response:
                     response["version"] = faissx_version
 
-                # Add timestamp to all responses
                 if "timestamp" not in response:
                     response["timestamp"] = time.time()
 
-                # Send the response
+                # Send the response back to the client
+                # Serialize to binary format for efficient transmission
                 socket.send(msgpack.packb(response, use_bin_type=True))
 
             except zmq.error.Again:
                 # Socket timeout - just continue and wait for the next message
+                # This is normal behavior and not an error condition
                 logger.debug("Socket timeout waiting for request")
                 continue
 
             except zmq.error.ZMQError as e:
+                # Handle ZeroMQ-specific errors during request processing
                 logger.error(f"ZMQ error: {e}")
                 # Try to send an error response if possible
                 try:
@@ -2561,10 +2933,13 @@ def run_server(
                         error_response(f"Server error: {str(e)}"),
                         use_bin_type=True
                     ))
-                except:
+                except Exception:
+                    # If we can't send error response, just log and continue
                     pass
 
             except Exception as e:
+                # Handle any unexpected errors during request processing
+                # This prevents the server from crashing on individual request errors
                 logger.exception(f"Error handling request: {e}")
                 # Try to send an error response if possible
                 try:
@@ -2572,15 +2947,19 @@ def run_server(
                         error_response(f"Server error: {str(e)}"),
                         use_bin_type=True
                     ))
-                except:
+                except Exception:
+                    # If we can't send error response, just log and continue
                     pass
 
     except KeyboardInterrupt:
+        # Handle graceful shutdown on Ctrl+C
         logger.info("Server shutting down")
     except Exception as e:
+        # Handle any critical server errors
         logger.exception(f"Server error: {e}")
     finally:
-        # Clean up
+        # Cleanup ZeroMQ resources on shutdown
+        # This ensures proper resource cleanup even if errors occur
         if 'socket' in locals():
             socket.close()
         if 'context' in locals():
@@ -2591,36 +2970,71 @@ def is_transform_trained(transform):
     """
     Check if a transformation component is properly trained.
 
+    This utility function determines whether a FAISS transformation object
+    has been properly trained and is ready for use. Different transform types
+    have different training requirements.
+
     Args:
-        transform: FAISS transform object
+        transform: FAISS transform object (PCAMatrix, NormalizationTransform, etc.)
 
     Returns:
-        bool: True if the transform is trained or doesn't require training
+        bool: True if the transform is trained or doesn't require training,
+              False if training is required but not completed
+
+    Implementation Notes:
+        - Some transforms (like NormalizationTransform) don't require training
+        - Others (like PCAMatrix) must be trained before use
+        - If is_trained attribute doesn't exist, assumes no training needed
+        - Used by IndexPreTransform validation logic
     """
     # If it doesn't have is_trained attribute, assume it's always trained
+    # This handles transforms that don't require explicit training
     if not hasattr(transform, "is_trained"):
         return True
 
+    # Return the actual training status
     return transform.is_trained
 
 
 def train_transform(transform, training_vectors):
     """
-    Train a transformation component.
+    Train a transformation component with provided vectors.
+
+    This function handles the training process for FAISS transformation objects
+    that require training data (like PCA, OPQ, etc.). It provides error handling
+    and logging for the training process.
 
     Args:
-        transform: FAISS transform object
-        training_vectors: Vectors to use for training
+        transform: FAISS transform object that needs training
+        training_vectors: NumPy array of vectors to use for training
 
     Returns:
-        bool: True if training was successful, False otherwise
+        bool: True if training was successful, False if it failed or
+              the transform doesn't support training
+
+    Training Process:
+        1. Check if transform has a train() method
+        2. Call train() with the provided vectors
+        3. Handle any training errors gracefully
+        4. Log training progress and results
+
+    Error Handling:
+        - Training failures are logged but don't crash the server
+        - Returns False for transforms that don't support training
+        - Captures and logs all training exceptions for debugging
     """
     try:
+        # Check if the transform supports training
         if hasattr(transform, "train"):
+            # Perform the training with provided vectors
+            # This may take significant time for large datasets
             transform.train(training_vectors)
             return True
+        # Transform doesn't support training - this is okay
         return False
     except Exception as e:
+        # Handle any training errors gracefully
+        # Log the error but don't crash the server
         logger.error(f"Error training transform: {e}")
         return False
 

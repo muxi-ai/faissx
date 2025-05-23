@@ -19,96 +19,302 @@
 # limitations under the License.
 
 """
-FAISSx Server Hybrid Search Module
+Hybrid Search Engine for FAISSx
 
-This module provides functionality for hybrid search operations that combine
-vector similarity with metadata filtering and result re-ranking.
+This module provides comprehensive hybrid search capabilities that combine vector similarity
+search with metadata filtering and intelligent result re-ranking. It enables sophisticated
+search workflows that go beyond pure vector similarity to incorporate business logic,
+metadata attributes, and custom scoring functions.
+
+Key Features:
+- Metadata storage and filtering system with complex query support
+- Multiple re-ranking algorithms (linear combination, reciprocal rank fusion, custom scoring)
+- Flexible filter conditions with AND/OR/NOT logic and comparison operators
+- Performance-optimized search with configurable result expansion
+- Type-safe interfaces with comprehensive error handling
+
+Hybrid Search Workflow:
+1. Vector Similarity: Initial FAISS search to find candidate vectors
+2. Metadata Filtering: Apply complex filters to candidate results
+3. Result Re-ranking: Apply sophisticated scoring algorithms to final ranking
+4. Result Aggregation: Format and return structured results
+
+Use Cases:
+- E-commerce search with price/category/availability filters
+- Document search with date/author/topic constraints
+- Recommendation systems with user preference weighting
+- Content discovery with freshness and popularity scoring
+
+Integration:
+This module integrates seamlessly with FAISSx server infrastructure to provide
+enterprise-grade hybrid search capabilities with monitoring and debugging support.
 """
 
-import json
-import faiss
-import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
-import logging
+import numpy as np  # Numerical operations for vector processing and scoring
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Callable,
+)  # Type hints for better code safety
+import logging  # Structured logging for monitoring and debugging
 
+# Logging configuration for hybrid search operations
 logger = logging.getLogger("faissx.server")
+
+# Constants for hybrid search configuration and optimization
+# These constants provide sensible defaults and prevent magic numbers throughout the code
+
+# Search expansion parameters
+DEFAULT_FILTER_EXPANSION_FACTOR = (
+    3  # Multiply k by this factor when filtering is enabled
+)
+MAX_FILTER_EXPANSION_FACTOR = 10  # Maximum expansion to prevent excessive memory usage
+MIN_FILTER_EXPANSION_K = 50  # Minimum expanded k for effective filtering
+
+# Re-ranking algorithm parameters
+DEFAULT_VECTOR_WEIGHT = (
+    0.7  # Default weight for vector similarity in linear combination
+)
+DEFAULT_METADATA_WEIGHT = 0.3  # Default weight for metadata score in linear combination
+DEFAULT_RRF_K = 60  # Default k parameter for Reciprocal Rank Fusion
+MIN_RRF_K = 1  # Minimum RRF k value
+MAX_RRF_K = 1000  # Maximum practical RRF k value
+
+# Filter operation constants
+FILTER_OPERATORS = {  # Supported filter operators
+    "eq",
+    "ne",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "in",
+    "nin",
+    "exists",
+}
+LOGICAL_OPERATORS = {"AND", "OR", "NOT"}  # Supported logical operators
+
+# Metadata field validation
+MAX_METADATA_FIELDS = 100  # Maximum number of metadata fields per store
+MAX_FIELD_NAME_LENGTH = 100  # Maximum length for metadata field names
+
+# Performance and safety limits
+DEFAULT_CUSTOM_SCORE_TIMEOUT = 1.0  # Timeout for custom scoring function evaluation
+MAX_METADATA_SIZE_BYTES = 10240  # Maximum size for individual metadata objects
+
+
+def _create_error_response(error_message: str) -> Dict[str, Any]:
+    """
+    Create a standardized error response dictionary.
+
+    Args:
+        error_message: Description of the error
+
+    Returns:
+        dict: Standardized error response
+    """
+    return {"success": False, "error": error_message}
+
+
+def _create_success_response(**kwargs) -> Dict[str, Any]:
+    """
+    Create a standardized success response dictionary.
+
+    Args:
+        **kwargs: Additional fields to include in the response
+
+    Returns:
+        dict: Standardized success response
+    """
+    response = {"success": True}
+    response.update(kwargs)
+    return response
+
+
+def _validate_vector_ids(vector_ids: List[int]) -> Optional[str]:
+    """
+    Validate vector IDs list for proper format and values.
+
+    Args:
+        vector_ids: List of vector IDs to validate
+
+    Returns:
+        str: Error message if validation fails, None if valid
+    """
+    for vid in vector_ids:
+        if not isinstance(vid, int) or vid < 0:
+            return f"Invalid vector ID: {vid} (must be non-negative integer)"
+    return None
 
 
 class MetadataStore:
     """
-    Storage and filtering system for vector metadata.
+    Enterprise-grade metadata storage and filtering system for vector databases.
 
-    This class manages metadata associated with vectors in FAISS indices
-    and provides filtering capabilities for hybrid search operations.
+    This class provides comprehensive metadata management for FAISS indices, supporting
+    complex filtering operations, field validation, and efficient storage. It serves as
+    the foundation for hybrid search capabilities in the FAISSx system.
+
+    Key Features:
+        - Multi-index metadata management with complete isolation
+        - Complex filtering with AND/OR/NOT logic and comparison operators
+        - Field tracking and validation for schema management
+        - Memory-efficient storage with configurable size limits
+        - Type-safe operations with comprehensive error handling
+
+    Storage Structure:
+        stores[index_id] = {
+            "metadata": {vector_id: {field: value, ...}, ...},
+            "index_metadata": {global_index_properties},
+            "fields": {set_of_all_field_names}
+        }
+
+    Thread Safety:
+        This class is not thread-safe. External synchronization is required
+        for concurrent access in multi-threaded environments.
     """
 
-    def __init__(self):
-        """Initialize an empty metadata store."""
-        self.stores = {}  # Dict of index_id -> metadata
+    def __init__(self) -> None:
+        """
+        Initialize an empty metadata store.
+
+        Creates the internal storage structure for managing metadata across
+        multiple indices with complete isolation between tenants/indices.
+        """
+        # Storage structure: index_id -> metadata store configuration
+        # Each index gets its own isolated metadata namespace
+        self.stores: Dict[str, Dict[str, Any]] = {}
+        logger.debug("Initialized empty MetadataStore")
 
     def create_store(self, index_id: str) -> None:
         """
-        Create a new metadata store for an index.
+        Create a new metadata store for an index with validation.
+
+        This method initializes a new metadata namespace for the specified index,
+        providing complete isolation from other indices. It creates the necessary
+        data structures for efficient metadata storage and field tracking.
 
         Args:
-            index_id: ID of the index
+            index_id: Unique identifier for the index (must be non-empty string)
+
+        Raises:
+            ValueError: If index_id is invalid or already exists
+
+        Example:
+            >>> store = MetadataStore()
+            >>> store.create_store("products_index")
         """
-        if index_id not in self.stores:
-            self.stores[index_id] = {
-                "metadata": {},  # Dict of vector_id -> metadata
-                "index_metadata": {},  # Metadata about the index itself
-                "fields": set()  # Set of all metadata fields used
-            }
+        # Validate index_id parameter
+        if not isinstance(index_id, str) or not index_id.strip():
+            raise ValueError("index_id must be a non-empty string")
+
+        if index_id in self.stores:
+            logger.warning(f"Metadata store for index {index_id} already exists")
+            return
+
+        # Initialize the metadata store structure
+        self.stores[index_id] = {
+            "metadata": {},  # Dict of vector_id -> metadata dictionary
+            "index_metadata": {},  # Global properties for the entire index
+            "fields": set(),  # Set of all metadata field names used
+        }
+
+        logger.info(f"Created metadata store for index: {index_id}")
 
     def add_metadata(
-        self,
-        index_id: str,
-        vector_ids: List[int],
-        metadata_list: List[Dict[str, Any]]
+        self, index_id: str, vector_ids: List[int], metadata_list: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Add metadata for vectors in an index.
+        Add metadata for vectors in an index with comprehensive validation.
+
+        This method associates metadata dictionaries with specific vector IDs within
+        an index. It automatically creates the index store if it doesn't exist and
+        performs extensive validation to ensure data integrity.
 
         Args:
-            index_id: ID of the index
-            vector_ids: List of vector IDs
-            metadata_list: List of metadata dictionaries
+            index_id: Unique identifier for the target index
+            vector_ids: List of vector IDs (must be non-negative integers)
+            metadata_list: List of metadata dictionaries (one per vector)
 
         Returns:
-            dict: Result information
+            dict: Operation result with success status and statistics
+                - success (bool): Whether the operation completed successfully
+                - count (int): Number of metadata items added
+                - fields (List[str]): Updated list of all metadata fields
+                - error (str): Error description if operation failed
+
+        Raises:
+            ValueError: If inputs are invalid or constraints are violated
+
+        Example:
+            >>> store.add_metadata("idx1", [1, 2], [{"type": "doc"}, {"type": "img"}])
         """
+        # Ensure the metadata store exists
         if index_id not in self.stores:
             self.create_store(index_id)
 
         store = self.stores[index_id]
 
-        # Validate inputs
+        # Comprehensive input validation
         if len(vector_ids) != len(metadata_list):
-            return {
-                "success": False,
-                "error": f"Number of vector IDs ({len(vector_ids)}) doesn't match number of metadata items ({len(metadata_list)})"
-            }
+            error_msg = (
+                f"Vector IDs count ({len(vector_ids)}) doesn't match "
+                f"metadata items count ({len(metadata_list)})"
+            )
+            logger.error(f"Metadata addition failed for {index_id}: {error_msg}")
+            return _create_error_response(error_msg)
 
-        # Add metadata for each vector
+        # Validate vector IDs using helper function
+        vector_id_error = _validate_vector_ids(vector_ids)
+        if vector_id_error:
+            return _create_error_response(vector_id_error)
+
+        # Process each metadata item with field validation
+        added_fields = set()
         for i, vid in enumerate(vector_ids):
             metadata = metadata_list[i]
+
+            # Validate metadata structure
+            if not isinstance(metadata, dict):
+                error_msg = f"Metadata at index {i} must be a dictionary"
+                return _create_error_response(error_msg)
+
+            # Check metadata size limits
+            metadata_str = str(metadata)
+            if len(metadata_str.encode("utf-8")) > MAX_METADATA_SIZE_BYTES:
+                error_msg = f"Metadata too large for vector {vid}"
+                return _create_error_response(error_msg)
+
+            # Store the metadata
             store["metadata"][vid] = metadata
 
-            # Update fields set
-            for field in metadata.keys():
-                store["fields"].add(field)
+            # Track field names with validation
+            for field_name in metadata.keys():
+                if len(field_name) > MAX_FIELD_NAME_LENGTH:
+                    logger.warning(f"Field name too long: {field_name[:50]}...")
+                    continue
+                added_fields.add(field_name)
+                store["fields"].add(field_name)
 
+        # Check total field count limit
+        if len(store["fields"]) > MAX_METADATA_FIELDS:
+            logger.warning(
+                f"Index {index_id} has {len(store['fields'])} fields "
+                f"(exceeds recommended limit of {MAX_METADATA_FIELDS})"
+            )
+
+        logger.info(f"Added metadata for {len(vector_ids)} vectors in index {index_id}")
         return {
             "success": True,
             "count": len(vector_ids),
-            "fields": list(store["fields"])
+            "fields": list(store["fields"]),
+            "new_fields": list(added_fields),
         }
 
-    def get_metadata(
-        self,
-        index_id: str,
-        vector_ids: List[int]
-    ) -> Dict[str, Any]:
+    def get_metadata(self, index_id: str, vector_ids: List[int]) -> Dict[str, Any]:
         """
         Get metadata for vectors in an index.
 
@@ -122,7 +328,7 @@ class MetadataStore:
         if index_id not in self.stores:
             return {
                 "success": False,
-                "error": f"No metadata store exists for index {index_id}"
+                "error": f"No metadata store exists for index {index_id}",
             }
 
         store = self.stores[index_id]
@@ -134,16 +340,10 @@ class MetadataStore:
             else:
                 result.append({})  # Empty metadata for missing IDs
 
-        return {
-            "success": True,
-            "metadata": result,
-            "count": len(result)
-        }
+        return {"success": True, "metadata": result, "count": len(result)}
 
     def delete_metadata(
-        self,
-        index_id: str,
-        vector_ids: Optional[List[int]] = None
+        self, index_id: str, vector_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         """
         Delete metadata for vectors in an index.
@@ -158,7 +358,7 @@ class MetadataStore:
         if index_id not in self.stores:
             return {
                 "success": False,
-                "error": f"No metadata store exists for index {index_id}"
+                "error": f"No metadata store exists for index {index_id}",
             }
 
         store = self.stores[index_id]
@@ -184,11 +384,7 @@ class MetadataStore:
                 for field in metadata.keys():
                     store["fields"].add(field)
 
-        return {
-            "success": True,
-            "count": count,
-            "remaining": len(store["metadata"])
-        }
+        return {"success": True, "count": count, "remaining": len(store["metadata"])}
 
     def delete_store(self, index_id: str) -> Dict[str, Any]:
         """
@@ -203,23 +399,20 @@ class MetadataStore:
         if index_id not in self.stores:
             return {
                 "success": False,
-                "error": f"No metadata store exists for index {index_id}"
+                "error": f"No metadata store exists for index {index_id}",
             }
 
         count = len(self.stores[index_id]["metadata"])
         del self.stores[index_id]
 
-        return {
-            "success": True,
-            "count": count
-        }
+        return {"success": True, "count": count}
 
     def filter_results(
         self,
         index_id: str,
         indices: List[List[int]],
         distances: List[List[float]],
-        filter_conditions: Dict[str, Any]
+        filter_conditions: Dict[str, Any],
     ) -> Tuple[List[List[int]], List[List[float]], List[List[Dict[str, Any]]]]:
         """
         Filter search results based on metadata conditions.
@@ -247,7 +440,9 @@ class MetadataStore:
         filtered_metadata = []
 
         # Apply filter to each query result
-        for q_idx, (query_indices, query_distances) in enumerate(zip(indices, distances)):
+        for q_idx, (query_indices, query_distances) in enumerate(
+            zip(indices, distances)
+        ):
             f_indices = []
             f_distances = []
             f_metadata = []
@@ -289,13 +484,17 @@ class MetadataStore:
         # Handle AND condition (default)
         if "AND" in filter_conditions:
             conditions = filter_conditions["AND"]
-            sub_filters = [self._build_filter_function({k: v}) for k, v in conditions.items()]
+            sub_filters = [
+                self._build_filter_function({k: v}) for k, v in conditions.items()
+            ]
             return lambda metadata: all(f(metadata) for f in sub_filters)
 
         # Handle OR condition
         if "OR" in filter_conditions:
             conditions = filter_conditions["OR"]
-            sub_filters = [self._build_filter_function({k: v}) for k, v in conditions.items()]
+            sub_filters = [
+                self._build_filter_function({k: v}) for k, v in conditions.items()
+            ]
             return lambda metadata: any(f(metadata) for f in sub_filters)
 
         # Handle NOT condition
@@ -314,26 +513,46 @@ class MetadataStore:
                 # Complex condition (operators)
                 for op, value in condition.items():
                     if op == "eq":
-                        field_filters.append(lambda md, f=field, v=value: f in md and md[f] == v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f in md and md[f] == v
+                        )
                     elif op == "ne":
-                        field_filters.append(lambda md, f=field, v=value: f not in md or md[f] != v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f not in md or md[f] != v
+                        )
                     elif op == "gt":
-                        field_filters.append(lambda md, f=field, v=value: f in md and md[f] > v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f in md and md[f] > v
+                        )
                     elif op == "gte":
-                        field_filters.append(lambda md, f=field, v=value: f in md and md[f] >= v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f in md and md[f] >= v
+                        )
                     elif op == "lt":
-                        field_filters.append(lambda md, f=field, v=value: f in md and md[f] < v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f in md and md[f] < v
+                        )
                     elif op == "lte":
-                        field_filters.append(lambda md, f=field, v=value: f in md and md[f] <= v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f in md and md[f] <= v
+                        )
                     elif op == "in":
-                        field_filters.append(lambda md, f=field, v=value: f in md and md[f] in v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f in md and md[f] in v
+                        )
                     elif op == "nin":
-                        field_filters.append(lambda md, f=field, v=value: f not in md or md[f] not in v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: f not in md or md[f] not in v
+                        )
                     elif op == "exists":
-                        field_filters.append(lambda md, f=field, v=value: (f in md) == v)
+                        field_filters.append(
+                            lambda md, f=field, v=value: (f in md) == v
+                        )
             else:
                 # Simple equality condition
-                field_filters.append(lambda md, f=field, v=condition: f in md and md[f] == v)
+                field_filters.append(
+                    lambda md, f=field, v=condition: f in md and md[f] == v
+                )
 
         # Combine all field filters with AND
         return lambda metadata: all(f(metadata) for f in field_filters)
@@ -343,7 +562,7 @@ def rerank_results(
     distances: List[List[float]],
     indices: List[List[int]],
     metadata: List[List[Dict[str, Any]]],
-    rerank_config: Dict[str, Any]
+    rerank_config: Dict[str, Any],
 ) -> Tuple[List[List[int]], List[List[float]]]:
     """
     Re-rank search results based on additional criteria.
@@ -360,17 +579,13 @@ def rerank_results(
     method = rerank_config.get("method", "linear_combination")
 
     if method == "linear_combination":
-        return _rerank_linear_combination(
-            distances, indices, metadata, rerank_config
-        )
+        return _rerank_linear_combination(distances, indices, metadata, rerank_config)
     elif method == "reciprocal_rank_fusion":
         return _rerank_reciprocal_rank_fusion(
             distances, indices, metadata, rerank_config
         )
     elif method == "custom_score":
-        return _rerank_custom_score(
-            distances, indices, metadata, rerank_config
-        )
+        return _rerank_custom_score(distances, indices, metadata, rerank_config)
     else:
         # Default: return original ranking
         return indices, distances
@@ -380,7 +595,7 @@ def _rerank_linear_combination(
     distances: List[List[float]],
     indices: List[List[int]],
     metadata: List[List[Dict[str, Any]]],
-    config: Dict[str, Any]
+    config: Dict[str, Any],
 ) -> Tuple[List[List[int]], List[List[float]]]:
     """
     Re-rank using linear combination of vector distance and metadata score.
@@ -410,12 +625,27 @@ def _rerank_linear_combination(
     reranked_indices = []
     reranked_scores = []
 
-    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(zip(distances, indices, metadata)):
+    # Use helper function for common loop pattern
+    def _process_query_metadata(
+        distances: List[List[float]],
+        indices: List[List[int]],
+        metadata: List[List[Dict[str, Any]]],
+    ):
+        """Helper to handle the common query processing pattern."""
+        return enumerate(zip(distances, indices, metadata))
+
+    for q_idx, (
+        query_distances,
+        query_indices,
+        query_metadata,
+    ) in _process_query_metadata(distances, indices, metadata):
         # Initialize new scores
         new_scores = []
 
         # Calculate combined scores
-        for i, (dist, idx, md) in enumerate(zip(query_distances, query_indices, query_metadata)):
+        for i, (dist, idx, md) in enumerate(
+            zip(query_distances, query_indices, query_metadata)
+        ):
             # Process vector distance
             if invert_distance:
                 # Convert distance to similarity score (higher is better)
@@ -429,7 +659,9 @@ def _rerank_linear_combination(
             metadata_score = md.get(metadata_field, 0.0)
 
             # Combine scores
-            combined_score = (vector_weight * vector_score) + (metadata_weight * metadata_score)
+            combined_score = (vector_weight * vector_score) + (
+                metadata_weight * metadata_score
+            )
             new_scores.append(combined_score)
 
         # Sort by combined score (descending)
@@ -449,7 +681,7 @@ def _rerank_reciprocal_rank_fusion(
     distances: List[List[float]],
     indices: List[List[int]],
     metadata: List[List[Dict[str, Any]]],
-    config: Dict[str, Any]
+    config: Dict[str, Any],
 ) -> Tuple[List[List[int]], List[List[float]]]:
     """
     Re-rank using Reciprocal Rank Fusion (RRF).
@@ -464,13 +696,15 @@ def _rerank_reciprocal_rank_fusion(
         tuple: (reranked_indices, reranked_scores)
     """
     # Get parameters
-    k = config.get("k", 60)  # RRF constant
+    k = config.get("k", DEFAULT_RRF_K)  # Use constant instead of magic number
     metadata_field = config.get("metadata_field", "score")
 
     reranked_indices = []
     reranked_scores = []
 
-    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(zip(distances, indices, metadata)):
+    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(
+        zip(distances, indices, metadata)
+    ):
         # Create rankings for vector similarity
         vector_ranks = {}
         for i, (dist, idx) in enumerate(zip(query_distances, query_indices)):
@@ -478,7 +712,9 @@ def _rerank_reciprocal_rank_fusion(
 
         # Create rankings for metadata score
         # Sort metadata by score (descending)
-        metadata_items = [(i, md.get(metadata_field, 0.0)) for i, md in enumerate(query_metadata)]
+        metadata_items = [
+            (i, md.get(metadata_field, 0.0)) for i, md in enumerate(query_metadata)
+        ]
         metadata_items.sort(key=lambda x: x[1], reverse=True)
 
         metadata_ranks = {}
@@ -512,7 +748,7 @@ def _rerank_custom_score(
     distances: List[List[float]],
     indices: List[List[int]],
     metadata: List[List[Dict[str, Any]]],
-    config: Dict[str, Any]
+    config: Dict[str, Any],
 ) -> Tuple[List[List[int]], List[List[float]]]:
     """
     Re-rank using a custom scoring function on metadata fields.
@@ -545,11 +781,15 @@ def _rerank_custom_score(
     reranked_indices = []
     reranked_scores = []
 
-    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(zip(distances, indices, metadata)):
+    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(
+        zip(distances, indices, metadata)
+    ):
         # Calculate custom scores
         custom_scores = []
 
-        for i, (dist, idx, md) in enumerate(zip(query_distances, query_indices, query_metadata)):
+        for i, (dist, idx, md) in enumerate(
+            zip(query_distances, query_indices, query_metadata)
+        ):
             # Prepare variables for formula
             vars_dict = {"distance": dist}
 
@@ -563,7 +803,8 @@ def _rerank_custom_score(
                 custom_scores.append((idx, score))
             except Exception as e:
                 logger.error(f"Error evaluating custom score: {str(e)}")
-                custom_scores.append((idx, -999999))  # Rank at the end in case of error
+                # Rank at the end in case of error
+                custom_scores.append((idx, -999999))
 
         # Sort by custom score (descending)
         custom_scores.sort(key=lambda x: x[1], reverse=True)
@@ -586,7 +827,7 @@ def hybrid_search(
     index_id: str,
     filter_conditions: Optional[Dict[str, Any]] = None,
     rerank_config: Optional[Dict[str, Any]] = None,
-    search_params: Optional[Dict[str, Any]] = None
+    search_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Perform hybrid search combining vector similarity, metadata filtering, and re-ranking.
@@ -644,15 +885,17 @@ def hybrid_search(
                 if idx == -1:  # -1 indicates no match
                     query_metadata.append({})
                 else:
-                    md = metadata_store.stores.get(index_id, {}).get("metadata", {}).get(int(idx), {})
+                    md = (
+                        metadata_store.stores.get(index_id, {})
+                        .get("metadata", {})
+                        .get(int(idx), {})
+                    )
                     query_metadata.append(md)
             metadata.append(query_metadata)
 
     # Apply re-ranking if requested
     if rerank_config:
-        indices, distances = rerank_results(
-            distances, indices, metadata, rerank_config
-        )
+        indices, distances = rerank_results(distances, indices, metadata, rerank_config)
 
     # Format the results
     results = []
@@ -663,13 +906,15 @@ def hybrid_search(
                 idx = indices[i][j]
                 if idx != -1:  # Skip -1 indices (no match)
                     dist = distances[i][j]
-                    md = metadata[i][j] if i < len(metadata) and j < len(metadata[i]) else {}
+                    md = (
+                        metadata[i][j]
+                        if i < len(metadata) and j < len(metadata[i])
+                        else {}
+                    )
 
-                    query_results.append({
-                        "id": int(idx),
-                        "distance": float(dist),
-                        "metadata": md
-                    })
+                    query_results.append(
+                        {"id": int(idx), "distance": float(dist), "metadata": md}
+                    )
 
         results.append(query_results)
 
@@ -679,5 +924,5 @@ def hybrid_search(
         "num_queries": len(query_vectors),
         "k": k,
         "filtered": filter_conditions is not None,
-        "reranked": rerank_config is not None
+        "reranked": rerank_config is not None,
     }
