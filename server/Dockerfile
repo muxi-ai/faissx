@@ -1,8 +1,7 @@
 FROM python:3.11-slim
 
 LABEL maintainer="Muxi AI"
-LABEL description="FAISS, Extended - A high-performance vector database proxy with ZeroMQ"
-LABEL version="0.0.2"
+LABEL description="FAISSx - Run FAISS as a server"
 
 WORKDIR /app
 
@@ -18,11 +17,11 @@ ENV FAISSX_DATA_DIR=/data
 ENV FAISSX_PORT=45678
 ENV FAISSX_BIND_ADDRESS=0.0.0.0
 ENV FAISSX_ENABLE_AUTH=false
+# Prevent Python from writing .pyc files
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # Expose the ZeroMQ port
 EXPOSE 45678
 
 # Run the server using the CLI
-# Note: For production, use docker's restart policy:
-# docker run --restart=always ... or docker-compose with restart: always
 CMD ["faissx.server", "run"]
