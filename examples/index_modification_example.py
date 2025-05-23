@@ -14,7 +14,6 @@ These operations are useful for:
 """
 
 import numpy as np
-from sklearn.datasets import make_blobs
 import os
 import tempfile
 
@@ -34,21 +33,19 @@ np.random.seed(42)
 
 
 def generate_data(n_samples=500, n_features=64, n_clusters=5, cluster_std=0.5):
-    """Generate synthetic data with cluster structure"""
+    """Generate synthetic data for testing"""
     print(f"Generating {n_samples} vectors with {n_features} dimensions...")
 
-    # Create clustered data
-    X, y = make_blobs(
-        n_samples=n_samples,
-        centers=n_clusters,
-        n_features=n_features,
-        random_state=42,
-        cluster_std=cluster_std
-    )
+    # Create simple random data instead of clustered data to avoid FAISS clustering issues
+    # The clustering from make_blobs can cause segfaults in FAISS IVF training
+    X = np.random.random((n_samples, n_features)).astype(np.float32)
 
-    # Scale to unit norm
+    # Scale to unit norm for better index performance
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     X = X / norms
+
+    # Create dummy cluster labels for compatibility
+    y = np.random.randint(0, n_clusters, n_samples)
 
     return X, y
 

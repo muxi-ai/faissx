@@ -10,10 +10,10 @@
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-import faissx
+from faissx import client as faiss
 
 # Configure for remote operation (would use your own server in production)
-faissx.configure(server="tcp://localhost:45678")  # Default server
+faiss.configure(server="tcp://localhost:45678")  # Default server
 
 # Test parameters
 DIMENSION = 128
@@ -48,8 +48,8 @@ def test_batch_adds(vectors, batch_sizes):
         print(f"\nTesting with batch_size={batch_size}")
 
         # Create a new index for each test
-        index = faissx.IndexFlatL2(DIMENSION)
-        client = faissx.client.get_client()
+        index = faiss.IndexFlatL2(DIMENSION)
+        client = faiss.get_client()
 
         # Test normal add (one API call per batch)
         vectors_to_add = vectors.copy()
@@ -64,7 +64,7 @@ def test_batch_adds(vectors, batch_sizes):
         results["add"]["normal"].append(normal_time)
 
         # Create a new index for batched test
-        index = faissx.IndexFlatL2(DIMENSION)
+        index = faiss.IndexFlatL2(DIMENSION)
 
         # Test batch add (using optimized batch operation)
         start_time = time.time()
@@ -83,8 +83,8 @@ def test_batch_searches(vectors, query_vectors, batch_sizes):
     print("\n=== Testing batch search operations ===")
 
     # Create and fill index once
-    index = faissx.IndexFlatL2(DIMENSION)
-    client = faissx.client.get_client()
+    index = faiss.IndexFlatL2(DIMENSION)
+    client = faiss.get_client()
     client.add_vectors(index.index_id, vectors)
     print(f"Added {len(vectors)} vectors to index")
 
@@ -124,8 +124,8 @@ def test_batch_range_searches(vectors, query_vectors, batch_sizes):
     print("\n=== Testing batch range search operations ===")
 
     # Create and fill index once
-    index = faissx.IndexFlatL2(DIMENSION)
-    client = faissx.client.get_client()
+    index = faiss.IndexFlatL2(DIMENSION)
+    client = faiss.get_client()
     client.add_vectors(index.index_id, vectors)
     print(f"Added {len(vectors)} vectors to index")
 

@@ -14,7 +14,6 @@ configurations, balancing between search quality, speed, and memory usage.
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-from sklearn.datasets import make_blobs
 
 # Import FAISSx components
 from faissx.client.indices import IndexFlatL2, IndexIVFFlat, IndexHNSWFlat
@@ -35,21 +34,28 @@ def generate_data(n_vectors=10000, n_dimensions=128, n_clusters=10):
     """Generate sample vector data for indexing and searching."""
     print(f"Generating {n_vectors} vectors with {n_dimensions} dimensions...")
 
-    # Generate data with well-defined clusters
-    vectors, _ = make_blobs(
-        n_samples=n_vectors,
-        n_features=n_dimensions,
-        centers=n_clusters,
-        cluster_std=10.0,
-    )
+    # Create reliable clustered data manually to avoid sklearn.make_blobs issues
+    # that can cause FAISS segfaults on certain systems
+    cluster_centers = np.random.randn(n_clusters, n_dimensions).astype(np.float32)
+    cluster_std = 0.3
 
-    # Normalize vectors (optional but recommended for some distance metrics)
+    vectors = []
+    for i in range(n_vectors):
+        cluster_id = np.random.randint(0, n_clusters)
+        center = cluster_centers[cluster_id]
+        noise = np.random.randn(n_dimensions) * cluster_std
+        vector = center + noise
+        vectors.append(vector)
+
+    vectors = np.array(vectors, dtype=np.float32)
+
+    # Normalize vectors (recommended for L2 distance)
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
     vectors = vectors / norms
 
     # Split into database and query vectors
-    db_vectors = vectors[: n_vectors - 100].astype(np.float32)
-    query_vectors = vectors[n_vectors - 100:].astype(np.float32)
+    db_vectors = vectors[: n_vectors - 100]
+    query_vectors = vectors[n_vectors - 100:]
 
     return db_vectors, query_vectors
 
@@ -113,7 +119,8 @@ def compare_ivf_parameters():
 
     # Create an IVF index with 100 centroids
     nlist = 100
-    index = IndexIVFFlat(n_dimensions, nlist)
+    quantizer = IndexFlatL2(n_dimensions)
+    index = IndexIVFFlat(quantizer, n_dimensions, nlist)
 
     # Train and add vectors
     print("Training the index...")
