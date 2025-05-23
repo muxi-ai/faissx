@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile.dev
+    image: faissx
     ports:
       - "45678:45678"
     volumes:

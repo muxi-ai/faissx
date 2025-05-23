@@ -24,6 +24,5 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Expose the ZeroMQ port
 EXPOSE 45678
 
-# Install the package in development mode
-# The actual code will be mounted as a volume
-CMD ["faissx.server", "run"]
+# Install package in dev mode then run server
+CMD ["bash", "-c", "pip install -e . && faissx.server run"]
