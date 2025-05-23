@@ -26,9 +26,9 @@ setup(
     packages=find_packages(),
     include_package_data=True,  # Include non-Python files specified in MANIFEST.in
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: Apache Software License",  # Updated to match Apache 2.0
+        "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
