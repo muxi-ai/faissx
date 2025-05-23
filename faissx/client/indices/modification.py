@@ -250,16 +250,6 @@ def merge_indices(
     id_mappings: List[Dict[int, int]] = []
     needs_id_mapping = id_map or id_map2 or bool(id_mappings)
 
-    # Create the target index
-    if needs_id_mapping:
-        # Create empty base index first
-        base_index = index_factory(d, output_type)
-        # Create the appropriate wrapper around the empty base index
-        wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
-        merged_index = wrapper_class(base_index)
-    else:
-        merged_index = index_factory(d, output_type)
-
     # Prepare to collect all vectors and IDs if needed
     all_vectors: List[np.ndarray] = []
     total_vectors = 0
@@ -290,7 +280,39 @@ def merge_indices(
     # Return empty index if no vectors found
     if not all_vectors:
         logger.warning("No vectors found in the provided indices")
-        return merged_index
+        # Create empty index without training size estimation since no vectors
+        if needs_id_mapping:
+            base_index = index_factory(d, output_type)
+            wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
+            return wrapper_class(base_index)
+        else:
+            return index_factory(d, output_type)
+
+    # Create the target index with estimated training size for IVF safety
+    if needs_id_mapping:
+        # Create empty base index first, passing estimated training size for IVF safety
+        try:
+            base_index = index_factory(d, output_type, expected_training_size=total_vectors)
+        except Exception as e:
+            # If IVF creation fails, fall back to Flat index
+            if "IVF" in output_type:
+                logger.warning(f"IVF index creation failed: {e}. Falling back to Flat index.")
+                base_index = index_factory(d, "Flat")
+            else:
+                raise
+        # Create the appropriate wrapper around the empty base index
+        wrapper_class = IndexIDMap2 if id_map2 else IndexIDMap
+        merged_index = wrapper_class(base_index)
+    else:
+        try:
+            merged_index = index_factory(d, output_type, expected_training_size=total_vectors)
+        except Exception as e:
+            # If IVF creation fails, fall back to Flat index
+            if "IVF" in output_type:
+                logger.warning(f"IVF index creation failed: {e}. Falling back to Flat index.")
+                merged_index = index_factory(d, "Flat")
+            else:
+                raise
 
     # Combine and add vectors to the merged index
     combined_vectors = np.vstack(all_vectors)
@@ -503,11 +525,15 @@ def split_index(
     else:
         raise ValueError(f"Unsupported split method: {split_method}")
 
-    # Create the output indices
+    # Create the output indices with estimated training size for IVF safety
     result_indices: List[FAISSxBaseIndex] = []
+    # Estimate training size per part (assuming roughly equal distribution)
+    estimated_training_size_per_part = max(100, len(vectors) // num_parts)
     for _ in range(num_parts):
-        # Create an index of the specified type
-        result_indices.append(index_factory(d, output_type))
+        # Create an index of the specified type with training size estimate
+        result_indices.append(
+            index_factory(d, output_type, expected_training_size=estimated_training_size_per_part)
+        )
 
     # Group vectors by their part index
     grouped_vectors: List[List[np.ndarray]] = [[] for _ in range(num_parts)]

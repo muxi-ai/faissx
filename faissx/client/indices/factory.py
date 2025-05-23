@@ -180,7 +180,9 @@ def _create_hnsw_index(d: int, m: int, metric: int) -> IndexHNSWFlat:
     return IndexHNSWFlat(d, m, metric)
 
 
-def _create_ivf_flat_index(d: int, nlist: int, metric: int) -> IndexIVFFlat:
+def _create_ivf_flat_index(
+    d: int, nlist: int, metric: int, expected_training_size: int = 1000
+) -> IndexIVFFlat:
     """
     Create an IVF (Inverted File) index with flat quantizer.
 
@@ -192,17 +194,53 @@ def _create_ivf_flat_index(d: int, nlist: int, metric: int) -> IndexIVFFlat:
         d: Vector dimension
         nlist: Number of clusters (typically sqrt(n) where n is dataset size)
         metric: Distance metric
+        expected_training_size: Expected number of training vectors (used for safety checks)
 
     Returns:
         IndexIVFFlat: An IVF index with flat quantizer
     """
+    # Use safety check to prevent clustering crashes
+    safe_nlist = _safe_nlist_for_training_size(nlist, expected_training_size)
+
     # Create a flat index to use as the coarse quantizer for clustering
     coarse_quantizer = IndexFlatL2(d)
-    return IndexIVFFlat(coarse_quantizer, d, nlist, metric)
+    return IndexIVFFlat(coarse_quantizer, d, safe_nlist, metric)
+
+
+def _safe_nlist_for_training_size(nlist: int, expected_training_size: int = 1000) -> int:
+    """
+    Calculate a safe nlist value based on expected training size.
+
+    FAISS requires approximately 39 * nlist training points for stable clustering,
+    but we use a more conservative estimate to prevent crashes.
+    This function ensures we don't create IVF indices that will crash during training.
+
+    Args:
+        nlist: Requested number of clusters
+        expected_training_size: Expected number of training vectors
+
+    Returns:
+        Safe nlist value that won't cause clustering to crash
+    """
+    # Use a more conservative estimate: 100 points per cluster to ensure stability
+    # This is higher than FAISS's minimum of 39 to provide a safety margin
+    min_points_per_cluster = 100
+    max_safe_nlist = max(1, expected_training_size // min_points_per_cluster)
+
+    if nlist > max_safe_nlist:
+        safe_nlist = max_safe_nlist
+        logger.warning(
+            f"Reducing nlist from {nlist} to {safe_nlist} to prevent clustering crash. "
+            f"Using conservative estimate of {min_points_per_cluster} points per cluster. "
+            f"Original FAISS minimum would be {nlist * 39} training points for nlist={nlist}."
+        )
+        return safe_nlist
+
+    return nlist
 
 
 def _create_ivf_pq_index(
-    d: int, nlist: int, m: int, nbits: int, metric: int
+    d: int, nlist: int, m: int, nbits: int, metric: int, expected_training_size: int = 1000
 ) -> IndexIVFPQ:
     """
     Create an IVF index with product quantization.
@@ -217,6 +255,7 @@ def _create_ivf_pq_index(
         m: Number of subquantizers (must divide d)
         nbits: Bits per subquantizer (typically 8)
         metric: Distance metric
+        expected_training_size: Expected number of training vectors (used for safety checks)
 
     Returns:
         IndexIVFPQ: An IVF index with product quantization
@@ -228,8 +267,11 @@ def _create_ivf_pq_index(
     if d % m != 0:
         raise ValueError(f"Number of subquantizers (m={m}) must divide dimension (d={d}) evenly")
 
+    # Use safety check to prevent clustering crashes
+    safe_nlist = _safe_nlist_for_training_size(nlist, expected_training_size)
+
     coarse_quantizer = IndexFlatL2(d)
-    return IndexIVFPQ(coarse_quantizer, d, nlist, m, nbits, metric)
+    return IndexIVFPQ(coarse_quantizer, d, safe_nlist, m, nbits, metric)
 
 
 def _parse_pq_params(description: str) -> Tuple[int, int]:
@@ -261,7 +303,9 @@ def _parse_pq_params(description: str) -> Tuple[int, int]:
     return m, nbits
 
 
-def index_factory(d: int, description: str, metric: Optional[int] = None) -> IndexType:
+def index_factory(
+    d: int, description: str, metric: Optional[int] = None, expected_training_size: int = 1000
+) -> IndexType:
     """
     Create a FAISS-compatible index from a description string.
 
@@ -280,6 +324,7 @@ def index_factory(d: int, description: str, metric: Optional[int] = None) -> Ind
             - "IDMap,<index>": ID mapping wrapper (e.g., "IDMap,Flat")
             - "IDMap2,<index>": ID mapping with compact storage (e.g., "IDMap2,Flat")
         metric: Distance metric (default: faiss.METRIC_L2)
+        expected_training_size: Expected number of training vectors (for IVF safety checks)
 
     Returns:
         IndexType: A FAISSx index instance corresponding to the description
@@ -306,7 +351,7 @@ def index_factory(d: int, description: str, metric: Optional[int] = None) -> Ind
 
             try:
                 # Recursively create the underlying index
-                sub_index = index_factory(d, sub_description, metric)
+                sub_index = index_factory(d, sub_description, metric, expected_training_size)
             except Exception as e:
                 raise ValueError(f"Failed to create sub-index for {description}: {e}")
 
@@ -336,14 +381,14 @@ def index_factory(d: int, description: str, metric: Optional[int] = None) -> Ind
 
             if coarse_quantizer_type == "Flat":
                 logger.debug("Using Flat quantizer for IVF index")
-                return _create_ivf_flat_index(d, nlist, metric)
+                return _create_ivf_flat_index(d, nlist, metric, expected_training_size)
 
             if PATTERN_PQ.match(coarse_quantizer_type):
                 m, nbits = _parse_pq_params(coarse_quantizer_type)
                 logger.debug(
                     f"Using PQ quantizer for IVF index with m={m}, nbits={nbits}"
                 )
-                return _create_ivf_pq_index(d, nlist, m, nbits, metric)
+                return _create_ivf_pq_index(d, nlist, m, nbits, metric, expected_training_size)
 
         # Handle Scalar Quantizer
         sq_match: Optional[Match[str]] = PATTERN_SQ.match(description)
