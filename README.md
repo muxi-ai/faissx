@@ -1,9 +1,10 @@
-# FAISSx (FAISS Extended)
+# FAISSx (FAISS, Extended)
 
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)&nbsp;
+[![PyPi Version](https://img.shields.io/pypi/v/faissx?maxAge=60%)](https://pypi.python.org/pypi/faissx)&nbsp;
+[![PyPi status](https://img.shields.io/pypi/status/faissx?maxAge=60%)](https://pypi.python.org/pypi/faissx)&nbsp;
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Examples](https://img.shields.io/badge/examples-9%2F9%20working-brightgreen.svg)](./examples/)
-&nbsp;
+&nbsp; &nbsp;
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 ### A high-performance vector similarity search service that extends FAISS with remote execution capabilities while maintaining full API compatibility.
