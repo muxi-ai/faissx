@@ -337,11 +337,14 @@ index = faiss.IndexFlatL2(128)
 
 Check out the example scripts in the repository:
 
-- [Simple Client](../examples/simple_client.py): Basic usage of the client
-- [Remote Search Example](../examples/remote_search.py): Using remote search operations
-- [Advanced Index Examples](../examples/advanced_indices.py): Working with various index types
-- [Persistence Example](../examples/persistence.py): Saving and loading indices
-- [Index Modification Example](../examples/modification.py): Merging and splitting indices
+- [Simple Client](../examples/simple_client.py): Basic usage of the client with server connectivity
+- [Server Example](../examples/server_example.py): How to configure and run the FAISSx server
+- [IVF Index Example](../examples/ivf_index_example.py): Performance comparison of different index types
+- [HNSW and PQ Example](../examples/hnsw_and_pq_example.py): Advanced index types with memory/performance trade-offs
+- [Index Modification Example](../examples/index_modification_example.py): Merging and splitting indices
+- [Batch Operations Example](../examples/batch_operations_example.py): Performance optimization with batched operations
+- [Range Search Example](../examples/range_search_example.py): Radius-based vector search
+- [Recovery Example](../examples/recovery_example.py): Error handling and retry strategies
 
 ## Troubleshooting
 
@@ -361,14 +364,16 @@ If you get dimension mismatch errors, ensure:
 2. All vectors have the same dimension as the index
 3. All vectors are properly converted to float32 type
 
-### Server Limitations
+### Operational Considerations
 
-When using remote mode, be aware of potential server limitations:
+When using remote mode, be aware of these considerations:
 
-1. Some server implementations may not support all methods (vector reconstruction, reset, etc.)
-2. The client will attempt to work around these limitations with fallback strategies
-3. Check the server logs for detailed error information
-4. For critical operations, consider using local mode if possible
+1. **Network latency**: Operations involve network communication which adds latency compared to local mode
+2. **Graceful degradation**: The client implements fallback strategies for error recovery (e.g., returning zero vectors if reconstruction fails)
+3. **Specialized index types**: Some advanced index types like `IndexIDMap2` may have limited server-side support
+4. **Binary indices**: Full server-side support for binary indices is still in development
+
+The FAISSx server implements all core FAISS operations including vector reconstruction, index reset, and range search. Most limitations you encounter will be related to network issues rather than missing server functionality.
 
 ## License
 
