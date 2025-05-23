@@ -564,8 +564,8 @@ See [NEXT_STEPS.md](./NEXT_STEPS.md) for a detailed roadmap and current status.
 
 ---
 
-> [!IMPORTANT] Remote Mode Policy
-> **No Fallbacks**: When remote mode is explicitly configured (`configure()` is called), FAISSx will NEVER fall back to local mode for any operations.
+> [!IMPORTANT]
+> **The Remote Mode Policy is "No Fallbacks"**: When remote mode is explicitly configured (`configure()` is called), FAISSx will NEVER fall back to local mode for any operations.
 > Our goal is to ensure 100% remote mode support with no silent fallbacks for any index type or operation.
 
 ---
