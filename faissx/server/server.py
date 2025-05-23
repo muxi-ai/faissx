@@ -997,7 +997,7 @@ class FaissIndex:
                 base_index = self.create_index(f"{index_id}_base", dimension, base_type)
                 # BUG FIX: Ensure we check response properly
                 if (not isinstance(base_index, dict) or
-                    not base_index.get("success", False)):
+                        not base_index.get("success", False)):
                     return error_response(
                         f"Failed to create base index: {base_index}"
                     )
@@ -2784,7 +2784,7 @@ def run_server(
                     logger.info(f"Received message of length {len(message)}")
                 except zmq.error.Again:
                     # Socket timeout - this is normal for long polling scenarios
-                    logger.error(
+                    logger.info(
                         "Socket timeout while waiting for a message "
                         "(normal for long polling)"
                     )
