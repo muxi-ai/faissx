@@ -838,6 +838,7 @@ class FaissIndex:
             dict: Response containing success status and index details
         """
         logger.info(f"Creating index: id={index_id}, type={index_type}, dimension={dimension}")
+        logger.debug("DEBUG: create_index called - will return proper response structure")
 
         # Ensure dimension is an integer
         try:
@@ -882,9 +883,13 @@ class FaissIndex:
                             metadata={"is_base_index": True, "parent_index": index_id}
                         )
 
-                        if not base_response["success"]:
-                            logger.error(f"Failed to create base index: {base_response['error']}")
-                            return base_response
+                        # Ensure we check response properly
+                        if not isinstance(base_response, dict
+                                          ) or not base_response.get("success", False):
+                            logger.error(f"Failed to create base index: {base_response}")
+                            return error_response(
+                                f"Failed to create base index: {base_response}"
+                            )
 
                     base_index = self.indexes[base_index_id]
 
@@ -916,6 +921,7 @@ class FaissIndex:
                 if metadata:
                     index_details["metadata"] = metadata
 
+                logger.debug("DEBUG: IDMap creation returning success_response")
                 return success_response(
                     index_details,
                     message=f"IDMap index {index_id} created successfully",
@@ -935,6 +941,7 @@ class FaissIndex:
                     if metadata:
                         index_info["metadata"] = metadata
 
+                    logger.debug("DEBUG: Binary index creation returning success_response")
                     return success_response(
                         index_info,
                         message=f"Binary index {index_id} created successfully",
@@ -956,6 +963,7 @@ class FaissIndex:
                 # Add index_id to the info
                 index_info["index_id"] = index_id
 
+                logger.debug("DEBUG: Transformations creation returning success_response")
                 return success_response(
                     index_info,
                     message=f"Index {index_id} created successfully"
@@ -987,8 +995,12 @@ class FaissIndex:
             elif index_type.startswith("IDMap:"):
                 base_type = index_type[6:]
                 base_index = self.create_index(f"{index_id}_base", dimension, base_type)
-                if not base_index["success"]:
-                    return base_index
+                # BUG FIX: Ensure we check response properly
+                if (not isinstance(base_index, dict) or
+                    not base_index.get("success", False)):
+                    return error_response(
+                        f"Failed to create base index: {base_index}"
+                    )
 
                 self.base_indexes[index_id] = f"{index_id}_base"
                 index = faiss.IndexIDMap(self.indexes[f"{index_id}_base"])
@@ -1016,6 +1028,7 @@ class FaissIndex:
                 index_details["requires_training"] = True
                 index_details["training_info"] = training_reqs
 
+            logger.debug("DEBUG: Fallback creation returning success_response")
             return success_response(index_details, message=f"Index {index_id} created successfully")
 
         except Exception as e:
@@ -2276,22 +2289,30 @@ class FaissIndex:
                 all_results = []
 
                 for i, query in enumerate(query_np):
-                    # Range search returns distances and indices as lists
-                    distances, indices = index.range_search(query.reshape(1, -1), radius)
+                    # Range search returns (lims, distances, indices) - 3 values!
+                    lims, distances, indices = index.range_search(query.reshape(1, -1), radius)
+
+                    # Extract results for this query from the flattened arrays
+                    # lims[0] to lims[1] gives the range for the first (and only) query
+                    start_idx = lims[0]
+                    end_idx = lims[1]
+
+                    query_distances = distances[start_idx:end_idx]
+                    query_indices = indices[start_idx:end_idx]
 
                     # Format result for this query
                     result = {
                         "query_index": i,
-                        "num_results": len(indices),
+                        "num_results": len(query_indices),
                         "indices": (
-                            indices.tolist()
-                            if isinstance(indices, np.ndarray)
-                            else indices
+                            query_indices.tolist()
+                            if isinstance(query_indices, np.ndarray)
+                            else query_indices
                         ),
                         "distances": (
-                            distances.tolist()
-                            if isinstance(distances, np.ndarray)
-                            else distances
+                            query_distances.tolist()
+                            if isinstance(query_distances, np.ndarray)
+                            else query_distances
                         ),
                     }
                     all_results.append(result)

@@ -561,7 +561,7 @@ class FaissXClient:
             logger.error(f"Failed to prepare vectors: {e}")
             raise ValueError(f"Invalid vector format: {e}")
 
-    def create_index(self, name: str, dimension: int, index_type: str = "L2") -> IndexID:
+    def create_index(self, name: str, dimension: int, index_type: str = "L2") -> Dict[str, Any]:
         """Create a new vector index on the server.
 
         This method establishes a new index instance on the FAISSx server with the
@@ -588,8 +588,8 @@ class FaissXClient:
                 Determines search algorithm and performance characteristics
 
         Returns:
-            Index identifier (string) used for subsequent operations
-            Note: This may be the same as 'name' or a server-generated ID
+            Full server response dictionary containing index details and metadata
+            The response includes fields like "index_id", "success", "dimension", etc.
 
         Raises:
             RuntimeError: If index creation fails on the server, with error details
@@ -599,7 +599,8 @@ class FaissXClient:
             ```python
             client = get_client()
             # Create a 128-dimensional flat L2 index
-            index_id = client.create_index("customer-embeddings", 128, "L2")
+            response = client.create_index("customer-embeddings", 128, "L2")
+            index_id = response.get("index_id")
             ```
         """
         logger.info(f"Creating index '{name}' with dimension {dimension}, type {index_type}")
@@ -614,10 +615,12 @@ class FaissXClient:
             }
         )
 
-        # Extract the index ID from the response
+        # Log the index ID for backwards compatibility
         index_id = response.get("index_id", name)
         logger.info(f"Created index with ID: {index_id}")
-        return index_id
+
+        # Return the full response instead of just the index_id
+        return response
 
     def add_vectors(self, index_id: IndexID, vectors: VectorData) -> SearchResult:
         """Add vectors to an existing index.
