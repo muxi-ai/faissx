@@ -24,4 +24,4 @@ ENV PYTHONDONTWRITEBYTECODE=1
 EXPOSE 45678
 
 # Install package in dev mode then run server
-CMD ["bash", "-c", "pip install -e . && faissx.server run"]
+CMD ["bash", "-c", "pip install -e . && faissx.server run --log-level DEBUG"]
