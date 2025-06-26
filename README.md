@@ -5,7 +5,7 @@
 [![PyPi status](https://img.shields.io/pypi/status/faissx?maxAge=60%)](https://pypi.python.org/pypi/faissx)&nbsp;
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 &nbsp; &nbsp;
-[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/muxi-ai/faissx)
 
 ### A high-performance vector similarity search service that extends FAISS with remote execution capabilities while maintaining full API compatibility.
 
