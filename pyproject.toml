@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faissx"
+dynamic = ["version"]
+description = "High-performance vector database proxy using FAISS and ZeroMQ"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Ran Aroussi", email = "ran@aroussi.com"}
+]
+dependencies = [
+    "faiss-cpu>=1.8.0",
+    "numpy>=1.24.0",
+    "pyzmq>=26.0.3",
+    "msgpack>=1.0.8",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/muxi-ai/faissx"
+"Documentation" = "https://github.com/muxi-ai/faissx#readme"
+"Issues" = "https://github.com/muxi-ai/faissx/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.2",
+    "pytest-cov>=5.0.0",
+    "black>=24.4.2",
+    "isort>=5.13.2",
+    "mypy>=1.10.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+"faissx.server" = "faissx.server.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["faissx*"]
+
+[tool.setuptools.package-data]
+faissx = [".version"]
+
+[tool.setuptools.dynamic]
+version = {file = ["faissx/.version"]}
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "N", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # Line too long (handled separately)
+    "B904",   # raise ... from err
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+
+[tool.isort]
+profile = "black"
+line_length = 100

@@ -50,6 +50,10 @@ This module integrates seamlessly with FAISSx server infrastructure to provide
 enterprise-grade hybrid search capabilities with monitoring and debugging support.
 """
 
+import ast
+import math
+import operator
+
 import numpy as np  # Numerical operations for vector processing and scoring
 from typing import (
     Any,
@@ -744,6 +748,88 @@ def _rerank_reciprocal_rank_fusion(
     return reranked_indices, reranked_scores
 
 
+_SAFE_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+_SAFE_FUNCS = {
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "log": math.log,
+    "sqrt": math.sqrt,
+    "exp": math.exp,
+}
+
+_MAX_FORMULA_LEN = 512
+_MAX_AST_DEPTH = 20
+
+
+def _safe_eval(expr_str: str, variables: Dict[str, float]) -> float:
+    """Evaluate a simple arithmetic expression without using eval().
+
+    Only numeric literals, variable names present in *variables*,
+    basic arithmetic operators (+, -, *, /, //, %, **), unary +/-,
+    and a small whitelist of math functions are allowed.
+
+    Raises ValueError for anything else (attribute access, calls to
+    unknown functions, comprehensions, lambdas, etc.).
+    """
+    if len(expr_str) > _MAX_FORMULA_LEN:
+        raise ValueError("Formula too long")
+
+    tree = ast.parse(expr_str, mode="eval")
+
+    def _eval_node(node: ast.AST, depth: int = 0) -> float:
+        if depth > _MAX_AST_DEPTH:
+            raise ValueError("Expression too deeply nested")
+
+        if isinstance(node, ast.Expression):
+            return _eval_node(node.body, depth + 1)
+
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+
+        if isinstance(node, ast.Name):
+            if node.id in variables:
+                return float(variables[node.id])
+            raise ValueError(f"Unknown variable: {node.id}")
+
+        if isinstance(node, ast.BinOp):
+            op_fn = _SAFE_OPS.get(type(node.op))
+            if op_fn is None:
+                raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+            left = _eval_node(node.left, depth + 1)
+            right = _eval_node(node.right, depth + 1)
+            return float(op_fn(left, right))
+
+        if isinstance(node, ast.UnaryOp):
+            op_fn = _SAFE_OPS.get(type(node.op))
+            if op_fn is None:
+                raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
+            return float(op_fn(_eval_node(node.operand, depth + 1)))
+
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _SAFE_FUNCS:
+                args = [_eval_node(a, depth + 1) for a in node.args]
+                if node.keywords:
+                    raise ValueError("Keyword arguments not allowed")
+                return float(_SAFE_FUNCS[node.func.id](*args))
+            raise ValueError("Unsupported function call")
+
+        raise ValueError(f"Unsupported expression node: {type(node).__name__}")
+
+    return _eval_node(tree)
+
+
 def _rerank_custom_score(
     distances: List[List[float]],
     indices: List[List[int]],
@@ -752,6 +838,10 @@ def _rerank_custom_score(
 ) -> Tuple[List[List[int]], List[List[float]]]:
     """
     Re-rank using a custom scoring function on metadata fields.
+
+    The formula is evaluated with a safe AST-based parser that only allows
+    numeric literals, named variables, basic arithmetic (+, -, *, /, //, %,
+    **), and a small set of math functions (abs, min, max, log, sqrt, exp).
 
     Args:
         distances: List of lists of distances from search results
@@ -762,18 +852,15 @@ def _rerank_custom_score(
     Returns:
         tuple: (reranked_indices, reranked_scores)
     """
-    # Get formula and fields
     formula = config.get("formula", "")
     if not formula:
-        # Default to original ranking if no formula provided
         return indices, distances
 
-    # Parse and validate formula (basic validation only)
+    # Validate formula with sample values before using it
     try:
-        # Simply test the formula with sample values
-        test_vars = {"distance": 0.5}
+        test_vars: Dict[str, float] = {"distance": 0.5}
         test_vars.update({f"md_{field}": 1.0 for field in config.get("fields", [])})
-        eval(formula, {"__builtins__": None}, test_vars)
+        _safe_eval(formula, test_vars)
     except Exception as e:
         logger.error(f"Error validating custom score formula: {str(e)}")
         return indices, distances
@@ -784,26 +871,20 @@ def _rerank_custom_score(
     for q_idx, (query_distances, query_indices, query_metadata) in enumerate(
         zip(distances, indices, metadata)
     ):
-        # Calculate custom scores
         custom_scores = []
 
         for i, (dist, idx, md) in enumerate(
             zip(query_distances, query_indices, query_metadata)
         ):
-            # Prepare variables for formula
-            vars_dict = {"distance": dist}
-
-            # Add metadata fields
+            vars_dict: Dict[str, float] = {"distance": dist}
             for field in config.get("fields", []):
                 vars_dict[f"md_{field}"] = md.get(field, 0.0)
 
-            # Evaluate formula
             try:
-                score = eval(formula, {"__builtins__": None}, vars_dict)
+                score = _safe_eval(formula, vars_dict)
                 custom_scores.append((idx, score))
             except Exception as e:
                 logger.error(f"Error evaluating custom score: {str(e)}")
-                # Rank at the end in case of error
                 custom_scores.append((idx, -999999))
 
         # Sort by custom score (descending)

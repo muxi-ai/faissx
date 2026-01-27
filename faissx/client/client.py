@@ -417,7 +417,6 @@ class FaissXClient:
             logger.debug(f"Error during cleanup: {e}")
             pass
 
-    @operation_timeout()
     def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Send a request to the FAISSx server and handle the response.
 
@@ -428,7 +427,9 @@ class FaissXClient:
         - Handling timeouts and network errors
         - Deserializing and validating the response
 
-        The @operation_timeout decorator enforces the configured timeout.
+        Timeout is enforced by the zmq socket's RCVTIMEO option (set during
+        connect) rather than the thread-based timeout decorator, because zmq
+        sockets are not thread-safe.
 
         Args:
             request: Dictionary containing the request parameters
@@ -443,6 +444,14 @@ class FaissXClient:
         # Verify connection is active
         if not self.socket:
             raise RuntimeError("No active connection. Call connect() first.")
+
+        # Ensure socket options match current self.timeout so that zmq
+        # send/recv never block longer than expected (defensive against
+        # sockets created without going through connect()).
+        timeout_ms = int(self.timeout * 1000)
+        self.socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
+        self.socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
+        self.socket.setsockopt(zmq.LINGER, 0)
 
         # Add authentication and tenant information if available
         if self.api_key:
@@ -544,14 +553,14 @@ class FaissXClient:
         try:
             # First ensure input is a numpy array for consistent handling
             if not isinstance(vectors, np.ndarray):
-                # Convert to numpy array if it's not already one
                 vectors = np.array(vectors, dtype=np.float32)
 
-            # Convert to list format for serialization
-            # numpy arrays can't be directly serialized with msgpack
-            result = vectors.tolist() if hasattr(vectors, "tolist") else vectors
+            # Guarantee 2D so a single vector [1,2,3] becomes [[1,2,3]]
+            vectors = np.atleast_2d(vectors)
 
-            # Validate the result is a list (either of vectors or a single vector)
+            # Convert to list format for serialization
+            result = vectors.tolist()
+
             if not isinstance(result, list):
                 raise ValueError(f"Expected list, got {type(result)}")
 
@@ -701,14 +710,14 @@ class FaissXClient:
             ValueError: If the vector format is invalid
             RuntimeError: If adding vectors fails on the server
         """
-        # Convert input to numpy array for consistent batch handling
+        # Convert input to numpy array and ensure 2D for consistent batch handling
         if not isinstance(vectors, np.ndarray):
             try:
                 vectors = np.array(vectors, dtype=np.float32)
             except Exception as e:
                 raise ValueError(f"Failed to convert input to numpy array: {e}")
+        vectors = np.atleast_2d(vectors)
 
-        # Initialize tracking variables for batch processing
         total_vectors = vectors.shape[0]
         total_added = 0
         results = {"success": True, "count": 0, "total": 0}
@@ -893,14 +902,14 @@ class FaissXClient:
             RuntimeError: If search operation fails on the server, with details
                          about which batch failed and why
         """
-        # Convert to numpy array for consistent batch handling
+        # Convert to numpy array and ensure 2D for consistent batch handling
         if not isinstance(query_vectors, np.ndarray):
             try:
                 query_vectors = np.array(query_vectors, dtype=np.float32)
             except Exception as e:
                 raise ValueError(f"Failed to convert query vectors to numpy array: {e}")
+        query_vectors = np.atleast_2d(query_vectors)
 
-        # Initialize tracking
         total_queries = query_vectors.shape[0]
         all_results = []
 
@@ -1026,7 +1035,7 @@ class FaissXClient:
             ValueError: If query vector format is invalid
             RuntimeError: If search operation fails on the server
         """
-        # Ensure input is numpy array with float32 dtype
+        # Ensure input is numpy array (2D) with float32 dtype
         if not isinstance(query_vectors, np.ndarray):
             try:
                 query_vectors = np.array(query_vectors, dtype=np.float32)
@@ -1034,6 +1043,7 @@ class FaissXClient:
                 raise ValueError(
                     f"Failed to convert query vectors to numpy array: {e}"
                 )
+        query_vectors = np.atleast_2d(query_vectors)
 
         total_queries = query_vectors.shape[0]
         all_results = []

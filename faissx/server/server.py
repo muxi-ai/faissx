@@ -182,8 +182,9 @@ class TaskWorker:
             - Results dictionary is accessed by main thread only after completion
         """
         self.timeout = timeout
-        self.queue = Queue()  # Thread-safe task queue
+        self.queue = Queue(maxsize=DEFAULT_TASK_QUEUE_SIZE)
         self.results = {}     # Task results storage (task_id -> result)
+        self._expired = set()  # Task IDs abandoned due to timeout
 
         # Create and start the background worker thread
         # Daemon=True ensures thread dies when main process exits
@@ -212,17 +213,20 @@ class TaskWorker:
                 task_id, func, args, kwargs = self.queue.get(block=True)
 
                 try:
-                    # Execute the task function with provided arguments
                     result = func(*args, **kwargs)
 
-                    # Store successful result for main thread retrieval
-                    self.results[task_id] = {"success": True, "result": result}
+                    if task_id in self._expired:
+                        # Caller already timed out -- discard result
+                        self._expired.discard(task_id)
+                    else:
+                        self.results[task_id] = {"success": True, "result": result}
                 except Exception as e:
-                    # Capture any task execution errors
                     logger.error(f"Task {task_id} failed: {str(e)}")
-                    self.results[task_id] = {"success": False, "error": str(e)}
+                    if task_id in self._expired:
+                        self._expired.discard(task_id)
+                    else:
+                        self.results[task_id] = {"success": False, "error": str(e)}
                 finally:
-                    # Signal that this task is complete (required for Queue)
                     self.queue.task_done()
             except Exception as e:
                 # Handle any unexpected worker thread errors
@@ -241,17 +245,15 @@ class TaskWorker:
         Returns:
             str: Unique task ID that can be used to retrieve results later
 
-        Implementation Notes:
-            - Uses current timestamp as task ID for simplicity
-            - Tasks are added to thread-safe queue for worker processing
-            - Non-blocking operation - returns immediately
+        Raises:
+            RequestTimeoutError: If the task queue is full (backpressure).
         """
-        # Generate unique task ID using current timestamp
-        # Simple but effective for this use case
         task_id = str(time.time())
 
-        # Add task to queue - worker thread will pick it up
-        self.queue.put((task_id, func, args, kwargs))
+        try:
+            self.queue.put((task_id, func, args, kwargs), timeout=self.timeout)
+        except Exception:
+            raise RequestTimeoutError("Task queue is full -- server overloaded")
 
         return task_id
 
@@ -308,7 +310,8 @@ class TaskWorker:
             # Short sleep to prevent busy waiting
             time.sleep(0.1)
 
-        # Timeout reached without result completion
+        # Mark as expired so the worker discards the result if it arrives
+        self._expired.add(task_id)
         raise RequestTimeoutError(
             "Task timed out after {} seconds".format(timeout)
         )
@@ -437,6 +440,12 @@ class FaissIndex:
             - Converts results to JSON-serializable format
             - Provides detailed error messages for troubleshooting
         """
+        # Validate k
+        if k < 1 or k > MAX_SEARCH_K:
+            return error_response(
+                f"k={k} out of range (1-{MAX_SEARCH_K})"
+            )
+
         # Validate that the target index exists
         if index_id not in self.indexes:
             return error_response(f"Index {index_id} does not exist")
@@ -468,8 +477,11 @@ class FaissIndex:
             if is_binary:
                 # Handle binary index search path
                 try:
+                    # Apply runtime params (e.g. nprobe for IndexBinaryIVF)
+                    if params:
+                        self._apply_search_params(index, params)
+
                     # Convert float query vectors to binary format
-                    # This involves quantizing to binary representation
                     query_binary = convert_to_binary(query_vectors)
 
                     # Log debug information for binary search operations
@@ -494,9 +506,9 @@ class FaissIndex:
                     return success_response(
                         {
                             "results": results,
-                            "num_queries": len(query_vectors),
+                            "num_queries": len(distances),
                             "k": k,
-                            "is_binary": True  # Flag to indicate binary search
+                            "is_binary": True
                         }
                     )
                 except Exception as e:
@@ -506,8 +518,10 @@ class FaissIndex:
             else:
                 # Handle standard float vector search path
 
-                # Convert query vectors to numpy array with proper data type
-                query_np = np.array(query_vectors, dtype=np.float32)
+                # Convert query vectors to numpy array and ensure 2D
+                query_np = np.atleast_2d(
+                    np.array(query_vectors, dtype=np.float32)
+                )
 
                 # Validate that query dimensions match index dimensions
                 if query_np.shape[1] != self.dimensions[index_id]:
@@ -517,12 +531,8 @@ class FaissIndex:
                     )
 
                 # Apply runtime search parameters if provided
-                # These can optimize search quality vs speed tradeoffs
                 if params:
-                    for param_name, param_value in params.items():
-                        # Set nprobe for IVF indices (number of clusters to search)
-                        if hasattr(index, "set_" + param_name):
-                            getattr(index, "set_" + param_name)(param_value)
+                    self._apply_search_params(index, params)
 
                 # Note: IndexPreTransform automatically applies transformations
                 # during search, so no special handling is needed here
@@ -543,12 +553,11 @@ class FaissIndex:
                 return success_response(
                     {
                         "results": results,
-                        "num_queries": len(query_vectors),
+                        "num_queries": query_np.shape[0],
                         "k": k
                     }
                 )
         except Exception as e:
-            # Handle any unexpected errors during search execution
             return error_response(f"Error searching index: {str(e)}")
 
     def get_vectors(self, index_id, start_idx=0, limit=None):
@@ -644,8 +653,10 @@ class FaissIndex:
             return error_response(f"Index {index_id} does not exist")
 
         try:
-            # Convert query vectors to numpy array and validate dimensions
-            query_np = np.array(query_vectors, dtype=np.float32)
+            # Convert query vectors to numpy array (ensure 2D) and validate
+            query_np = np.atleast_2d(
+                np.array(query_vectors, dtype=np.float32)
+            )
             if query_np.shape[1] != self.dimensions[index_id]:
                 return error_response(
                     f"Query dimension mismatch: expected {self.dimensions[index_id]}, "
@@ -721,6 +732,12 @@ class FaissIndex:
         if index_id not in self.indexes:
             return error_response(f"Index {index_id} does not exist")
 
+        if len(vectors) > MAX_VECTORS_PER_BATCH:
+            return error_response(
+                f"Batch size {len(vectors)} exceeds maximum "
+                f"({MAX_VECTORS_PER_BATCH})"
+            )
+
         try:
             index = self.indexes[index_id]
 
@@ -769,8 +786,10 @@ class FaissIndex:
                     logger.error(f"Error in binary vector conversion: {str(e)}")
                     return error_response(f"Error in binary vector conversion: {str(e)}")
             else:
-                # Convert vectors to numpy array
-                vectors_np = np.array(vectors, dtype=np.float32)
+                # Convert vectors to numpy array (ensure 2D)
+                vectors_np = np.atleast_2d(
+                    np.array(vectors, dtype=np.float32)
+                )
 
                 # Verify dimensions
                 if vectors_np.shape[1] != self.dimensions[index_id]:
@@ -806,7 +825,7 @@ class FaissIndex:
         for param, value in params.items():
             if param == "nprobe" and hasattr(index, "nprobe"):
                 index.nprobe = int(value)
-            elif param == "efSearch" and hasattr(index, "hnsw"):
+            elif param in ("efSearch", "ef_search", "ef") and hasattr(index, "hnsw"):
                 index.hnsw.efSearch = int(value)
 
     def create_index(self, index_id, dimension, index_type="L2", metadata=None):
@@ -846,6 +865,12 @@ class FaissIndex:
         except (ValueError, TypeError):
             return error_response(f"Invalid dimension: {dimension}. Must be an integer.")
 
+        if dimension < MIN_DIMENSION or dimension > MAX_DIMENSION:
+            return error_response(
+                f"Dimension {dimension} out of range "
+                f"({MIN_DIMENSION}-{MAX_DIMENSION})"
+            )
+
         # Ensure index_type is a string
         if not isinstance(index_type, str):
             return error_response(f"Invalid index_type: {index_type}. Must be a string.")
@@ -874,12 +899,16 @@ class FaissIndex:
                     base_index_id = f"{index_id}_base"
 
                     if base_index_id not in self.indexes:
-                        # Create base index
-                        logger.info(f"Creating base index: id={base_index_id}, type=L2")
+                        # Create base index using the requested base type
+                        resolved_base = base_type if base_type else "L2"
+                        logger.info(
+                            f"Creating base index: id={base_index_id}, "
+                            f"type={resolved_base}"
+                        )
                         base_response = self.create_index(
                             base_index_id,
                             dimension,
-                            "L2",  # Default to L2 index
+                            resolved_base,
                             metadata={"is_base_index": True, "parent_index": index_id}
                         )
 
@@ -2265,8 +2294,10 @@ class FaissIndex:
             return error_response(f"Index {index_id} does not exist")
 
         try:
-            # Convert query vectors to numpy array and validate dimensions
-            query_np = np.array(query_vectors, dtype=np.float32)
+            # Convert query vectors to numpy array (ensure 2D) and validate
+            query_np = np.atleast_2d(
+                np.array(query_vectors, dtype=np.float32)
+            )
             if query_np.shape[1] != self.dimensions[index_id]:
                 return error_response(
                     f"Query dimension mismatch: expected {self.dimensions[index_id]}, "
@@ -2539,17 +2570,24 @@ def authenticate_request(request, auth_keys):
     # Extract API key from request headers/data
     api_key = request.get("api_key")
     if not api_key:
-        # Request missing required API key
         return False, "API key required"
+
+    if not isinstance(api_key, str) or len(api_key) > MAX_API_KEY_LENGTH:
+        return False, "Invalid API key"
 
     # Validate API key against known tenant mappings
     tenant_id = auth_keys.get(api_key)
     if not tenant_id:
-        # API key not found in authorized keys
         return False, "Invalid API key"
 
+    # Reject oversized tenant IDs supplied by the client
+    client_tenant = request.get("tenant_id")
+    if client_tenant is not None and (
+        not isinstance(client_tenant, str) or len(client_tenant) > MAX_TENANT_ID_LENGTH
+    ):
+        return False, "Invalid tenant ID"
+
     # Authentication successful - add tenant context to request
-    # This enables tenant isolation in downstream operations
     request["tenant_id"] = tenant_id
     return True, None
 
@@ -2794,9 +2832,37 @@ def run_server(
                     logger.error(f"Error receiving message: {e}")
                     continue
 
-                # Deserialize the incoming request
-                # This converts binary MessagePack data to Python objects
-                request = msgpack.unpackb(message, raw=False)
+                # Enforce maximum request size before deserialization
+                if len(message) > MAX_REQUEST_SIZE:
+                    logger.warning(
+                        "Request too large: %d bytes (max %d)",
+                        len(message), MAX_REQUEST_SIZE,
+                    )
+                    socket.send(msgpack.packb(
+                        error_response("Request too large"),
+                        use_bin_type=True,
+                    ))
+                    continue
+
+                # Deserialize the incoming request safely
+                request = deserialize_message(message)
+                if not isinstance(request, dict):
+                    logger.warning("Malformed request: payload is not a dict")
+                    socket.send(msgpack.packb(
+                        error_response("Malformed request"),
+                        use_bin_type=True,
+                    ))
+                    continue
+                if "error" in request and not request.get("success", True):
+                    logger.warning(
+                        "Malformed request: %s",
+                        request.get("error", "deserialization failed"),
+                    )
+                    socket.send(msgpack.packb(
+                        error_response("Malformed request"),
+                        use_bin_type=True,
+                    ))
+                    continue
 
                 # Extract the requested operation type
                 action = request.get("action", "")
@@ -3018,13 +3084,13 @@ def run_server(
                 # Check for specialized operations in action_handlers dictionary
                 elif hasattr(server, "action_handlers") and action in server.action_handlers:
                     try:
-                        # Call the specialized operation handler
                         handler_func = server.action_handlers[action]
-                        # Pass the server instance as first argument
-                        response = handler_func(
-                            server,
-                            **{k: v for k, v in request.items() if k != "action"},
-                        )
+                        # Strip action and auth fields before passing to handler
+                        handler_kwargs = {
+                            k: v for k, v in request.items()
+                            if k not in ("action", "api_key", "tenant_id")
+                        }
+                        response = handler_func(server, **handler_kwargs)
                     except Exception as e:
                         logger.exception(f"Error in specialized operation handler: {e}")
                         response = error_response(f"Server error: {str(e)}")
@@ -3037,9 +3103,18 @@ def run_server(
                 if "timestamp" not in response:
                     response["timestamp"] = time.time()
 
-                # Send the response back to the client
-                # Serialize to binary format for efficient transmission
-                socket.send(msgpack.packb(response, use_bin_type=True))
+                # Serialize and enforce maximum response size
+                response_data = msgpack.packb(response, use_bin_type=True)
+                if len(response_data) > MAX_RESPONSE_SIZE:
+                    logger.warning(
+                        "Response too large: %d bytes (max %d)",
+                        len(response_data), MAX_RESPONSE_SIZE,
+                    )
+                    response_data = msgpack.packb(
+                        error_response("Response too large"),
+                        use_bin_type=True,
+                    )
+                socket.send(response_data)
 
             except zmq.error.Again:
                 # Socket timeout - just continue and wait for the next message

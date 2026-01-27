@@ -767,71 +767,24 @@ def hybrid_search(
     if index_id not in server.indexes:
         return {"success": False, "error": f"Index {index_id} not found"}
 
-    try:
-        # First, perform vector search
-        search_result = server._search(index_id, query_vectors, k=k*2, params=params)
-        if not search_result.get("success", False):
-            return search_result
-
-        # If no metadata filter, just return the vector search results
-        if metadata_filter is None:
-            return search_result
-
-        # Extract results
-        results = search_result.get("results", [])
-        if not results:
-            return search_result
-
-        # Apply metadata filtering to each query result
-        filtered_results = []
-
-        for query_result in results:
-            distances = query_result.get("distances", [])
-            indices = query_result.get("indices", [])
-
-            # Skip if no results
-            if not indices:
-                filtered_results.append({"distances": [], "indices": []})
-                continue
-
-            # Apply metadata filtering and rescoring
-            filtered_distances = []
-            filtered_indices = []
-
-            for i, (dist, idx) in enumerate(zip(distances, indices)):
-                # Skip invalid indices
-                if idx < 0 or idx >= server.indexes[index_id].ntotal:
-                    continue
-
-                # Check metadata filter if defined
-                if metadata_filter:
-                    # TODO: Implement metadata filtering logic
-                    # This is a placeholder for future implementation
-                    pass
-
-                # Add to filtered results
-                filtered_distances.append(dist)
-                filtered_indices.append(idx)
-
-                # Stop once we have enough results
-                if len(filtered_indices) >= k:
-                    break
-
-            # Add query result to filtered results
-            filtered_results.append({
-                "distances": filtered_distances,
-                "indices": filtered_indices
-            })
-
-        # Return filtered results
+    if metadata_filter is not None:
         return {
-            "success": True,
-            "results": filtered_results,
-            "num_queries": len(query_vectors),
-            "k": k,
-            "filtered": True,
-            "vector_weight": vector_weight
+            "success": False,
+            "error": (
+                "Metadata filtering is not yet implemented. "
+                "Use hybrid_search without metadata_filter for pure "
+                "vector similarity search."
+            ),
         }
+
+    if vector_weight != 1.0 and vector_weight != 0.5:
+        logger.warning(
+            "vector_weight is ignored without metadata filtering; "
+            "performing pure vector search"
+        )
+
+    try:
+        return server._search(index_id, query_vectors, k=k, params=params)
 
     except Exception as e:
         logger.exception(f"Error in hybrid_search: {e}")

@@ -38,6 +38,7 @@ interrupt the main thread if the operation takes longer than the specified time.
 This avoids the need for signal handling and works reliably across platforms.
 """
 
+import ctypes
 import threading
 import functools
 import time
@@ -105,55 +106,38 @@ def set_timeout(timeout: float) -> None:
         TIMEOUT = timeout
 
 
-def interrupt_function(func_name: str, exception_cls: Type[Exception] = TimeoutError) -> None:
+def _raise_in_thread(
+    thread_id: int,
+    exception_cls: Type[Exception],
+    func_name: str,
+) -> None:
     """
-    Interrupt the main thread with a timeout exception.
+    Raise an exception asynchronously in the specified thread.
 
-    This function finds the main thread and raises the specified exception in it,
-    effectively interrupting the current operation. It handles thread state locks
-    appropriately for different Python versions.
+    Uses ctypes to inject an exception into the target thread via
+    CPython's PyThreadState_SetAsyncExc. The exception will be raised
+    the next time the target thread executes a Python bytecode instruction.
 
     Args:
-        func_name: Name of the function that timed out (for error message)
-        exception_cls: Exception class to raise on timeout
-
-    Raises:
-        The specified exception in the main thread
-
-    Implementation Note:
-        This approach works by finding the main thread and releasing its state lock
-        before raising an exception. This technique requires careful handling of
-        Python's thread synchronization mechanisms.
+        thread_id: Native thread identifier (threading.Thread.ident)
+        exception_cls: Exception class to raise in the target thread
+        func_name: Name of the timed-out function (for logging)
     """
-    # Create a descriptive error message that includes the function name
-    error_msg = f"Operation {func_name} timed out"
-    logger.error(error_msg)
-
-    # Find the main thread by its name from all active threads
-    # We use next() with a generator expression and provide a None fallback
-    main_thread = next(
-        (t for t in threading.enumerate() if t.name == "MainThread"),
-        None
+    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_ulong(thread_id),
+        ctypes.py_object(exception_cls),
     )
-
-    # If we couldn't find the main thread, log a warning and exit
-    if main_thread is None:
-        logger.warning("Could not find main thread for interruption")
-        return
-
-    # Handle thread state lock for Python 3.7+
-    # The _tstate_lock must be released before we can raise an exception in the thread
-    if hasattr(main_thread, "_tstate_lock"):
-        if main_thread._tstate_lock:  # type: ignore
-            try:
-                main_thread._tstate_lock.release()  # type: ignore
-            except (RuntimeError, AttributeError) as e:
-                # This could happen if the lock was already released or during interpreter shutdown
-                logger.debug(f"Failed to release thread state lock: {e}")
-
-    # Raise the exception to interrupt the operation
-    # This will propagate to the main thread and terminate the long-running function
-    raise exception_cls(error_msg)
+    if res == 0:
+        logger.warning("Timeout: invalid thread id %s", thread_id)
+    elif res > 1:
+        # Affected more than one thread -- revert immediately
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            ctypes.c_ulong(thread_id), None
+        )
+        logger.error(
+            "Timeout: PyThreadState_SetAsyncExc affected multiple "
+            "threads for %s -- reverted", func_name
+        )
 
 
 # Type signature for decorator applied with explicit timeout parameter
@@ -302,36 +286,40 @@ def _timeout_wrapper(
         with _timeout_lock:
             timeout_value = TIMEOUT
 
-    # Define timeout handler to interrupt execution
-    # This function will be called by the timer thread when the timeout is reached
-    def handle_timeout() -> None:
-        """Inner function that is triggered when timeout occurs."""
-        interrupt_function(func.__qualname__, exception_cls)
+    # Run the function in a daemon thread so we can enforce the timeout
+    # from the calling thread regardless of whether the function is
+    # blocked in a C extension (e.g. socket recv, time.sleep).
+    result_container: dict = {}
 
-    # Create and start daemon timer thread
-    # Using a daemon thread ensures it won't prevent program exit
-    timer = threading.Timer(timeout_value, handle_timeout)
-    timer.daemon = True
-    timer.start()
+    def _target() -> None:
+        try:
+            result_container["value"] = func(*args, **kwargs)
+        except Exception as exc:
+            result_container["error"] = exc
 
-    # Record start time to measure function execution duration
+    worker = threading.Thread(target=_target, daemon=True)
     start_time = time.time()
-    try:
-        # Execute the wrapped function with its original arguments
-        result = func(*args, **kwargs)
+    worker.start()
+    worker.join(timeout=timeout_value)
 
-        # Calculate elapsed time after function completes
-        elapsed = time.time() - start_time
+    elapsed = time.time() - start_time
 
-        # Log warning for operations using >80% of timeout
-        # This helps identify functions that are close to timing out
-        if elapsed > timeout_value * 0.8:
-            logger.warning(
-                f"{func.__qualname__} took {elapsed:.2f}s "
-                f"(timeout: {timeout_value:.2f}s)"
-            )
-        return result
-    finally:
-        # Always clean up timer to prevent resource leaks
-        # This ensures the timer thread doesn't trigger after function completion
-        timer.cancel()
+    if worker.is_alive():
+        # The function is still running -- raise timeout in caller.
+        # The daemon thread will be cleaned up at process exit.
+        logger.error(
+            "Operation %s timed out after %.2fs", func.__qualname__, elapsed
+        )
+        raise exception_cls(f"Operation {func.__qualname__} timed out")
+
+    # Log warning for operations using >80% of timeout
+    if elapsed > timeout_value * 0.8:
+        logger.warning(
+            f"{func.__qualname__} took {elapsed:.2f}s "
+            f"(timeout: {timeout_value:.2f}s)"
+        )
+
+    if "error" in result_container:
+        raise result_container["error"]
+
+    return result_container.get("value")
