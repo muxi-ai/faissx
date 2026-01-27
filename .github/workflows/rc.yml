@@ -30,7 +30,14 @@ jobs:
       - name: Lint with ruff
         run: ruff check faissx tests
 
-      - name: Run unit tests
+      - name: Start FAISSx server
+        run: |
+          python -m faissx.server.server --port 45678 --log-level WARNING &
+          sleep 3
+
+      - name: Run tests
+        env:
+          FAISSX_SERVER: tcp://localhost:45678
         run: pytest tests/ --tb=short -q --ignore=tests/client_indices --ignore=tests/test_reconstruction.py
 
   build:
