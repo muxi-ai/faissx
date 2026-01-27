@@ -1,4 +1,4 @@
-# FAISSx (FAISS, Extended)
+# FAISSx — FAISS, Extended
 
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://github.com/muxi-ai/faissx)&nbsp;
 [![PyPi Version](https://img.shields.io/pypi/v/faissx?maxAge=60%)](https://pypi.python.org/pypi/faissx)&nbsp;
