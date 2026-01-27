@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -29,11 +28,12 @@ across different index types, and integrates with the FAISSx memory management
 system for efficient resource utilization.
 """
 
-import uuid
-import numpy as np
-from typing import Tuple, Any, Dict, Union
-import faiss
 import logging
+import uuid
+from typing import Any, Dict, Tuple, Union
+
+import faiss
+import numpy as np
 
 # Define fallback constants for environments where FAISS isn't fully available
 # This ensures basic functionality even without the full FAISS library

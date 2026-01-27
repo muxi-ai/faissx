@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -47,12 +46,12 @@ Module features:
 """
 
 import uuid
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, cast
+
 import numpy as np
-from typing import Tuple, Any, Optional, List, Dict, TypeVar, cast
 
 from ..client import get_client
-from .base import logger, FAISSxBaseIndex
-
+from .base import FAISSxBaseIndex, logger
 
 # Default values for common parameters
 DEFAULT_BATCH_SIZE = 1000  # Default batch size for adding vectors
@@ -102,7 +101,7 @@ class HNSWParameters:
         Args:
             parent_index: The parent IndexHNSWFlat instance these parameters belong to
         """
-        self.parent_index: 'IndexHNSWFlat' = parent_index
+        self.parent_index: IndexHNSWFlat = parent_index
         # Default efSearch value - affects search accuracy vs speed
         # Higher values = more accurate results, slower search
         self._efSearch: int = DEFAULT_EF_SEARCH  # Default in FAISS

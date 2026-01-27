@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -27,23 +26,22 @@ indices and their supporting operations.
 """
 
 # Core index implementations - organized by type
+# Factory and utility functions for index management
+from .factory import index_factory  # Index creation from string descriptions
 from .flat import IndexFlatL2  # Basic L2 distance-based index
-from .ivf_flat import IndexIVFFlat  # Inverted file index with flat vectors
 from .hnsw_flat import IndexHNSWFlat  # Hierarchical navigable small world graph
-
-# Quantization-based indices for memory-efficient vector storage
-from .pq import IndexPQ  # Product quantization for memory efficiency
-from .ivf_pq import IndexIVFPQ  # Combined IVF and PQ for large-scale search
-from .scalar_quantizer import IndexScalarQuantizer  # Scalar quantization
-from .ivf_scalar_quantizer import IndexIVFScalarQuantizer  # Scalar quantization
 
 # ID mapping implementations for custom vector identification
 from .id_map import IndexIDMap, IndexIDMap2  # Basic and extended ID mapping
-
-# Factory and utility functions for index management
-from .factory import index_factory  # Index creation from string descriptions
-from .io import write_index, read_index  # Index persistence operations
+from .io import read_index, write_index  # Index persistence operations
+from .ivf_flat import IndexIVFFlat  # Inverted file index with flat vectors
+from .ivf_pq import IndexIVFPQ  # Combined IVF and PQ for large-scale search
+from .ivf_scalar_quantizer import IndexIVFScalarQuantizer  # Scalar quantization
 from .modification import merge_indices, split_index  # Index modification utilities
+
+# Quantization-based indices for memory-efficient vector storage
+from .pq import IndexPQ  # Product quantization for memory efficiency
+from .scalar_quantizer import IndexScalarQuantizer  # Scalar quantization
 
 # Public API exports - organized by category for clear documentation
 __all__ = [

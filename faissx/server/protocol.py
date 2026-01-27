@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -58,9 +57,10 @@ providing reliable message delivery with built-in retry mechanisms
 and comprehensive error recovery strategies.
 """
 
+from typing import Any, Dict, List, Optional, Tuple
+
 import msgpack
 import numpy as np
-from typing import Dict, List, Any, Tuple, Optional
 
 # Protocol Constants for Message Structure
 # These constants ensure consistent message formatting across all operations

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Specialized Operations
 # https://github.com/muxi-ai/faissx
@@ -26,9 +25,10 @@ in the core API to ensure full compatibility with FAISS-CPU.
 """
 
 import logging
-from typing import Dict, List, Optional, Any
-import numpy as np
+from typing import Any, Dict, List, Optional
+
 import faiss
+import numpy as np
 
 logger = logging.getLogger(__name__)
 

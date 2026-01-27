@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -29,10 +28,11 @@ IVF-PQ combines inverted file indexing with product quantization for efficient
 similarity search and memory usage, making it ideal for large-scale applications.
 """
 
-from typing import Any, Dict, Optional, Tuple
-import uuid
-import numpy as np
 import time
+import uuid
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
 
 try:
     import faiss
@@ -40,7 +40,7 @@ except ImportError:
     faiss = None
 
 from ..client import get_client
-from .base import logger, FAISSxBaseIndex
+from .base import FAISSxBaseIndex, logger
 
 
 class IndexIVFPQ(FAISSxBaseIndex):

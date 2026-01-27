@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Persistence Module
 # https://github.com/muxi-ai/faissx
@@ -55,14 +54,14 @@ This module integrates with the FAISSx server infrastructure to provide reliable
 data persistence across server restarts, tenant migrations, and system upgrades.
 """
 
-import os
-import time
 import json
+import logging
+import os
 import pickle
 import tempfile
+import time
 from pathlib import Path
-from typing import Any, Dict, Tuple, Optional, Union, List
-import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-party imports
 import faiss
@@ -457,7 +456,7 @@ def load_index(
     metadata_path = str(filepath) + DEFAULT_METADATA_EXTENSION
     metadata = {}
     if os.path.exists(metadata_path):
-        with open(metadata_path, "r") as f:
+        with open(metadata_path) as f:
             metadata = json.load(f)
 
     # Load the index

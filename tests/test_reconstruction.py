@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Client Vector Reconstruction Test
 # https://github.com/muxi-ai/faissx
@@ -22,13 +21,14 @@
 A simple test to verify the vector reconstruction functionality
 """
 
-import os
-import numpy as np
 import logging
+import os
 import uuid
+
+import numpy as np
+
 from faissx.client.client import FaissXClient
 from faissx.client.indices.flat import IndexFlatL2
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')

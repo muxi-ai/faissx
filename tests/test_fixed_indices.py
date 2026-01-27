@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Client Specialized Index Test
 # https://github.com/muxi-ai/faissx
@@ -22,13 +21,14 @@
 Tests for the fixed specialized index types (PQ and IVF_SQ)
 """
 
-import os
-import numpy as np
 import logging
+import os
 import time
 import uuid
-from faissx.client.client import FaissXClient
 
+import numpy as np
+
+from faissx.client.client import FaissXClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')

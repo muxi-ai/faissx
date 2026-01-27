@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -25,11 +24,12 @@ This module provides a binary vector index using hash-based lookup with Hamming 
 which is compatible with the FAISS IndexBinaryHash.
 """
 
-import numpy as np
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Set, Tuple
 
-from faissx.client.indices.binary_base import BinaryIndex
+import numpy as np
+
 from faissx.client.client import get_client
+from faissx.client.indices.binary_base import BinaryIndex
 
 
 class IndexBinaryHash(BinaryIndex):
@@ -187,7 +187,7 @@ class IndexBinaryHash(BinaryIndex):
                 vector = vectors[i]
 
                 # Compute hash codes for each table and add to buckets
-                for table_idx, (hash_table, bit_mask) in enumerate(zip(self.hash_tables, self.bit_masks)):
+                for _table_idx, (hash_table, bit_mask) in enumerate(zip(self.hash_tables, self.bit_masks)):
                     hash_code = self._compute_hash(vector, bit_mask)
 
                     # Add vector index to hash bucket
@@ -247,7 +247,7 @@ class IndexBinaryHash(BinaryIndex):
                 candidates: Set[int] = set()
                 q = query[i]
 
-                for table_idx, (hash_table, bit_mask) in enumerate(zip(self.hash_tables, self.bit_masks)):
+                for _table_idx, (hash_table, bit_mask) in enumerate(zip(self.hash_tables, self.bit_masks)):
                     hash_code = self._compute_hash(q, bit_mask)
 
                     # Add vectors in the same bucket as candidates

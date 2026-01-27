@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -53,15 +52,16 @@ Indices are automatically persisted to disk with a structured directory layout:
         vectors.json     # Vector metadata mappings
 """
 
-import os  # Operating system interface for file operations
 import json  # JSON serialization for metadata persistence
-import uuid  # UUID generation for unique identifiers
-import numpy as np  # Numerical operations for vector processing
-import faiss  # Facebook AI Similarity Search library
-from typing import Dict, List, Any, Optional, Tuple  # Type hints for better code safety
-import threading  # Thread synchronization primitives
-from pathlib import Path  # Modern path handling for cross-platform compatibility
 import logging  # Structured logging for monitoring and debugging
+import os  # Operating system interface for file operations
+import threading  # Thread synchronization primitives
+import uuid  # UUID generation for unique identifiers
+from pathlib import Path  # Modern path handling for cross-platform compatibility
+from typing import Any, Dict, List, Optional, Tuple  # Type hints for better code safety
+
+import faiss  # Facebook AI Similarity Search library
+import numpy as np  # Numerical operations for vector processing
 
 # Logging configuration for the FAISS core module
 logger = logging.getLogger("faissx.server")
@@ -280,7 +280,7 @@ class FaissManager:
 
                 try:
                     # Load index metadata with JSON validation
-                    with open(index_meta_path, "r", encoding="utf-8") as f:
+                    with open(index_meta_path, encoding="utf-8") as f:
                         index_meta = json.load(f)
 
                     # Load FAISS index binary file
@@ -291,7 +291,7 @@ class FaissManager:
                     # This file may not exist for indices created without metadata
                     vectors_meta: Dict[VectorID, Dict[str, Any]] = {}
                     if vectors_meta_path.exists():
-                        with open(vectors_meta_path, "r", encoding="utf-8") as f:
+                        with open(vectors_meta_path, encoding="utf-8") as f:
                             vectors_meta = json.load(f)
 
                     # Store the loaded index and metadata in memory
@@ -679,7 +679,7 @@ class FaissManager:
             results = []
             all_vector_ids = list(vectors_meta.keys())
 
-            for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
+            for _i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
                 # Skip invalid indices (can happen if index has fewer vectors than k)
                 if idx < 0 or idx >= len(all_vector_ids):
                     continue

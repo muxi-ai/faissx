@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -35,36 +34,37 @@ The server uses a REP socket pattern to provide synchronous request-response
 communication and supports both in-memory and persistent storage of vector indices.
 """
 
-import os
-import time
-import json
-import zmq
-import faiss
-import logging
-import numpy as np
-import msgpack
-import threading
 import argparse
+import json
+import logging
+import os
+import threading
+import time
 from queue import Queue
 
+import faiss
+import msgpack
+import numpy as np
+import zmq
+
 from .. import __version__ as faissx_version
+from . import specialized_operations, transformations
+from .binary import binary_to_float, convert_to_binary, create_binary_index, is_binary_index_type
 from .core import DEFAULT_PORT
+from .logging import configure_logging
 from .response import (
-    error_response, success_response,
-    format_search_results, format_vector_results,
-    format_index_status
+    error_response,
+    format_index_status,
+    format_search_results,
+    format_vector_results,
+    success_response,
 )
 from .training import (
-    is_trained_for_use, requires_training,
-    get_training_requirements, estimate_training_vectors_needed
+    estimate_training_vectors_needed,
+    get_training_requirements,
+    is_trained_for_use,
+    requires_training,
 )
-from .binary import (
-    convert_to_binary, binary_to_float,
-    is_binary_index_type, create_binary_index
-)
-from .logging import configure_logging
-from . import specialized_operations
-from . import transformations
 
 # Server Configuration Constants
 # These constants ensure consistent server behavior and easy configuration management
@@ -313,7 +313,7 @@ class TaskWorker:
         # Mark as expired so the worker discards the result if it arrives
         self._expired.add(task_id)
         raise RequestTimeoutError(
-            "Task timed out after {} seconds".format(timeout)
+            f"Task timed out after {timeout} seconds"
         )
 
 
@@ -687,7 +687,7 @@ class FaissIndex:
                 vectors = []
 
                 # For each query result set
-                for query_idx, idx_array in enumerate(indices):
+                for _query_idx, idx_array in enumerate(indices):
                     query_vectors = []
                     # For each result in the set
                     for result_idx in idx_array:

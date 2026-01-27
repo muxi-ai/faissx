@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -26,8 +25,9 @@ before indexing or searching them, compatible with the FAISS IndexPreTransform.
 """
 
 import uuid
-import numpy as np
 from typing import Any, List, Tuple, Union
+
+import numpy as np
 
 try:
     import faiss
@@ -36,7 +36,7 @@ except ImportError:
 
 from ..client import get_client
 from ..transforms import VectorTransform
-from .base import logger, FAISSxBaseIndex
+from .base import FAISSxBaseIndex, logger
 
 
 class IndexPreTransform(FAISSxBaseIndex):
@@ -144,8 +144,7 @@ class IndexPreTransform(FAISSxBaseIndex):
                 base_index = getattr(self.index, "_local_index", self.index)
 
                 # Create FAISS transforms from our transform chain
-                faiss_transforms = []
-                for transform in self.transform_chain:
+                for _transform in self.transform_chain:
                     # We don't create FAISS transforms directly - we'll handle transforms ourselves
                     # This is just to create a compatible local index structure
                     # Depending on the transform type, we would create different FAISS transforms

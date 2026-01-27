@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 FAISSx IndexIVFScalarQuantizer implementation.
@@ -20,10 +19,11 @@ The IVF-SQ index offers a good trade-off between:
 - Construction time (faster than PQ-based indices)
 """
 
-from typing import Any, Dict, Tuple, Optional
-import uuid
-import numpy as np
 import time
+import uuid
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
 
 try:
     import faiss
@@ -31,7 +31,7 @@ except ImportError:
     faiss = None
 
 from ..client import get_client
-from .base import logger, FAISSxBaseIndex
+from .base import FAISSxBaseIndex, logger
 
 
 class IndexIVFScalarQuantizer(FAISSxBaseIndex):

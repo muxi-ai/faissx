@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -31,12 +30,14 @@ small to medium datasets where accuracy is more important than speed.
 """
 
 import uuid
+from typing import Any, Optional, Tuple, Type
+
 import numpy as np
-from typing import Tuple, Any, Optional, Type
+
+from ..client import get_client
 
 # Import the base module which provides access to FAISS
-from .base import logger, FAISSxBaseIndex
-from ..client import get_client
+from .base import FAISSxBaseIndex, logger
 
 # Default parameter values
 DEFAULT_BATCH_SIZE = 1000

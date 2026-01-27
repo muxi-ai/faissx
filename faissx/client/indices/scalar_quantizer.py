@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -30,11 +29,12 @@ offering a good balance between memory usage and search accuracy.
 """
 
 import uuid
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
-from typing import Tuple, Any, Dict, Optional, List
 
 from ..client import get_client
-from .base import logger, FAISSxBaseIndex
+from .base import FAISSxBaseIndex, logger
 
 
 class IndexScalarQuantizer(FAISSxBaseIndex):

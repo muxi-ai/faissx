@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -58,7 +57,7 @@ Example Usage:
 """
 
 import json
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 # Import auth module for setting API keys
 from . import auth
@@ -272,7 +271,7 @@ def _load_auth_keys_from_file(auth_file: str) -> Dict[str, str]:
     try:
         # Open file with explicit UTF-8 encoding for consistent behavior across platforms
         # Using context manager ensures file is properly closed even if errors occur
-        with open(auth_file, "r", encoding="utf-8") as f:
+        with open(auth_file, encoding="utf-8") as f:
             auth_data = json.load(f)
     except FileNotFoundError:
         # Re-raise with more descriptive message for better debugging

@@ -10,11 +10,12 @@ This test suite verifies that the FAISSx server correctly:
 5. Allows health checks (ping) without authentication
 """
 
-import unittest
-import numpy as np
-import time
 import subprocess
+import time
+import unittest
 from pathlib import Path
+
+import numpy as np
 
 from faissx import client as faiss
 

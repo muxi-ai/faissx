@@ -16,14 +16,12 @@
 Tests for the IndexPreTransform implementation.
 """
 
-import pytest
 import numpy as np
+import pytest
 
 from faissx.client.indices.flat import IndexFlatL2
 from faissx.client.indices.pre_transform import IndexPreTransform
-from faissx.client.transforms import (
-    L2NormTransform, PCATransform, RemapDimensionsTransform
-)
+from faissx.client.transforms import L2NormTransform, PCATransform, RemapDimensionsTransform
 
 
 def test_pre_transform_init():

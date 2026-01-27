@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Response Standardization
 # https://github.com/muxi-ai/faissx
@@ -55,8 +54,8 @@ providing consistent response formatting for all API endpoints while
 supporting monitoring, logging, and debugging requirements.
 """
 
-import time
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 # Response Structure Constants

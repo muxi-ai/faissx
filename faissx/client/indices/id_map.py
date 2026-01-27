@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 IndexIDMap and IndexIDMap2 implementations for FAISSx.
@@ -16,12 +15,14 @@ Key features:
 - Fallback mechanisms for error recovery
 """
 
-import numpy as np
 import uuid
-from typing import Tuple, Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
+
+import numpy as np
 
 # Import the client utilities
 from faissx.client.client import get_client
+
 from .base import FAISSxBaseIndex, logger
 
 # Avoid redefining logger
@@ -1385,7 +1386,7 @@ class IndexIDMap2(IndexIDMap):
                     # and only add new ones to the count
 
                     # Update local tracking of ID mappings
-                    for i, id_val in enumerate(ids):
+                    for id_val in ids:
                         id_val_int = int(id_val)  # Convert to int to use as key
                         if id_val_int not in self._rev_id_map:
                             # Only assign new indices for new IDs
@@ -1409,7 +1410,7 @@ class IndexIDMap2(IndexIDMap):
             self._local_index.add_with_ids(vectors, ids_array)
 
             # Update our tracking
-            for i, id_val in enumerate(ids):
+            for id_val in ids:
                 id_val_int = int(id_val)  # Convert to int to use as key
                 if id_val_int not in self._rev_id_map:
                     # Only assign new indices for new IDs

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Timeout decorator for enforcing operation timeouts
 # https://github.com/muxi-ai/faissx
@@ -39,11 +38,11 @@ This avoids the need for signal handling and works reliably across platforms.
 """
 
 import ctypes
-import threading
 import functools
-import time
 import logging
-from typing import Callable, Optional, Type, TypeVar, Any, cast, Union, overload
+import threading
+import time
+from typing import Any, Callable, Optional, Type, TypeVar, Union, cast, overload
 
 # Configure logging for the module
 logger = logging.getLogger(__name__)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -25,12 +24,13 @@ This module provides a binary vector index using Inverted File (IVF) with Hammin
 which is compatible with the FAISS IndexBinaryIVF.
 """
 
-import numpy as np
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+
+from faissx.client.client import get_client
 from faissx.client.indices.binary_base import BinaryIndex
 from faissx.client.indices.binary_flat import IndexBinaryFlat
-from faissx.client.client import get_client
 
 
 class IndexBinaryIVF(BinaryIndex):

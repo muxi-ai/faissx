@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Logging
 # https://github.com/muxi-ai/faissx
@@ -46,8 +45,8 @@ and hybrid operations.
 import logging
 import logging.handlers
 import sys
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 # Logging configuration constants for consistent formatting across the system
 # These constants provide predefined templates for different deployment scenarios
@@ -227,7 +226,7 @@ def configure_logging(
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
 
-        except (OSError, IOError) as e:
+        except OSError as e:
             logger.error(f"Failed to configure file logging to '{log_file}': {e}")
             logger.warning("Continuing with console logging only")
 

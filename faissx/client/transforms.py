@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -25,8 +24,9 @@ This module provides implementations of various vector transformations that can 
 used with IndexPreTransform for preprocessing vectors before indexing or searching.
 """
 
-import numpy as np
 from typing import List, Optional
+
+import numpy as np
 
 
 class VectorTransform:

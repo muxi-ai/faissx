@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -48,13 +47,13 @@ Usage examples:
     memory_manager.set_option('auto_unload_unused_indices', True)  # Enable auto cleanup
 """
 
-import logging
-import threading
-import math
-import time
 import gc
+import logging
+import math
+import threading
+import time
 import weakref
-from typing import Dict, Any, Set, Optional, TypeVar, Union
+from typing import Any, Dict, Optional, Set, TypeVar, Union
 
 import faiss
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Hybrid Search Module
 # https://github.com/muxi-ai/faissx
@@ -51,19 +50,19 @@ enterprise-grade hybrid search capabilities with monitoring and debugging suppor
 """
 
 import ast
+import logging  # Structured logging for monitoring and debugging
 import math
 import operator
-
-import numpy as np  # Numerical operations for vector processing and scoring
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Optional,
     Tuple,
-    Callable,
 )  # Type hints for better code safety
-import logging  # Structured logging for monitoring and debugging
+
+import numpy as np  # Numerical operations for vector processing and scoring
 
 # Logging configuration for hybrid search operations
 logger = logging.getLogger("faissx.server")
@@ -444,7 +443,7 @@ class MetadataStore:
         filtered_metadata = []
 
         # Apply filter to each query result
-        for q_idx, (query_indices, query_distances) in enumerate(
+        for _q_idx, (query_indices, query_distances) in enumerate(
             zip(indices, distances)
         ):
             f_indices = []
@@ -638,7 +637,7 @@ def _rerank_linear_combination(
         """Helper to handle the common query processing pattern."""
         return enumerate(zip(distances, indices, metadata))
 
-    for q_idx, (
+    for _q_idx, (
         query_distances,
         query_indices,
         query_metadata,
@@ -647,7 +646,7 @@ def _rerank_linear_combination(
         new_scores = []
 
         # Calculate combined scores
-        for i, (dist, idx, md) in enumerate(
+        for _i, (dist, _idx, md) in enumerate(
             zip(query_distances, query_indices, query_metadata)
         ):
             # Process vector distance
@@ -706,12 +705,12 @@ def _rerank_reciprocal_rank_fusion(
     reranked_indices = []
     reranked_scores = []
 
-    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(
+    for _q_idx, (query_distances, query_indices, query_metadata) in enumerate(
         zip(distances, indices, metadata)
     ):
         # Create rankings for vector similarity
         vector_ranks = {}
-        for i, (dist, idx) in enumerate(zip(query_distances, query_indices)):
+        for i, (_dist, idx) in enumerate(zip(query_distances, query_indices)):
             vector_ranks[idx] = i + 1  # 1-based rank
 
         # Create rankings for metadata score
@@ -868,12 +867,12 @@ def _rerank_custom_score(
     reranked_indices = []
     reranked_scores = []
 
-    for q_idx, (query_distances, query_indices, query_metadata) in enumerate(
+    for _q_idx, (query_distances, query_indices, query_metadata) in enumerate(
         zip(distances, indices, metadata)
     ):
         custom_scores = []
 
-        for i, (dist, idx, md) in enumerate(
+        for _i, (dist, idx, md) in enumerate(
             zip(query_distances, query_indices, query_metadata)
         ):
             vars_dict: Dict[str, float] = {"distance": dist}

@@ -16,10 +16,9 @@
 Tests for the IndexBinaryFlat index implementation.
 """
 
-import pytest
-import numpy as np
 import faiss as original_faiss  # Original FAISS for comparison
-
+import numpy as np
+import pytest
 
 # Import our implementation
 from faissx.client.indices.binary_flat import IndexBinaryFlat

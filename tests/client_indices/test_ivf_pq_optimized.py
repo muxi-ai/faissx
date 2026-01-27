@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Test file for optimized IndexIVFPQ implementation.
@@ -8,8 +7,9 @@ This test verifies that the optimized IndexIVFPQ works correctly in both
 local and remote modes, including training, adding vectors, and searching.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 
 from faissx import client as faiss

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Binary Index Support
 # https://github.com/muxi-ai/faissx
@@ -49,10 +48,11 @@ Performance Considerations:
 - Hamming distance is computed using efficient bitwise operations
 """
 
+import logging
+from typing import Any, Dict, List, Tuple
+
 import faiss
 import numpy as np
-from typing import Any, Dict, List, Tuple
-import logging
 
 logger = logging.getLogger("faissx.server")
 

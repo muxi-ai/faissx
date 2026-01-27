@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -44,12 +43,11 @@ Users can switch between local FAISS processing and remote FAISSx execution
 by simply adding a configure() call before creating any indices.
 """
 
-import os
 import sys
-from typing import Optional
 
 # Import core client functionality
-from .client import configure, FaissXClient, get_client
+from .client import FaissXClient, configure, get_client
+
 
 # Define a ScalarQuantizer class to match FAISS API
 class ScalarQuantizer:
@@ -67,17 +65,17 @@ class ScalarQuantizer:
 # Import index classes directly to expose them at the module level
 from .indices import (
     IndexFlatL2,
-    IndexIVFFlat,
     IndexHNSWFlat,
-    IndexPQ,
-    IndexIVFPQ,
-    IndexScalarQuantizer,
-    IndexIVFScalarQuantizer,
     IndexIDMap,
     IndexIDMap2,
+    IndexIVFFlat,
+    IndexIVFPQ,
+    IndexIVFScalarQuantizer,
+    IndexPQ,
+    IndexScalarQuantizer,
     index_factory,
+    read_index,
     write_index,
-    read_index
 )
 
 # # Global configuration variables with environment variable fallbacks

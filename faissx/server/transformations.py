@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Transformations Module
 # https://github.com/muxi-ai/faissx
@@ -39,11 +38,12 @@ Key Components:
 - Specialized index templates for common use cases
 """
 
+import logging
 import re
+from typing import Any, Dict, List, Optional, Tuple, Type
+
 import faiss
 import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, Type
-import logging
 
 # Default parameter constants for maintainability
 DEFAULT_PCA_EIGEN_POWER = -0.5           # Whitening power for PCAR
@@ -233,7 +233,7 @@ def create_pretransform_index(
 
     # Add each transformation to the pipeline in sequence
     # prepend_transform adds to the beginning, so we add in reverse order
-    for i, transform in enumerate(transforms):
+    for _i, transform in enumerate(transforms):
         index.prepend_transform(transform)
 
     return index
@@ -1197,7 +1197,7 @@ def list_supported_metrics() -> Dict[str, List[str]]:
         - Used for API validation and user guidance
     """
     metrics = {}
-    for name, metric in METRIC_TYPES.items():
+    for name, _metric in METRIC_TYPES.items():
         metrics[name] = [alias for alias, target in METRIC_ALIASES.items() if target == name]
 
     return metrics

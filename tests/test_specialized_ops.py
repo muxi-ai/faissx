@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Client Specialized Operations Test
 # https://github.com/muxi-ai/faissx
@@ -22,10 +21,11 @@
 Tests for specialized operations in the FAISSx proxy server
 """
 
+import logging
 import os
 import sys
+
 import numpy as np
-import logging
 
 from faissx.client.client import FaissXClient
 

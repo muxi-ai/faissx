@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Test script to verify that IndexFlatL2 works correctly.
@@ -7,9 +6,10 @@ Test script to verify that IndexFlatL2 works correctly.
 This script tests IndexFlatL2 in both local and remote modes.
 """
 
-import numpy as np
 import logging
 from time import sleep
+
+import numpy as np
 
 # Import FAISSx client
 from faissx import client as faiss

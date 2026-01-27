@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -69,21 +68,22 @@ Supported index types and descriptor formats:
   Example: index_factory(128, "IDMap2,IVF100,PQ16")  # IDMap2 wrapper for IVF-PQ
 """
 
-import re
 import logging
-from typing import Optional, Tuple, Union, TypeVar, Pattern, Match
+import re
+from typing import Match, Optional, Pattern, Tuple, TypeVar, Union
 
 import faiss
 
+from .base import FAISSxBaseIndex
+
 # Import all supported index types
 from .flat import IndexFlatL2
-from .ivf_flat import IndexIVFFlat
 from .hnsw_flat import IndexHNSWFlat
-from .pq import IndexPQ
-from .ivf_pq import IndexIVFPQ
-from .scalar_quantizer import IndexScalarQuantizer
 from .id_map import IndexIDMap, IndexIDMap2
-from .base import FAISSxBaseIndex
+from .ivf_flat import IndexIVFFlat
+from .ivf_pq import IndexIVFPQ
+from .pq import IndexPQ
+from .scalar_quantizer import IndexScalarQuantizer
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)

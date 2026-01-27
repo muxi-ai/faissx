@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -29,24 +28,25 @@ The implementation allows for both local and remote modes:
 - In remote mode, it reconstructs the index and transfers data appropriately
 """
 
+import logging
 import os
 import tempfile
-import logging
 import time
-from typing import Any, Optional, Union, TypeVar
+from typing import Any, Optional, TypeVar, Union
 
-import numpy as np
 import faiss
+import numpy as np
 
 from faissx.client.client import get_client
-from .flat import IndexFlatL2
-from .ivf_flat import IndexIVFFlat
-from .hnsw_flat import IndexHNSWFlat
-from .pq import IndexPQ
-from .ivf_pq import IndexIVFPQ
-from .scalar_quantizer import IndexScalarQuantizer
-from .id_map import IndexIDMap, IndexIDMap2
+
 from .factory import index_factory
+from .flat import IndexFlatL2
+from .hnsw_flat import IndexHNSWFlat
+from .id_map import IndexIDMap, IndexIDMap2
+from .ivf_flat import IndexIVFFlat
+from .ivf_pq import IndexIVFPQ
+from .pq import IndexPQ
+from .scalar_quantizer import IndexScalarQuantizer
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ def read_index(fname: str, gpu: bool = False) -> FaissIndex:
                 elapsed = time.time() - start_time
                 logger.info(f"Successfully loaded IDMap index from {fname} in {elapsed:.2f}s")
                 return index
-    except (IOError, ValueError, IndexError) as e:
+    except (OSError, ValueError, IndexError) as e:
         # Not a custom IDMap file or error reading it, try standard FAISS reading
         logger.debug(f"Not a custom IDMap file, trying standard FAISS reading: {e}")
         pass

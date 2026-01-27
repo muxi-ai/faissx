@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -57,13 +56,13 @@ import os
 # to ensure they're available in the global namespace
 from .client.index import (  # noqa: F401
     IndexFlatL2,
-    IndexIVFFlat,
     IndexHNSWFlat,
-    IndexPQ,
-    IndexIVFPQ,
-    IndexScalarQuantizer,
     IndexIDMap,
     IndexIDMap2,
+    IndexIVFFlat,
+    IndexIVFPQ,
+    IndexPQ,
+    IndexScalarQuantizer,
 )
 
 # Define public API
@@ -92,7 +91,7 @@ def get_version() -> str:
         The version string is stripped of any whitespace to ensure clean formatting.
     """
     version_file = os.path.join(os.path.dirname(__file__), ".version")
-    with open(version_file, "r", encoding="utf-8") as f:
+    with open(version_file, encoding="utf-8") as f:
         return f.read().strip()
 
 

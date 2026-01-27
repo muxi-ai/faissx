@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Simple test for io.py index persistence in local and remote modes.
 """
 
+import logging
 import os
 import tempfile
-import logging
+
 import numpy as np
 
 from faissx import client as faiss
 from faissx.client.client import get_client
-from faissx.client.indices.io import write_index, read_index
+from faissx.client.indices.io import read_index, write_index
 
 # Configure logging
 logging.basicConfig(

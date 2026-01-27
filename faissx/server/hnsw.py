@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server HNSW Module
 # https://github.com/muxi-ai/faissx
@@ -49,11 +48,12 @@ This module integrates with the FAISSx server to provide enterprise-grade HNSW i
 management with monitoring, optimization, and fine-grained control capabilities.
 """
 
+import logging  # Structured logging for monitoring and debugging
 import time  # Time measurement for performance monitoring
+from typing import Any, Dict, Optional, Tuple  # Type hints for better code safety
+
 import faiss  # Facebook AI Similarity Search library
 import numpy as np  # Numerical operations for vector processing
-from typing import Any, Dict, Optional, Tuple  # Type hints for better code safety
-import logging  # Structured logging for monitoring and debugging
 
 # Logging configuration for HNSW operations
 logger = logging.getLogger("faissx.server")

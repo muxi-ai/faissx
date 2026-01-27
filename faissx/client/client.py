@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -69,17 +68,19 @@ The client implements robust error handling with:
 - Detailed error messages with context information
 """
 
-import os
-import zmq
-import msgpack
-import numpy as np
 import logging
-from typing import Dict, Any, Optional, List, Union, Callable
+import os
 import time
 from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, Union
+
+import msgpack
+import numpy as np
+import zmq
+
+from .timeout import TimeoutError, set_timeout
 
 # Import from our custom timeout module
-from .timeout import timeout as operation_timeout, TimeoutError, set_timeout
 
 # Configure logging for the module
 logger = logging.getLogger(__name__)

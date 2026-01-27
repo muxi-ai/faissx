@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -46,9 +45,9 @@ Configuration Sources:
 - JSON files (handled by calling module)
 """
 
+import logging
 import os
 from typing import Dict, Optional
-import logging
 
 # Constants for configuration and validation
 ENV_API_KEYS_VAR = "faissx_API_KEYS"  # Environment variable name for API keys

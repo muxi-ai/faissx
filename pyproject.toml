@@ -70,8 +70,16 @@ target-version = "py38"
 select = ["E", "F", "N", "W", "I", "B", "UP"]
 ignore = [
     "E501",   # Line too long (handled separately)
+    "E402",   # Module-level import not at top — __init__ re-exports
+    "E741",   # Ambiguous variable name — FAISS API uses D, I, l
     "B904",   # raise ... from err
+    "N802",   # Function name should be lowercase — FAISS API compat
+    "N803",   # Argument name should be lowercase — FAISS API compat
+    "N806",   # Variable in function should be lowercase — FAISS API uses D, I
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F811", "F841", "B007"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

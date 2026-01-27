@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Test script to verify the updated IndexScalarQuantizer implementation.
@@ -7,8 +6,10 @@ Test script to verify the updated IndexScalarQuantizer implementation.
 This script tests both local and remote modes to ensure they work correctly.
 """
 
-import numpy as np
 import logging
+
+import numpy as np
+
 # Import FAISSx client
 from faissx import client as faiss
 from faissx.client.client import get_client

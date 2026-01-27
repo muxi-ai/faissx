@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -37,12 +36,12 @@ the actual computational work to the FAISSx server.
 
 # Import index implementations from their respective modules
 from .indices.flat import IndexFlatL2
-from .indices.ivf_flat import IndexIVFFlat
 from .indices.hnsw_flat import IndexHNSWFlat
-from .indices.pq import IndexPQ
-from .indices.ivf_pq import IndexIVFPQ
-from .indices.scalar_quantizer import IndexScalarQuantizer
 from .indices.id_map import IndexIDMap, IndexIDMap2
+from .indices.ivf_flat import IndexIVFFlat
+from .indices.ivf_pq import IndexIVFPQ
+from .indices.pq import IndexPQ
+from .indices.scalar_quantizer import IndexScalarQuantizer
 
 # Define public API - symbols that can be imported directly from this module
 __all__ = [

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Core Module Bridge
 # https://github.com/muxi-ai/faissx
@@ -42,18 +41,18 @@ Usage:
 
 # Standard library imports
 # NumPy is essential for efficient vector operations and FAISS integration
-import numpy as np  # Numerical operations and array handling
-
 # Type hints improve code readability and enable static analysis
 # Multi-line import for better readability and easier maintenance
 from typing import (
-    Dict,       # Dictionary type for key-value mappings
-    List,       # List type for sequences
-    Any,        # Any type for flexible typing when specific type is unknown
-    Union,      # Union type for values that can be one of several types
+    Any,  # Any type for flexible typing when specific type is unknown
+    Dict,  # Dictionary type for key-value mappings
+    List,  # List type for sequences
+    Tuple,  # Tuple type for fixed-length sequences
     TypedDict,  # TypedDict for structured dictionary types with known keys
-    Tuple,      # Tuple type for fixed-length sequences
+    Union,  # Union type for values that can be one of several types
 )  # Type hints for better code safety
+
+import numpy as np  # Numerical operations and array handling
 
 # Internal imports - Re-export core functionality needed by server.py
 # IndexID is imported from faiss_core to maintain module boundaries

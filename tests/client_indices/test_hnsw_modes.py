@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Test script for checking HNSW index in both local and remote modes.
 """
 
-import numpy as np
 import logging
 import sys
+
+import numpy as np
 
 # Configure logging
 logging.basicConfig(

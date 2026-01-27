@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -31,9 +30,10 @@ The implementation allows for both local and remote modes:
 """
 
 import logging
-import numpy as np
 import time
-from typing import List, Any, Optional, Callable, Dict, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+import numpy as np
 
 try:
     import faiss
@@ -41,15 +41,15 @@ except ImportError:
     faiss = None
 
 from ..client import get_client
-from .flat import IndexFlatL2
-from .ivf_flat import IndexIVFFlat
-from .hnsw_flat import IndexHNSWFlat
-from .pq import IndexPQ
-from .ivf_pq import IndexIVFPQ
-from .scalar_quantizer import IndexScalarQuantizer
-from .id_map import IndexIDMap, IndexIDMap2
-from .factory import index_factory
 from .base import FAISSxBaseIndex
+from .factory import index_factory
+from .flat import IndexFlatL2
+from .hnsw_flat import IndexHNSWFlat
+from .id_map import IndexIDMap, IndexIDMap2
+from .ivf_flat import IndexIVFFlat
+from .ivf_pq import IndexIVFPQ
+from .pq import IndexPQ
+from .scalar_quantizer import IndexScalarQuantizer
 
 logger = logging.getLogger(__name__)
 

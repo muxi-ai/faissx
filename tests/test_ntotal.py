@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Client ntotal test
 # https://github.com/muxi-ai/faissx
@@ -22,12 +21,13 @@
 A simple test to verify the ntotal fix
 """
 
-import os
-import numpy as np
 import logging
+import os
 import uuid
-from faissx.client.client import FaissXClient
 
+import numpy as np
+
+from faissx.client.client import FaissXClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')

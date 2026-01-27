@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -26,8 +25,9 @@ Hamming distance for similarity calculations on binary vectors.
 """
 
 import uuid
+from typing import Any, Dict, Optional, Tuple
+
 import numpy as np
-from typing import Dict, Optional, Tuple, Any
 
 from faissx.client.indices.base import Index
 

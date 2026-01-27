@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Training Utilities
 # https://github.com/muxi-ai/faissx
@@ -38,8 +37,9 @@ Key Functions:
 - Comprehensive training parameter recommendations
 """
 
-import faiss
 from typing import Any, Dict, Optional, Tuple, Type, Union
+
+import faiss
 
 # Training requirement constants
 # These values are based on FAISS documentation and empirical testing

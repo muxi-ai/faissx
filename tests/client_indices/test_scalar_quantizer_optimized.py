@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Test script to verify the optimized IndexScalarQuantizer implementation.
@@ -7,8 +6,10 @@ Test script to verify the optimized IndexScalarQuantizer implementation.
 This script tests both local and remote modes to ensure they work correctly.
 """
 
-import numpy as np
 import logging
+
+import numpy as np
+
 # Import FAISSx client
 from faissx import client as faiss
 from faissx.client.client import get_client
@@ -109,7 +110,7 @@ def test_remote_mode():
     # Test parameter setting
     print("\nTesting parameter setting...")
     index.set_parameter('batch_size', 500)
-    print(f"Set batch_size parameter to 500")
+    print("Set batch_size parameter to 500")
 
     return index
 

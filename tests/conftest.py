@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Pytest configuration and fixtures for FAISSx tests
 # https://github.com/muxi-ai/faissx
@@ -22,11 +21,12 @@
 Pytest configuration and fixtures for FAISSx tests
 """
 
-import os
-import pytest
 import logging
-from faissx.client.client import FaissXClient
+import os
 
+import pytest
+
+from faissx.client.client import FaissXClient
 
 # Configure logging for tests
 logging.basicConfig(

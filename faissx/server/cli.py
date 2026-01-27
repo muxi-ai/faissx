@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -42,12 +41,15 @@ Usage:
     faissx-server --version
 """
 
-import sys                          # System-specific parameters and functions
-import argparse                     # Command-line argument parsing library
-from typing import Dict, Optional   # Type hints for better code documentation
-from faissx import server          # Main server module for FAISSx operations
-from faissx import __version__     # Version information for display
-import logging                     # Logging framework for operational visibility
+import argparse  # Command-line argument parsing library
+import logging  # Logging framework for operational visibility
+import sys  # System-specific parameters and functions
+from typing import Dict, Optional  # Type hints for better code documentation
+
+from faissx import (
+    __version__,  # Version information for display
+    server,  # Main server module for FAISSx operations
+)
 
 # Constants for CLI configuration
 # These constants centralize default values and make the code more maintainable

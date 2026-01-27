@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -26,11 +25,12 @@ which is compatible with the FAISS IndexBinaryFlat.
 """
 
 import uuid
-import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from faissx.client.indices.binary_base import BinaryIndex
+import numpy as np
+
 from faissx.client.client import get_client
+from faissx.client.indices.binary_base import BinaryIndex
 
 
 class IndexBinaryFlat(BinaryIndex):

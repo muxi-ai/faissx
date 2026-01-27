@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -63,11 +62,11 @@ if is_recovering():
     print(f"Reconnection in progress. Attempts: {attempts_count()}")
 """
 
-import time
 import logging
-import threading
 import random
-from typing import Optional, Callable, Dict, Any, NamedTuple, List, TypeVar, cast
+import threading
+import time
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, TypeVar, cast
 
 from .client import get_client
 

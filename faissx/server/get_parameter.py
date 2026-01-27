@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # FAISSx Server Get Parameter
 # https://github.com/muxi-ai/faissx
@@ -42,9 +41,10 @@ This module is designed to be integrated with the FAISSx server to provide runti
 parameter introspection capabilities for monitoring and debugging purposes.
 """
 
-import faiss  # Facebook AI Similarity Search library
 import logging  # Structured logging for monitoring and debugging
 from typing import Dict, Union  # Type hints for better code safety
+
+import faiss  # Facebook AI Similarity Search library
 
 # Logging configuration for parameter retrieval operations
 logger = logging.getLogger(__name__)

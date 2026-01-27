@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Unified interface for LLM providers using OpenAI format
 # https://github.com/muxi-ai/faissx
@@ -32,10 +31,11 @@ Product Quantization (PQ) is a vector compression technique that:
 - Enables efficient similarity search at scale
 """
 
-from typing import Any, Tuple, Optional, TypeVar
-import uuid
-import numpy as np
 import time
+import uuid
+from typing import Any, Optional, Tuple, TypeVar
+
+import numpy as np
 
 try:
     import faiss
@@ -43,7 +43,7 @@ except ImportError:
     faiss = None
 
 from ..client import get_client
-from .base import logger, FAISSxBaseIndex
+from .base import FAISSxBaseIndex, logger
 
 # Type variable for self-referencing
 T = TypeVar('T', bound='IndexPQ')

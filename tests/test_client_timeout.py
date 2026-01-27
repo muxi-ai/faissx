@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Comprehensive test script for timeout functionality in FAISSx client.
@@ -14,10 +13,11 @@ This script tests:
 import logging
 import sys
 import time
-import zmq
-from faissx import client as faiss
-from faissx.client.timeout import TimeoutError, TIMEOUT
 
+import zmq
+
+from faissx import client as faiss
+from faissx.client.timeout import TIMEOUT, TimeoutError
 
 # Configure logging to see debug messages
 logging.basicConfig(

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Test for Optimized FAISSx Implementations
@@ -12,9 +11,10 @@ This test verifies the optimized implementations of:
 It tests both local and remote modes.
 """
 
-import numpy as np
 import logging
 import sys
+
+import numpy as np
 
 # Configure logging
 logging.basicConfig(
@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 
 # Try to import FAISSx
 try:
-    from faissx.client.client import get_client, FaissXClient
-    from faissx.client.indices.pq import IndexPQ
-    from faissx.client.indices.ivf_scalar_quantizer import IndexIVFScalarQuantizer
-    from faissx.client.indices.flat import IndexFlatL2
-    from faissx.client.indices.modification import merge_indices, split_index
     import faissx
+    from faissx.client.client import FaissXClient, get_client
+    from faissx.client.indices.flat import IndexFlatL2
+    from faissx.client.indices.ivf_scalar_quantizer import IndexIVFScalarQuantizer
+    from faissx.client.indices.modification import merge_indices, split_index
+    from faissx.client.indices.pq import IndexPQ
 except ImportError as e:
     logger.error(f"Failed to import FAISSx: {e}")
     sys.exit(1)
