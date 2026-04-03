@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.20260403.0
+
+### Fixed
+- Server `data_dir` now persists FAISS indexes to disk and automatically reloads them on restart.
+- `data_dir` path handling now expands `~` (home directory) in server configuration.
+- Index lifecycle operations now keep persisted files in sync (create/add/train/reset/remove/delete).
+
+### Testing
+- Added server persistence coverage in `tests/test_server_data_dir_persistence.py`:
+  - Restart persistence with the configured `data_dir`
+  - home-path expansion behavior for `~/...`
+
+---
+
+## 0.20260128.1
+
+### Fixed
+- CI reliability improvements for integration tests by ensuring the FAISSx server is started before test execution.
+- Docker release workflow sequencing fixes so Docker build/publish runs only after a successful Release workflow.
+- Build metadata/hash corrections in `build.txt` for consistent release artifacts.
+
+---
+
+## 0.20260128.0
+
+### Changed
+- Switched project versioning from SemVer to **SCalVer** (`YYYYMMDD.patch`) for release numbering.
+
+### Added
+- New GitHub workflows for CI on `develop` and RC/release automation.
+- CalVer release workflow integration.
+
+### Fixed
+- Ruff lint fixes and FAISS-specific lint rule configuration updates.
+
 ## 0.0.3 (General Availability)
 
 ### New Features

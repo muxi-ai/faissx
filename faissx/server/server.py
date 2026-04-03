@@ -40,6 +40,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from queue import Queue
 
 import faiss
@@ -331,10 +332,88 @@ class FaissIndex:
         """
         self.indexes = {}
         self.dimensions = {}
-        self.data_dir = data_dir
+        self.data_dir = None
         self.base_indexes = {}  # Add initialization for base_indexes
         self.task_worker = TaskWorker()
+        if data_dir:
+            self.data_dir = Path(os.path.expanduser(str(data_dir))).resolve()
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            self._load_persisted_indexes()
         # logger.info("FAISSx server initialized (version %s)", faissx_version)
+
+    def _persisted_index_base_path(self, index_id):
+        """Return the base path for a persisted index."""
+        if not self.data_dir:
+            return None
+        safe_index_id = index_id.replace("/", "_").replace(os.sep, "_")
+        return self.data_dir / safe_index_id
+
+    def _persist_index(self, index_id):
+        """Persist a single index to disk when data_dir is configured."""
+        if not self.data_dir or index_id not in self.indexes:
+            return
+
+        try:
+            base_path = self._persisted_index_base_path(index_id)
+            index_path = base_path.with_suffix(".faiss")
+            meta_path = base_path.with_suffix(".json")
+
+            faiss.write_index(self.indexes[index_id], str(index_path))
+            metadata = {
+                "index_id": index_id,
+                "dimension": self.dimensions.get(index_id),
+                "base_index_id": self.base_indexes.get(index_id),
+            }
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as e:
+            logger.exception(f"Failed to persist index '{index_id}': {e}")
+
+    def _remove_persisted_index(self, index_id):
+        """Remove persisted index files from disk."""
+        if not self.data_dir:
+            return
+
+        base_path = self._persisted_index_base_path(index_id)
+        for file_path in (base_path.with_suffix(".faiss"), base_path.with_suffix(".json")):
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed removing persisted file '{file_path}': {e}")
+
+    def _load_persisted_indexes(self):
+        """Load all persisted indexes from disk into memory."""
+        if not self.data_dir or not self.data_dir.exists():
+            return
+
+        for index_file in self.data_dir.glob("*.faiss"):
+            base_path = index_file.with_suffix("")
+            meta_path = base_path.with_suffix(".json")
+
+            try:
+                index = faiss.read_index(str(index_file))
+                metadata = {}
+                if meta_path.exists():
+                    with open(meta_path, encoding="utf-8") as f:
+                        metadata = json.load(f)
+
+                index_id = metadata.get("index_id", base_path.name)
+                dimension = metadata.get("dimension", getattr(index, "d", None))
+                if dimension is None:
+                    logger.warning(
+                        "Skipping persisted index '%s' due to missing dimension metadata",
+                        index_id,
+                    )
+                    continue
+
+                self.indexes[index_id] = index
+                self.dimensions[index_id] = int(dimension)
+                base_index_id = metadata.get("base_index_id")
+                if base_index_id:
+                    self.base_indexes[index_id] = base_index_id
+            except Exception as e:
+                logger.exception(f"Failed loading persisted index file '{index_file}': {e}")
 
     def _run_with_timeout(self, func, *args, timeout=None, **kwargs):
         """
@@ -809,6 +888,7 @@ class FaissIndex:
                 else:
                     index.add(vectors_np)
 
+            self._persist_index(index_id)
             return success_response(
                 {
                     "ntotal": index.ntotal,
@@ -950,6 +1030,7 @@ class FaissIndex:
                 if metadata:
                     index_details["metadata"] = metadata
 
+                self._persist_index(index_id)
                 logger.debug("DEBUG: IDMap creation returning success_response")
                 return success_response(
                     index_details,
@@ -970,6 +1051,7 @@ class FaissIndex:
                     if metadata:
                         index_info["metadata"] = metadata
 
+                    self._persist_index(index_id)
                     logger.debug("DEBUG: Binary index creation returning success_response")
                     return success_response(
                         index_info,
@@ -992,6 +1074,7 @@ class FaissIndex:
                 # Add index_id to the info
                 index_info["index_id"] = index_id
 
+                self._persist_index(index_id)
                 logger.debug("DEBUG: Transformations creation returning success_response")
                 return success_response(
                     index_info,
@@ -1057,6 +1140,7 @@ class FaissIndex:
                 index_details["requires_training"] = True
                 index_details["training_info"] = training_reqs
 
+            self._persist_index(index_id)
             logger.debug("DEBUG: Fallback creation returning success_response")
             return success_response(index_details, message=f"Index {index_id} created successfully")
 
@@ -1127,6 +1211,7 @@ class FaissIndex:
             # Add vectors with IDs
             index.add_with_ids(vectors_np, ids_np)
             total = index.ntotal
+            self._persist_index(index_id)
 
             debug_msg = f"Added {len(vectors)} vectors w/ IDs to index {index_id}, total: {total}"
             logger.debug(debug_msg)
@@ -1175,6 +1260,7 @@ class FaissIndex:
                 f"remaining: {after_count}"
             )
             logger.debug(debug_msg)
+            self._persist_index(index_id)
             return {"success": True, "count": removed_count, "total": after_count}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1857,6 +1943,7 @@ class FaissIndex:
                 transform_trained = not transform_requires_training or transform.is_trained
                 base_index_trained = not base_index_requires_training or base_index.is_trained
 
+                self._persist_index(index_id)
                 return success_response({
                     "index_id": index_id,
                     "trained_with": len(training_vectors),
@@ -1885,6 +1972,7 @@ class FaissIndex:
             training_info = get_training_requirements(index)
 
             logger.debug(f"Trained index {index_id} with {len(training_vectors)} vectors")
+            self._persist_index(index_id)
             return success_response({
                 "index_id": index_id,
                 "trained_with": len(training_vectors),
@@ -2181,6 +2269,7 @@ class FaissIndex:
                     "error": f"Reset not supported for index type {type(index).__name__}"
                 }
 
+            self._persist_index(index_id)
             return {"success": True, "message": f"Index {index_id} has been reset"}
 
         except Exception as e:
@@ -2207,6 +2296,7 @@ class FaissIndex:
 
             # Remove the index
             del self.indexes[index_id]
+            self._remove_persisted_index(index_id)
 
             # Check if this is a base index for any IDMap indices
             for idx_id, base_id in list(self.base_indexes.items()):
@@ -2214,6 +2304,7 @@ class FaissIndex:
                     # Remove dependent IDMap indices
                     if idx_id in self.indexes:
                         del self.indexes[idx_id]
+                        self._remove_persisted_index(idx_id)
                     if idx_id in self.dimensions:
                         del self.dimensions[idx_id]
                     del self.base_indexes[idx_id]
@@ -2258,6 +2349,7 @@ class FaissIndex:
             # Delete the index
             del self.indexes[index_id]
             del self.dimensions[index_id]
+            self._remove_persisted_index(index_id)
 
             # Remove from base_indexes if present
             for idx_id, base_id in list(self.base_indexes.items()):

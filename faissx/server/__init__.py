@@ -57,6 +57,7 @@ Example Usage:
 """
 
 import json
+import os
 from typing import Any, Dict, Optional
 
 # Import auth module for setting API keys
@@ -149,7 +150,9 @@ def configure(
     # These are the fundamental server settings that control network and storage behavior
     _config["port"] = port
     _config["bind_address"] = bind_address
-    _config["data_dir"] = data_dir  # None means in-memory indices only
+    _config["data_dir"] = (
+        os.path.expanduser(data_dir) if data_dir else None
+    )  # None means in-memory indices only
 
     # Step 3: Handle authentication configuration
     # Initialize with provided auth_keys or empty dict if None
