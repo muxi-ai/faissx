@@ -11,17 +11,6 @@
 
 ---
 
-> [!TIP]
-> #### Support this project by starring this repo on GitHub!
->
-> More stars → more visibility → more contributors → better features → more robust tool for everyone 🎉
->
-> <a href="https://github.com/muxi-ai/faissx" target="_blank"><img src="https://img.shields.io/github/stars/muxi-ai/faissx.svg?style=social&label=Star&maxAge=60" alt="Star this repo"></a>
->
-> Thank you for your support! 🙏
-
----
-
 ## 📚 Table of Contents
 
 - [Overview](#-overview)
