@@ -72,14 +72,21 @@ Teams choose FAISSx over vanilla FAISS when they need vector search capabilities
 ### Installation
 
 ```bash
-# Install from PyPI
+# Install the default CPU package from PyPI
 pip install faissx
+
+# Install the GPU package variant
+# (currently Linux + Python 3.8-3.10)
+pip install faissx-gpu
 
 # For development
 git clone https://github.com/muxi-ai/faissx.git
 cd faissx
 pip install -e .
 ```
+
+Both distributions expose the same `faissx` Python package and import paths. The `faissx-gpu`
+variant only changes the underlying FAISS dependency from `faiss-cpu` to `faiss-gpu`.
 
 ### Quick Start: Running FAISSx Server
 
