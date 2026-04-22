@@ -21,9 +21,23 @@
 Tests for build-time package variant metadata.
 """
 
+import importlib.util
+from pathlib import Path
+
 import pytest
 
-from build_config import BUILD_VARIANT_ENV_VAR, get_setup_kwargs
+ROOT_DIR = Path(__file__).resolve().parents[1]
+BUILD_CONFIG_PATH = ROOT_DIR / "build_config.py"
+
+build_config_spec = importlib.util.spec_from_file_location("build_config", BUILD_CONFIG_PATH)
+if build_config_spec is None or build_config_spec.loader is None:
+    raise RuntimeError(f"Unable to load build configuration from {BUILD_CONFIG_PATH}")
+
+build_config = importlib.util.module_from_spec(build_config_spec)
+build_config_spec.loader.exec_module(build_config)
+
+BUILD_VARIANT_ENV_VAR = build_config.BUILD_VARIANT_ENV_VAR
+get_setup_kwargs = build_config.get_setup_kwargs
 
 
 def test_cpu_variant_is_default(monkeypatch):
