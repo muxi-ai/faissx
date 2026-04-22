@@ -21,7 +21,7 @@
 Build-time package configuration for FAISSx distributions.
 
 This module centralizes package metadata so the same source tree can publish
-both the default CPU distribution (``faissx``) and the GPU distribution
+both the default CPU distribution (``faissx``) and the CUDA 12 GPU distribution
 (``faissx-gpu``) without duplicating packaging files.
 """
 
@@ -54,27 +54,31 @@ DEV_DEPENDENCIES = [
     "ruff>=0.4.0",
 ]
 
-COMMON_CLASSIFIERS = [
+BASE_CLASSIFIERS = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+CPU_CLASSIFIERS = BASE_CLASSIFIERS + [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Operating System :: OS Independent",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 GPU_CLASSIFIERS = [
-    classifier
-    for classifier in COMMON_CLASSIFIERS
-    if classifier
-    not in {
-        "Programming Language :: Python :: 3.11",
-        "Operating System :: OS Independent",
-    }
-] + ["Operating System :: POSIX :: Linux"]
+    *BASE_CLASSIFIERS,
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
+]
 
 
 def read_version() -> str:
@@ -128,7 +132,7 @@ def get_install_requires(variant: str) -> list[str]:
     """
     Return install requirements for the requested build variant.
     """
-    faiss_dependency = "faiss-gpu>=1.7.2" if variant == "gpu" else "faiss-cpu>=1.8.0"
+    faiss_dependency = "faiss-gpu-cu12>=1.14.1.post1" if variant == "gpu" else "faiss-cpu>=1.8.0"
     return [faiss_dependency, *COMMON_DEPENDENCIES]
 
 
@@ -136,14 +140,14 @@ def get_python_requires(variant: str) -> str:
     """
     Return the supported Python range for the requested build variant.
     """
-    return ">=3.8,<3.11" if variant == "gpu" else ">=3.8"
+    return ">=3.10,<3.14" if variant == "gpu" else ">=3.8"
 
 
 def get_classifiers(variant: str) -> list[str]:
     """
     Return PyPI classifiers for the requested build variant.
     """
-    return GPU_CLASSIFIERS.copy() if variant == "gpu" else COMMON_CLASSIFIERS.copy()
+    return GPU_CLASSIFIERS.copy() if variant == "gpu" else CPU_CLASSIFIERS.copy()
 
 
 def get_setup_kwargs(variant: str | None = None) -> dict[str, Any]:

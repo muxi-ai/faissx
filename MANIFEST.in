@@ -9,7 +9,6 @@ include faissx/.version
 # Documentation
 include server/README.md
 include client/README.md
-include NEXT_STEPS.md
 
 # Source code - ensure all package files are included
 recursive-include faissx *.py

@@ -75,8 +75,8 @@ Teams choose FAISSx over vanilla FAISS when they need vector search capabilities
 # Install the default CPU package from PyPI
 pip install faissx
 
-# Install the GPU package variant
-# (currently Linux + Python 3.8-3.10)
+# Install the CUDA 12 GPU package variant
+# (currently Linux + Python 3.10-3.13)
 pip install faissx-gpu
 
 # For development
@@ -86,7 +86,8 @@ pip install -e .
 ```
 
 Both distributions expose the same `faissx` Python package and import paths. The `faissx-gpu`
-variant only changes the underlying FAISS dependency from `faiss-cpu` to `faiss-gpu`.
+variant is the CUDA 12 build and swaps the underlying FAISS dependency from `faiss-cpu`
+to `faiss-gpu-cu12`.
 
 ### Quick Start: Running FAISSx Server
 

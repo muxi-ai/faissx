@@ -24,7 +24,7 @@ The ``FAISSX_BUILD_VARIANT`` environment variable controls which distribution
 metadata is emitted:
 
 - ``cpu`` (default) -> publishes ``faissx`` with ``faiss-cpu``
-- ``gpu`` -> publishes ``faissx-gpu`` with ``faiss-gpu``
+- ``gpu`` -> publishes ``faissx-gpu`` with ``faiss-gpu-cu12``
 """
 
 import importlib.util

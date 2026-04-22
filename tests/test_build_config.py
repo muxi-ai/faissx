@@ -63,10 +63,12 @@ def test_gpu_variant_uses_gpu_distribution_metadata(monkeypatch):
     setup_kwargs = get_setup_kwargs()
 
     assert setup_kwargs["name"] == "faissx-gpu"
-    assert setup_kwargs["python_requires"] == ">=3.8,<3.11"
-    assert "faiss-gpu>=1.7.2" in setup_kwargs["install_requires"]
-    assert "Programming Language :: Python :: 3.11" not in setup_kwargs["classifiers"]
+    assert setup_kwargs["python_requires"] == ">=3.10,<3.14"
+    assert "faiss-gpu-cu12>=1.14.1.post1" in setup_kwargs["install_requires"]
+    assert "Programming Language :: Python :: 3.13" in setup_kwargs["classifiers"]
+    assert "Programming Language :: Python :: 3.9" not in setup_kwargs["classifiers"]
     assert "Operating System :: POSIX :: Linux" in setup_kwargs["classifiers"]
+    assert "Environment :: GPU :: NVIDIA CUDA :: 12" in setup_kwargs["classifiers"]
 
 
 def test_invalid_build_variant_raises_clear_error(monkeypatch):
