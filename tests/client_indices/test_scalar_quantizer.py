@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 
 
-def test_local_mode():
+def _run_local_mode_test():
     """Test the IndexScalarQuantizer in local mode."""
     print("\n=== Testing IndexScalarQuantizer in Local Mode ===")
 
@@ -62,7 +62,12 @@ def test_local_mode():
     return index
 
 
-def test_remote_mode():
+def test_local_mode():
+    """Test the IndexScalarQuantizer in local mode."""
+    _run_local_mode_test()
+
+
+def _run_remote_mode_test():
     """Test the IndexScalarQuantizer in remote mode."""
     print("\n=== Testing IndexScalarQuantizer in Remote Mode ===")
 
@@ -104,13 +109,18 @@ def test_remote_mode():
     return index
 
 
+def test_remote_mode():
+    """Test the IndexScalarQuantizer in remote mode."""
+    _run_remote_mode_test()
+
+
 if __name__ == "__main__":
     # First test local mode
-    local_index = test_local_mode()
+    local_index = _run_local_mode_test()
 
     # Then test remote mode
     try:
-        remote_index = test_remote_mode()
+        remote_index = _run_remote_mode_test()
         print("\n=== Test completed successfully ===")
         print("Both local and remote modes are working correctly!")
     except Exception as e:

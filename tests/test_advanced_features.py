@@ -46,7 +46,7 @@ def generate_test_data(dim=DIM, num=100, seed=42):
     return np.random.random((num, dim)).astype(np.float32)
 
 
-def test_reconstruction(client):
+def _run_reconstruction_test(client):
     """Test vector reconstruction functionality"""
     logger.info("\n=== Testing Vector Reconstruction ===")
 
@@ -98,7 +98,12 @@ def test_reconstruction(client):
     return success
 
 
-def test_search_and_reconstruct(client):
+def test_reconstruction(client):
+    """Test vector reconstruction functionality."""
+    _run_reconstruction_test(client)
+
+
+def _run_search_and_reconstruct_test(client):
     """Test search with reconstruction"""
     logger.info("\n=== Testing Search and Reconstruct ===")
 
@@ -151,7 +156,12 @@ def test_search_and_reconstruct(client):
     return success
 
 
-def test_merge_indices(client):
+def test_search_and_reconstruct(client):
+    """Test search with reconstruction."""
+    _run_search_and_reconstruct_test(client)
+
+
+def _run_merge_indices_test(client):
     """Test merging multiple indices"""
     logger.info("\n=== Testing Index Merging ===")
 
@@ -198,6 +208,11 @@ def test_merge_indices(client):
     return success
 
 
+def test_merge_indices(client):
+    """Test merging multiple indices."""
+    _run_merge_indices_test(client)
+
+
 def run_all_tests():
     """Run all advanced feature tests"""
     logger.info("Starting advanced feature tests...")
@@ -214,9 +229,9 @@ def run_all_tests():
         logger.info("Running in local mode")
 
     # Run tests
-    reconstruction_success = test_reconstruction(client)
-    search_reconstruct_success = test_search_and_reconstruct(client)
-    merge_success = test_merge_indices(client)
+    reconstruction_success = _run_reconstruction_test(client)
+    search_reconstruct_success = _run_search_and_reconstruct_test(client)
+    merge_success = _run_merge_indices_test(client)
 
     # Print summary
     logger.info("\n=== Test Results ===")

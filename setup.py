@@ -17,10 +17,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# All project metadata, dependencies, and optional-dependencies are defined in
-# pyproject.toml (PEP 621).  This file exists only for backwards compatibility
-# with tools that invoke ``python setup.py …`` directly.
+"""
+Build script for FAISSx distributions.
 
-from setuptools import setup
+The ``FAISSX_BUILD_VARIANT`` environment variable controls which distribution
+metadata is emitted:
 
-setup()
+- ``cpu`` (default) -> publishes ``faissx`` with ``faiss-cpu``
+- ``gpu`` -> publishes ``faissx-gpu`` with ``faiss-gpu``
+"""
+
+from setuptools import find_packages, setup
+
+from build_config import get_setup_kwargs
+
+setup(
+    packages=find_packages(where=".", include=["faissx*"]),
+    **get_setup_kwargs(),
+)

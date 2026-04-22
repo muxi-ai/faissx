@@ -7,11 +7,11 @@
 #   pip install -e ".[dev]"
 #
 # This file is kept for compatibility with tools that expect requirements.txt
-# All dependencies are defined in setup.py
+# All distribution dependencies are defined in setup.py
 
 # Install this package with all its dependencies
 -e .
 
-# Development dependencies (already defined in setup.py under [dev])
+# Development dependencies are already defined in setup.py via extras_require["dev"]
 # Uncomment the line below for development mode:
 # -e ".[dev]"

@@ -47,7 +47,7 @@ def generate_test_data(dim=DIM, num=100, seed=42):
     return np.random.random((num, dim)).astype(np.float32)
 
 
-def test_pq_index(client):
+def _run_pq_index_test(client):
     """Test PQ index creation and basic operations"""
     logger.info("\n=== Testing PQ Index ===")
 
@@ -100,7 +100,12 @@ def test_pq_index(client):
     return success
 
 
-def test_ivf_sq_index(client):
+def test_pq_index(client):
+    """Test PQ index creation and basic operations."""
+    _run_pq_index_test(client)
+
+
+def _run_ivf_sq_index_test(client):
     """Test IVF_SQ index creation and basic operations"""
     logger.info("\n=== Testing IVF_SQ Index ===")
 
@@ -153,6 +158,11 @@ def test_ivf_sq_index(client):
     return success
 
 
+def test_ivf_sq_index(client):
+    """Test IVF_SQ index creation and basic operations."""
+    _run_ivf_sq_index_test(client)
+
+
 def run_all_tests():
     """Run all index tests"""
     logger.info("Starting specialized index tests...")
@@ -169,8 +179,8 @@ def run_all_tests():
         logger.info("Running in local mode")
 
     # Run tests
-    pq_success = test_pq_index(client)
-    ivf_sq_success = test_ivf_sq_index(client)
+    pq_success = _run_pq_index_test(client)
+    ivf_sq_success = _run_ivf_sq_index_test(client)
 
     # Print summary
     logger.info("\n=== Test Results ===")

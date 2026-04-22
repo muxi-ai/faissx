@@ -76,7 +76,7 @@ def setup_remote_client():
             sys.exit(1)
     return None
 
-def test_pq_implementation():
+def _run_pq_implementation_test():
     """Test the optimized IndexPQ implementation"""
     logger.info("\n=== Testing IndexPQ Implementation ===")
 
@@ -138,7 +138,12 @@ def test_pq_implementation():
         logger.error(f"IndexPQ test failed: {e}")
         return False
 
-def test_ivf_sq_implementation():
+
+def test_pq_implementation():
+    """Test the optimized IndexPQ implementation."""
+    _run_pq_implementation_test()
+
+def _run_ivf_sq_implementation_test():
     """Test the optimized IndexIVFScalarQuantizer implementation"""
     logger.info("\n=== Testing IndexIVFScalarQuantizer Implementation ===")
 
@@ -207,7 +212,12 @@ def test_ivf_sq_implementation():
         logger.error(f"IndexIVFScalarQuantizer test failed: {e}")
         return False
 
-def test_modification_module():
+
+def test_ivf_sq_implementation():
+    """Test the optimized IndexIVFScalarQuantizer implementation."""
+    _run_ivf_sq_implementation_test()
+
+def _run_modification_module_test():
     """Test the optimized modification module (merge_indices, split_index)"""
     logger.info("\n=== Testing Modification Module ===")
 
@@ -254,6 +264,11 @@ def test_modification_module():
         logger.error(f"Modification module test failed: {e}")
         return False
 
+
+def test_modification_module():
+    """Test the optimized modification module."""
+    _run_modification_module_test()
+
 def run_all_tests():
     """Run all optimization tests"""
     logger.info("Starting optimization tests...")
@@ -264,9 +279,9 @@ def run_all_tests():
 
     # Run tests
     results = {
-        "IndexPQ": test_pq_implementation(),
-        "IndexIVFScalarQuantizer": test_ivf_sq_implementation(),
-        "Modification Module": test_modification_module()
+        "IndexPQ": _run_pq_implementation_test(),
+        "IndexIVFScalarQuantizer": _run_ivf_sq_implementation_test(),
+        "Modification Module": _run_modification_module_test()
     }
 
     # Print summary

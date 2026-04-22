@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.20260422.0
+
+### Added
+- Single-source dual distribution packaging for `faissx` and `faissx-gpu`, with the GPU variant built from the same codebase and package namespace.
+- Build-variant regression coverage in `tests/test_build_config.py` for CPU defaults, GPU metadata, and invalid variant handling.
+
+### Changed
+- Moved release metadata into build-time configuration so `FAISSX_BUILD_VARIANT=gpu` publishes `faissx-gpu` with `faiss-gpu`, while the default build continues publishing `faissx` with `faiss-cpu`.
+- Updated release workflows to lint packaging files and build both CPU and GPU distributions from the same repository.
+- Narrowed GPU distribution metadata to the currently supported `faiss-gpu` Python range (`>=3.8,<3.11`).
+- Cleaned packaging manifests and compatibility comments to match the new dual-publish flow.
+
+### Testing
+- Added CI wheel-build validation for both package variants.
+- Verified local packaging artifacts for both `faissx` and `faissx-gpu` before release.
+
+---
+
 ## 0.20260403.0
 
 ### Fixed

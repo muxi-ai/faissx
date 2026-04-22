@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("HNSW-TEST")
 
 
-def test_local_mode():
+def _run_local_mode_test():
     """Test HNSW index in local mode."""
     logger.info("=== Testing HNSW Index in Local Mode ===")
 
@@ -81,7 +81,12 @@ def test_local_mode():
     return True
 
 
-def test_remote_mode():
+def test_local_mode():
+    """Test HNSW index in local mode."""
+    _run_local_mode_test()
+
+
+def _run_remote_mode_test():
     """Test HNSW index in remote mode."""
     logger.info("=== Testing HNSW Index in Remote Mode ===")
 
@@ -152,16 +157,21 @@ def test_remote_mode():
     return True
 
 
+def test_remote_mode():
+    """Test HNSW index in remote mode."""
+    _run_remote_mode_test()
+
+
 def main():
     """Run the tests."""
     results = []
 
     # Test local mode
-    local_success = test_local_mode()
+    local_success = _run_local_mode_test()
     results.append(("Local Mode", local_success))
 
     # Test remote mode
-    remote_success = test_remote_mode()
+    remote_success = _run_remote_mode_test()
     results.append(("Remote Mode", remote_success))
 
     # Print summary

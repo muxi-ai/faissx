@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 
 
-def test_local_mode():
+def _run_local_mode_test():
     """Test IndexFlatL2 in local mode."""
     print("\n=== Testing IndexFlatL2 in Local Mode ===")
 
@@ -59,7 +59,12 @@ def test_local_mode():
     return success
 
 
-def test_remote_mode():
+def test_local_mode():
+    """Test IndexFlatL2 in local mode."""
+    _run_local_mode_test()
+
+
+def _run_remote_mode_test():
     """Test IndexFlatL2 in remote mode."""
     print("\n=== Testing IndexFlatL2 in Remote Mode ===")
 
@@ -102,17 +107,22 @@ def test_remote_mode():
     return success
 
 
+def test_remote_mode():
+    """Test IndexFlatL2 in remote mode."""
+    _run_remote_mode_test()
+
+
 if __name__ == "__main__":
     print("\n============================================================")
     print("TESTING IndexFlatL2")
     print("============================================================")
 
     # First test local mode
-    local_success = test_local_mode()
+    local_success = _run_local_mode_test()
 
     # Then test remote mode
     try:
-        remote_success = test_remote_mode()
+        remote_success = _run_remote_mode_test()
         print("\nOverall test result:")
         if local_success and remote_success:
             print("✅ SUCCESS: Both local and remote modes are working correctly!")

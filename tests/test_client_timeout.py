@@ -40,7 +40,7 @@ def create_test_client(timeout_value, server_address="tcp://nonexistent-host:456
     return client
 
 
-def test_instance_timeout():
+def _run_instance_timeout_test():
     """Test that the instance timeout value is used correctly."""
     print("\n===== Testing Instance-Level Timeout =====")
 
@@ -88,7 +88,12 @@ def test_instance_timeout():
             return False
 
 
-def test_global_timeout():
+def test_instance_timeout():
+    """Test that the instance timeout value is used correctly."""
+    _run_instance_timeout_test()
+
+
+def _run_global_timeout_test():
     """Test that the global TIMEOUT is used when no specific timeout is set."""
     print("\n===== Testing Global TIMEOUT Usage =====")
 
@@ -148,11 +153,15 @@ def test_global_timeout():
                 f"(expected: TimeoutError after ~{test_timeout}s)"
             )
 
-        # Restore original TIMEOUT
+        return success
+    finally:
         TIMEOUT = original_timeout
         print(f"\nRestored global TIMEOUT to {TIMEOUT}s")
 
-        return success
+
+def test_global_timeout():
+    """Test that the global TIMEOUT is used when no specific timeout is set."""
+    _run_global_timeout_test()
 
 
 def main():
@@ -162,10 +171,10 @@ def main():
     results = []
 
     # Test instance timeout
-    results.append(test_instance_timeout())
+    results.append(_run_instance_timeout_test())
 
     # Test global timeout
-    results.append(test_global_timeout())
+    results.append(_run_global_timeout_test())
 
     # Print summary
     print("\n===== Test Results =====")

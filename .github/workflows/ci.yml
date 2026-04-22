@@ -30,7 +30,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint with ruff
-        run: ruff check faissx tests
+        run: ruff check faissx tests build_config.py setup.py
 
       - name: Start FAISSx server
         run: |
@@ -41,3 +41,9 @@ jobs:
         env:
           FAISSX_SERVER: tcp://localhost:45678
         run: pytest tests/ --tb=short -q --ignore=tests/client_indices --ignore=tests/test_reconstruction.py
+
+      - name: Build distribution variants
+        run: |
+          python -m pip install --require-hashes -r requirements/build.txt
+          python -m build --wheel --outdir /tmp/faissx-dist
+          FAISSX_BUILD_VARIANT=gpu python -m build --wheel --outdir /tmp/faissx-dist

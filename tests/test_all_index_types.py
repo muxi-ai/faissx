@@ -77,7 +77,7 @@ def generate_test_data(dim=DIM, num=100, seed=42):
     return np.random.random((num, dim)).astype(np.float32)
 
 
-def test_index_type(client, index_type):
+def _run_index_type_test(client, index_type):
     """Test a specific index type for basic functionality"""
     logger.info(f"\n=== Testing Index Type: {index_type} ===")
 
@@ -180,6 +180,11 @@ def test_index_type(client, index_type):
     return True
 
 
+def test_index_type(client, index_type):
+    """Test a specific index type for basic functionality."""
+    _run_index_type_test(client, index_type)
+
+
 def run_tests():
     """Run tests for all specified index types"""
     logger.info("Starting index type compatibility tests...")
@@ -199,7 +204,7 @@ def run_tests():
     results = {}
 
     for index_type in INDEX_TYPES:
-        success = test_index_type(client, index_type)
+        success = _run_index_type_test(client, index_type)
         results[index_type] = success
 
     # Print summary
