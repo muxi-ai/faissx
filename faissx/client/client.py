@@ -238,6 +238,7 @@ class FaissXClient:
         self.socket: Optional[zmq.Socket] = None
         self.mode: str = "local"  # Start in local mode until configured
         self.timeout: float = DEFAULT_TIMEOUT
+        self._applied_timeout_ms: Optional[int] = None  # Timeout currently set on the socket
 
     def configure(
         self,
@@ -316,6 +317,7 @@ class FaissXClient:
             # Reset connection attributes
             self.socket = None
             self.context = None
+            self._applied_timeout_ms = None
             logger.info("Disconnected from server")
 
     @retry_on_failure()
@@ -366,7 +368,9 @@ class FaissXClient:
         timeout_ms = int(self.timeout * 1000)  # Convert seconds to milliseconds
         logger.debug(f"Setting socket timeout to {self.timeout}s ({timeout_ms}ms)")
         self.socket.setsockopt(zmq.RCVTIMEO, timeout_ms)  # Receive timeout
+        self.socket.setsockopt(zmq.SNDTIMEO, timeout_ms)  # Send timeout
         self.socket.setsockopt(zmq.LINGER, 0)  # Don't wait on close
+        self._applied_timeout_ms = timeout_ms
 
         # Connect to server and verify connection
         if not self.server:
@@ -447,12 +451,15 @@ class FaissXClient:
             raise RuntimeError("No active connection. Call connect() first.")
 
         # Ensure socket options match current self.timeout so that zmq
-        # send/recv never block longer than expected (defensive against
-        # sockets created without going through connect()).
+        # send/recv never block longer than expected. Only touch the socket
+        # when the timeout actually changed — setsockopt is a syscall and
+        # this runs on every request.
         timeout_ms = int(self.timeout * 1000)
-        self.socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
-        self.socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
-        self.socket.setsockopt(zmq.LINGER, 0)
+        if timeout_ms != self._applied_timeout_ms:
+            self.socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
+            self.socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
+            self.socket.setsockopt(zmq.LINGER, 0)
+            self._applied_timeout_ms = timeout_ms
 
         # Add authentication and tenant information if available
         if self.api_key:

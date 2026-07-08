@@ -161,7 +161,7 @@ class IndexFlatL2(FAISSxBaseIndex):
         try:
             logger.debug(f"Creating remote index {self.name} with dimension {d}")
             response = client.create_index(self.name, d, "L2")
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             if isinstance(response, dict):
                 self.index_id = response.get("index_id", self.name)
@@ -271,7 +271,7 @@ class IndexFlatL2(FAISSxBaseIndex):
         """
         try:
             response = client.add_vectors(self.index_id, vectors)
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             if isinstance(response, dict) and response.get("success", False):
                 self.ntotal += response.get("count", 0)
@@ -483,7 +483,7 @@ class IndexFlatL2(FAISSxBaseIndex):
             response = client.search(self.index_id, query_vectors, internal_k)
 
             # Log response
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Initialize default return values
             n = query_vectors.shape[0]
@@ -570,11 +570,11 @@ class IndexFlatL2(FAISSxBaseIndex):
         try:
             # First try to delete the index
             response = client.delete_index(self.name)
-            logger.debug(f"Delete index response: {response}")
+            logger.debug("Delete index response: %s", response)
 
             # Then recreate it
             response = client.create_index(self.name, self.d, "L2")
-            logger.debug(f"Create index response: {response}")
+            logger.debug("Create index response: %s", response)
 
             if isinstance(response, dict):
                 self.index_id = response.get("index_id", self.name)
@@ -751,7 +751,7 @@ class IndexFlatL2(FAISSxBaseIndex):
             response = client.range_search(self.index_id, query_vectors, radius)
 
             # Log response
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Process response
             if isinstance(response, dict):
@@ -850,7 +850,7 @@ class IndexFlatL2(FAISSxBaseIndex):
             response = client.reconstruct(self.index_id, i)
 
             # Log response
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Process response
             if isinstance(response, dict) and "vector" in response:
@@ -1002,7 +1002,7 @@ class IndexFlatL2(FAISSxBaseIndex):
             response = client.reconstruct_n(self.index_id, i0, ni)
 
             # Log response
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Process response
             if isinstance(response, dict) and "vectors" in response:

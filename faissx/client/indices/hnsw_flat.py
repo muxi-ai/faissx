@@ -1254,7 +1254,7 @@ class IndexHNSWFlat(FAISSxBaseIndex):
                 self.index_id = response.get("index_id", new_name)
             else:
                 # For string responses, use the name directly
-                logger.debug(f"Got string response: {response}")
+                logger.debug("Got string response: %s", response)
                 self.index_id = new_name
 
             self.name = new_name
