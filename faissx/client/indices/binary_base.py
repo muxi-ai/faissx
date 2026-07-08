@@ -29,14 +29,14 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from faissx.client.indices.base import Index
+from faissx.client.indices.base import FAISSxBaseIndex
 
 # Lookup table for bit counting (popcount)
 # This is used for efficient Hamming distance calculation
 BIT_COUNT_LUT = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
 
 
-class BinaryIndex(Index):
+class BinaryIndex(FAISSxBaseIndex):
     """
     Base class for binary indices using Hamming distance.
 
