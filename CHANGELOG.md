@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.20260708.0
+
+### Performance
+- Removed a ~100ms latency floor from every server operation: the task worker now signals results via a condition variable instead of polling with a 100ms sleep.
+- Index persistence no longer blocks requests on disk I/O. Mutations mark an index dirty; it is serialized at most once per interval (default 5s, configurable via `FAISSX_PERSIST_INTERVAL`, `0` restores synchronous writes) and written to disk atomically by a background thread, with a guaranteed flush on shutdown. Combined effect on a sequential add workload: ~220x faster (103ms → 0.47ms per add).
+- Hot-path debug logging no longer stringifies full request/response payloads when debug logging is disabled.
+- The client no longer reconfigures ZMQ socket options on every request; options are applied on connect and refreshed only when the timeout changes.
+
+### Fixed
+- Server `create_index` now falls back to `faiss.index_factory` for standard FAISS descriptor strings it has no bespoke handler for (e.g. `SQ8`, `IVF50,PQ8x8`, OPQ chains) instead of rejecting them.
+- `IndexScalarQuantizer` now auto-trains the remote index on first add, mirroring local-mode behavior; previously the server rejected adds to untrained scalar quantizer indexes.
+- Repaired a stale `Index` import in `binary_base.py` that broke all binary index tests at collection time.
+- Task IDs in the server task worker are now collision-free (monotonic counter instead of `str(time.time())`).
+
+### Testing
+- The test suite is now hermetic and fully green (81/81): conftest starts the source tree's server on a dynamically allocated port instead of relying on whatever listens on `tcp://localhost:45678`, the global client singleton is reset between tests to remove order-dependent failures, and the auth tests launch the server via `python -m faissx.server.cli` so they work from a source checkout.
+- Added coverage for debounced persistence, synchronous-mode persistence (`persist_interval=0`), and cancellation of pending writes on index deletion.
+
+---
+
 ## 0.20260422.0
 
 ### Added
