@@ -5,6 +5,7 @@ Test script for checking HNSW index in both local and remote modes.
 """
 
 import logging
+import os
 import sys
 
 import numpy as np
@@ -94,7 +95,7 @@ def _run_remote_mode_test():
     from faissx.client import client
 
     try:
-        client.configure(server="tcp://localhost:45678", timeout=5.0)
+        client.configure(server=os.environ["FAISSX_TEST_SERVER"], timeout=5.0)
         logger.info("Connected to server")
     except Exception as e:
         logger.error(f"Could not connect to server: {e}")

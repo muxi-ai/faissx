@@ -11,6 +11,7 @@ This test suite verifies that the FAISSx server correctly:
 """
 
 import subprocess
+import sys
 import time
 import unittest
 from pathlib import Path
@@ -45,8 +46,10 @@ class TestServerAuthentication(unittest.TestCase):
         port = 45679
         auth_keys_str = "123:tenant-1,abc:tenant-2"
 
+        # Launch via the current interpreter so the test works from a source
+        # checkout, without requiring the faissx.server console script.
         cmd = [
-            "faissx.server", "run",
+            sys.executable, "-m", "faissx.server.cli", "run",
             "--port", str(port),
             "--enable-auth",
             "--auth-keys", auth_keys_str,

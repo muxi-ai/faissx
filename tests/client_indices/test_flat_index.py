@@ -7,6 +7,7 @@ This script tests IndexFlatL2 in both local and remote modes.
 """
 
 import logging
+import os
 from time import sleep
 
 import numpy as np
@@ -69,7 +70,7 @@ def _run_remote_mode_test():
     print("\n=== Testing IndexFlatL2 in Remote Mode ===")
 
     # Configure for remote mode
-    faiss.configure(server="tcp://localhost:45678")
+    faiss.configure(server=os.environ["FAISSX_TEST_SERVER"])
     sleep(1)  # Give a moment for connection to establish
 
     # Verify we're in remote mode

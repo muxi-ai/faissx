@@ -12,6 +12,7 @@ It tests both local and remote modes.
 """
 
 import logging
+import os
 import sys
 
 import numpy as np
@@ -63,7 +64,7 @@ def setup_remote_client():
             # Create client properly
             client = FaissXClient()
             client.configure(
-                server="tcp://localhost:45678",
+                server=os.environ["FAISSX_TEST_SERVER"],
                 api_key="",
                 tenant_id="test-tenant"
             )
