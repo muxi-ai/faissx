@@ -7,6 +7,7 @@ This script tests both local and remote modes to ensure they work correctly.
 """
 
 import logging
+import os
 
 import numpy as np
 
@@ -79,7 +80,7 @@ def _run_remote_mode_test():
     print("\n=== Testing Optimized IndexScalarQuantizer in Remote Mode ===")
 
     # Configure for remote mode
-    faiss.configure(server="tcp://localhost:45678")
+    faiss.configure(server=os.environ["FAISSX_TEST_SERVER"])
 
     # Verify we're in remote mode
     client = get_client()

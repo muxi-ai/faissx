@@ -112,7 +112,7 @@ def test_ivf_sq_remote_mode():
     print("\nTesting IndexIVFScalarQuantizer in remote mode...")
 
     # Skip test if server is not available
-    server_addr = os.environ.get("FAISSX_SERVER", "tcp://localhost:45678")
+    server_addr = os.environ["FAISSX_TEST_SERVER"]
 
     try:
         # Configure remote mode by specifying a server

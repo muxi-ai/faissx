@@ -1009,7 +1009,22 @@ def create_index_from_type(
             "requires_training": True
         }
     else:
-        raise ValueError(f"Unsupported index type: {index_type}")
+        # Fall back to the FAISS index factory, which natively understands
+        # standard descriptor strings like "SQ8", "IVF50,PQ8x8" or "OPQ16,IVF64,PQ16"
+        metric = faiss.METRIC_L2
+        if metric_type.upper() == "IP":
+            metric = faiss.METRIC_INNER_PRODUCT
+        try:
+            index = faiss.index_factory(dimension, index_type, metric)
+        except RuntimeError:
+            raise ValueError(f"Unsupported index type: {index_type}")
+        index_info = {
+            "type": type(index).__name__,
+            "dimension": dimension,
+            "metric_type": "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2",
+            "is_trained": bool(index.is_trained),
+            "requires_training": not bool(index.is_trained),
+        }
 
     # Add metadata if provided
     if metadata:

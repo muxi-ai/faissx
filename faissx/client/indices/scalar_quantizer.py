@@ -348,6 +348,15 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         """
         logger.debug(f"Adding {len(vectors)} vectors to remote index {self.index_id}")
 
+        # Mirror local-mode behavior: scalar quantizers require training, so
+        # train on the first vectors added when the index is untrained.
+        if not self.is_trained:
+            result = client.train_index(self.index_id, vectors)
+            if isinstance(result, dict) and result.get("success", False):
+                self.is_trained = True
+            else:
+                logger.warning(f"Training remote index {self.index_id} failed: {result}")
+
         # Get batch size parameter
         batch_size = self.get_parameter('batch_size')
         if batch_size <= 0:

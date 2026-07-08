@@ -98,7 +98,7 @@ def test_io_local_mode():
 def test_io_remote_mode():
     """Test index persistence in remote mode."""
     # Skip test if server is not available
-    server_addr = os.environ.get("FAISSX_SERVER", "tcp://localhost:45678")
+    server_addr = os.environ["FAISSX_TEST_SERVER"]
 
     try:
         # Configure remote mode by specifying a server

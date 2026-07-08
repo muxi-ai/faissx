@@ -22,33 +22,18 @@ A simple test to verify the ntotal fix
 """
 
 import logging
-import os
 import uuid
 
 import numpy as np
-
-from faissx.client.client import FaissXClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
-def test_ntotal():
+def test_ntotal(client):
     """Test that ntotal is properly returned in add_vectors response"""
     logger.info("Testing ntotal in add_vectors response...")
-
-    # Create client instance
-    client = FaissXClient()
-
-    # Configure client to use server if environment variable is set
-    server_addr = os.environ.get('FAISSX_SERVER')
-    if server_addr:
-        logger.info(f"Running in remote mode with server: {server_addr}")
-        client.configure(server=server_addr)
-        client.connect()
-    else:
-        logger.info("Running in local mode")
 
     # Generate test data
     dimension = 8

@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger("specialized_ops_test")
 
 # Server settings from environment variable or default
-SERVER_URL = os.environ.get("FAISSX_SERVER", "tcp://localhost:45678")
+SERVER_URL = os.environ["FAISSX_TEST_SERVER"]
 DIMENSION = 128
 NUM_VECTORS = 1000
 
