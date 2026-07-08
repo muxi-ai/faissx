@@ -281,7 +281,7 @@ class IndexPQ(FAISSxBaseIndex):
             response = client.create_index(**params)
 
             # Log the raw response for debugging
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Parse response to get index ID
             if isinstance(response, str):
@@ -494,7 +494,7 @@ class IndexPQ(FAISSxBaseIndex):
             result = client.add_vectors(self.index_id, vectors)
 
             # Log response
-            logger.debug(f"Server response: {result}")
+            logger.debug("Server response: %s", result)
 
             # Update local tracking if addition was successful
             if isinstance(result, dict) and result.get("success", False):
@@ -671,7 +671,7 @@ class IndexPQ(FAISSxBaseIndex):
             )
 
             # Log response
-            logger.debug(f"Server response: {result}")
+            logger.debug("Server response: %s", result)
 
             n = query_vectors.shape[0]  # Number of query vectors
 

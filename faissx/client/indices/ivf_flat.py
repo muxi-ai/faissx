@@ -301,7 +301,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
             )
 
             # Log the raw response for debugging
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Parse response to get index ID
             self.index_id = self._parse_server_response(response, self.name)
@@ -485,7 +485,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
             result = client.add_vectors(self.index_id, vectors)
 
             # Log response
-            logger.debug(f"Server response: {result}")
+            logger.debug("Server response: %s", result)
 
             # Update local tracking if addition was successful
             if isinstance(result, dict) and result.get("success", False):
@@ -690,7 +690,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
             )
 
             # Log response
-            logger.debug(f"Server response: {result}")
+            logger.debug("Server response: %s", result)
 
             n = query_vectors.shape[0]  # Number of query vectors
 
@@ -859,7 +859,7 @@ class IndexIVFFlat(FAISSxBaseIndex):
             )
 
             # Log response
-            logger.debug(f"Server response: {result}")
+            logger.debug("Server response: %s", result)
 
             if not isinstance(result, dict) or not result.get("success", False):
                 error = (

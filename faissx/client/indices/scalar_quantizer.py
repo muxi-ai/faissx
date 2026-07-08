@@ -262,7 +262,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             )
 
             # Log the raw response for debugging
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Parse response to get index ID
             self.index_id = self._parse_server_response(response, self.name)
@@ -375,7 +375,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         result = client.add_vectors(self.index_id, vectors)
 
         # Log response
-        logger.debug(f"Server response: {result}")
+        logger.debug("Server response: %s", result)
 
         # Update local tracking if addition was successful
         if isinstance(result, dict) and result.get("success", False):
@@ -554,7 +554,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
         result = client.search(self.index_id, query_vectors=query_vectors, k=internal_k)
 
         # Log response
-        logger.debug(f"Server response: {result}")
+        logger.debug("Server response: %s", result)
 
         n = query_vectors.shape[0]  # Number of query vectors
 
@@ -746,7 +746,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             response = client.range_search(self.index_id, query_vectors, radius)
 
             # Log response
-            logger.debug(f"Range search server response: {response}")
+            logger.debug("Range search server response: %s", response)
 
             # Initialize default return values
             n = query_vectors.shape[0]
@@ -852,7 +852,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             )
 
             # Log the raw response for debugging
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Parse response
             if isinstance(response, dict):
@@ -878,7 +878,7 @@ class IndexScalarQuantizer(FAISSxBaseIndex):
             )
 
             # Log the raw response for debugging
-            logger.debug(f"Server response: {response}")
+            logger.debug("Server response: %s", response)
 
             # Parse response
             if isinstance(response, dict):

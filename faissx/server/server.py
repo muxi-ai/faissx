@@ -35,6 +35,7 @@ communication and supports both in-memory and persistent storage of vector indic
 """
 
 import argparse
+import itertools
 import json
 import logging
 import os
@@ -186,6 +187,8 @@ class TaskWorker:
         self.queue = Queue(maxsize=DEFAULT_TASK_QUEUE_SIZE)
         self.results = {}     # Task results storage (task_id -> result)
         self._expired = set()  # Task IDs abandoned due to timeout
+        self._results_cv = threading.Condition()  # Signals result availability
+        self._task_counter = itertools.count()  # Collision-free task IDs
 
         # Create and start the background worker thread
         # Daemon=True ensures thread dies when main process exits
@@ -215,20 +218,20 @@ class TaskWorker:
 
                 try:
                     result = func(*args, **kwargs)
+                    outcome = {"success": True, "result": result}
+                except Exception as e:
+                    logger.error(f"Task {task_id} failed: {str(e)}")
+                    outcome = {"success": False, "error": str(e)}
+                finally:
+                    self.queue.task_done()
 
+                with self._results_cv:
                     if task_id in self._expired:
                         # Caller already timed out -- discard result
                         self._expired.discard(task_id)
                     else:
-                        self.results[task_id] = {"success": True, "result": result}
-                except Exception as e:
-                    logger.error(f"Task {task_id} failed: {str(e)}")
-                    if task_id in self._expired:
-                        self._expired.discard(task_id)
-                    else:
-                        self.results[task_id] = {"success": False, "error": str(e)}
-                finally:
-                    self.queue.task_done()
+                        self.results[task_id] = outcome
+                        self._results_cv.notify_all()
             except Exception as e:
                 # Handle any unexpected worker thread errors
                 # This should rarely happen, but prevents thread death
@@ -249,7 +252,7 @@ class TaskWorker:
         Raises:
             RequestTimeoutError: If the task queue is full (backpressure).
         """
-        task_id = str(time.time())
+        task_id = str(next(self._task_counter))
 
         try:
             self.queue.put((task_id, func, args, kwargs), timeout=self.timeout)
@@ -292,27 +295,23 @@ class TaskWorker:
             RequestTimeoutError: If the task doesn't complete within the timeout
 
         Implementation Strategy:
-            - Uses polling with short sleep intervals rather than blocking wait
+            - Blocks on a condition variable signalled by the worker thread,
+              so results are returned as soon as they are available
             - Cleans up results after retrieval to prevent memory leaks
             - Provides precise timeout control for different operation types
         """
         # Use instance timeout if none provided
         timeout = timeout or self.timeout
-        start_time = time.time()
 
-        # Poll for results with timeout
-        while time.time() - start_time < timeout:
-            if task_id in self.results:
+        with self._results_cv:
+            if self._results_cv.wait_for(
+                lambda: task_id in self.results, timeout=timeout
+            ):
                 # Task completed - retrieve and clean up result
-                result = self.results[task_id]
-                del self.results[task_id]  # Prevent memory leaks
-                return result
+                return self.results.pop(task_id)
 
-            # Short sleep to prevent busy waiting
-            time.sleep(0.1)
-
-        # Mark as expired so the worker discards the result if it arrives
-        self._expired.add(task_id)
+            # Mark as expired so the worker discards the result if it arrives
+            self._expired.add(task_id)
         raise RequestTimeoutError(
             f"Task timed out after {timeout} seconds"
         )
@@ -323,18 +322,33 @@ class FaissIndex:
     FAISS index server implementation providing vector database operations.
     """
 
-    def __init__(self, data_dir=None):
+    def __init__(self, data_dir=None, persist_interval=None):
         """
         Initialize the FAISS server.
 
         Args:
-            data_dir (str, optional): Directory to persist indices (not implemented yet)
+            data_dir (str, optional): Directory to persist indices
+            persist_interval (float, optional): Minimum seconds between disk
+                writes per index. Mutations mark an index dirty; it is
+                serialized at most once per interval and written to disk by a
+                background thread. Set to 0 to write synchronously on every
+                mutation. Defaults to the FAISSX_PERSIST_INTERVAL environment
+                variable, or 5 seconds.
         """
         self.indexes = {}
         self.dimensions = {}
         self.data_dir = None
         self.base_indexes = {}  # Add initialization for base_indexes
         self.task_worker = TaskWorker()
+        if persist_interval is None:
+            persist_interval = float(os.environ.get("FAISSX_PERSIST_INTERVAL", "5"))
+        self.persist_interval = persist_interval
+        self._dirty_since = {}  # index_id -> monotonic time the index became dirty
+        self._last_persisted = {}  # index_id -> monotonic time of last serialization
+        self._pending_writes = {}  # index_id -> (bytes, metadata) awaiting disk write
+        self._writing_id = None  # index_id currently being written by the writer thread
+        self._persist_cv = threading.Condition()
+        self._writer_thread = None
         if data_dir:
             self.data_dir = Path(os.path.expanduser(str(data_dir))).resolve()
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -349,23 +363,140 @@ class FaissIndex:
         return self.data_dir / safe_index_id
 
     def _persist_index(self, index_id):
-        """Persist a single index to disk when data_dir is configured."""
+        """Mark an index dirty and persist it when its debounce interval is due.
+
+        Called after every mutating operation. With a positive
+        ``persist_interval`` the index is serialized at most once per interval
+        (in the calling thread, where all index mutations happen) and handed to
+        a background thread for the disk write, so requests never block on
+        disk I/O. Indexes still dirty when the interval has not elapsed are
+        picked up by :meth:`flush_due` or :meth:`flush`.
+        """
         if not self.data_dir or index_id not in self.indexes:
             return
 
+        if self.persist_interval <= 0:
+            # Synchronous mode: serialize and write inline on every mutation
+            payload = self._serialize_index(index_id)
+            if payload is not None:
+                self._write_index_files(index_id, *payload)
+            return
+
+        now = time.monotonic()
+        with self._persist_cv:
+            self._dirty_since.setdefault(index_id, now)
+        last = self._last_persisted.get(index_id)
+        if last is None or now - last >= self.persist_interval:
+            self._serialize_and_enqueue(index_id)
+
+    def flush_due(self):
+        """Persist dirty indexes whose debounce interval has elapsed.
+
+        Intended to be called periodically from the thread that mutates
+        indexes (the server request loop), so lingering dirty state gets
+        written even when no further mutations arrive.
+        """
+        if not self.data_dir or self.persist_interval <= 0:
+            return
+
+        now = time.monotonic()
+        with self._persist_cv:
+            due = [
+                index_id
+                for index_id, dirty_at in self._dirty_since.items()
+                if now - dirty_at >= self.persist_interval
+            ]
+        for index_id in due:
+            self._serialize_and_enqueue(index_id)
+
+    def flush(self):
+        """Persist all dirty indexes and block until disk writes complete.
+
+        Call this before shutdown (or before handing the data directory to
+        another process) to guarantee durability of recent mutations.
+        """
+        if not self.data_dir:
+            return
+
+        with self._persist_cv:
+            dirty = list(self._dirty_since)
+        for index_id in dirty:
+            self._serialize_and_enqueue(index_id)
+
+        with self._persist_cv:
+            self._persist_cv.wait_for(
+                lambda: not self._pending_writes and self._writing_id is None
+            )
+
+    def _serialize_index(self, index_id):
+        """Serialize an index to bytes plus its metadata dict.
+
+        Must run in the thread that mutates indexes: FAISS indexes are not
+        safe to serialize concurrently with modification.
+        """
+        index = self.indexes.get(index_id)
+        if index is None:
+            return None
+        try:
+            buf = faiss.serialize_index(index).tobytes()
+        except Exception as e:
+            logger.exception(f"Failed to serialize index '{index_id}': {e}")
+            return None
+        metadata = {
+            "index_id": index_id,
+            "dimension": self.dimensions.get(index_id),
+            "base_index_id": self.base_indexes.get(index_id),
+        }
+        return buf, metadata
+
+    def _serialize_and_enqueue(self, index_id):
+        """Serialize an index now and queue its bytes for the writer thread."""
+        payload = self._serialize_index(index_id)
+        if payload is None:
+            return
+        self._last_persisted[index_id] = time.monotonic()
+        with self._persist_cv:
+            self._dirty_since.pop(index_id, None)
+            self._pending_writes[index_id] = payload
+            if self._writer_thread is None:
+                self._writer_thread = threading.Thread(
+                    target=self._writer_loop,
+                    name="faissx-persist-writer",
+                    daemon=True,
+                )
+                self._writer_thread.start()
+            self._persist_cv.notify_all()
+
+    def _writer_loop(self):
+        """Background thread: drain queued index snapshots to disk."""
+        while True:
+            with self._persist_cv:
+                self._persist_cv.wait_for(lambda: self._pending_writes)
+                index_id, payload = self._pending_writes.popitem()
+                self._writing_id = index_id
+            try:
+                self._write_index_files(index_id, *payload)
+            finally:
+                with self._persist_cv:
+                    self._writing_id = None
+                    self._persist_cv.notify_all()
+
+    def _write_index_files(self, index_id, buf, metadata):
+        """Atomically write serialized index bytes and metadata to disk."""
         try:
             base_path = self._persisted_index_base_path(index_id)
             index_path = base_path.with_suffix(".faiss")
             meta_path = base_path.with_suffix(".json")
 
-            faiss.write_index(self.indexes[index_id], str(index_path))
-            metadata = {
-                "index_id": index_id,
-                "dimension": self.dimensions.get(index_id),
-                "base_index_id": self.base_indexes.get(index_id),
-            }
-            with open(meta_path, "w", encoding="utf-8") as f:
+            index_tmp = index_path.with_suffix(".faiss.tmp")
+            with open(index_tmp, "wb") as f:
+                f.write(buf)
+            os.replace(index_tmp, index_path)
+
+            meta_tmp = meta_path.with_suffix(".json.tmp")
+            with open(meta_tmp, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
+            os.replace(meta_tmp, meta_path)
         except Exception as e:
             logger.exception(f"Failed to persist index '{index_id}': {e}")
 
@@ -373,6 +504,14 @@ class FaissIndex:
         """Remove persisted index files from disk."""
         if not self.data_dir:
             return
+
+        # Cancel any pending write so it cannot resurrect the deleted index,
+        # and wait out an in-flight write of this index.
+        with self._persist_cv:
+            self._dirty_since.pop(index_id, None)
+            self._pending_writes.pop(index_id, None)
+            self._persist_cv.wait_for(lambda: self._writing_id != index_id)
+        self._last_persisted.pop(index_id, None)
 
         base_path = self._persisted_index_base_path(index_id)
         for file_path in (base_path.with_suffix(".faiss"), base_path.with_suffix(".json")):
@@ -2906,6 +3045,11 @@ def run_server(
         # Main server loop - processes requests until shutdown
         while True:
             try:
+                # Persist any indexes whose debounce interval has elapsed.
+                # Runs in this thread because FAISS indexes must not be
+                # serialized while another thread mutates them.
+                server.flush_due()
+
                 # Wait for a message from a client
                 logger.info("Waiting for a message...")
                 try:
@@ -2960,7 +3104,7 @@ def run_server(
                 action = request.get("action", "")
 
                 logger.debug(f"Received request: {action}")
-                if action == "create_index":
+                if action == "create_index" and logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Create index request details: {json.dumps(request)}")
 
                 # Authentication check (skip for ping to allow health checks)
@@ -3248,6 +3392,13 @@ def run_server(
         # Handle any critical server errors
         logger.exception(f"Server error: {e}")
     finally:
+        # Persist any dirty indexes before shutdown so no data is lost
+        if 'server' in locals():
+            try:
+                server.flush()
+            except Exception as e:
+                logger.exception(f"Failed to flush indexes on shutdown: {e}")
+
         # Cleanup ZeroMQ resources on shutdown
         # This ensures proper resource cleanup even if errors occur
         if 'socket' in locals():
